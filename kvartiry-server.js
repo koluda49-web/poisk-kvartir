@@ -254,10 +254,37 @@ async function fromFlatbook(regKey, city, type, maxP){
   return [].concat(...arrs);
 }
 
-// Поиск по НАЗВАНИЮ по всей Беларуси (когда известно название, но не место).
-// Kufar — полнотекстовый поиск по объявлениям; Flatbook — по всем городам (адрес/описание).
-// Realt в этом режиме пропущен: его заголовки — это адреса, по названию не ищутся.
+// Поиск по НАЗВАНИЮ по всей Беларуси (когда известно название, но не место), по всем трём источникам.
+// Kufar — полнотекстовый поиск; Flatbook — по всем городам; Realt — по тексту списка (title/адрес/город).
 const KUFAR_JUNK = /прокат|пароочистит|пылесос|karcher|керхер|электроинструмент|генератор|виброплит|отбойн|перфоратор|\bдрель|бетоно|шлифов|аппарат|моющий|химчистк|фотозон|аренда авто|прицеп/i;
+// Realt по названию: перебираем разделы всех областей и матчим по тексту списка
+// (title/headline/адрес/город). Имена в глубоком описании тут не видны — только то, что в списке.
+const RB_REALT_KEYS = ['minsk','brest','gomel','grodno','vitebsk','mogilev'];   // minsk-obl = тот же глобальный список, что minsk
+async function fromRealtByName(rx, type, maxP){
+  const t = TYPES[type]||TYPES.flat;
+  const tasks = RB_REALT_KEYS.map(async k=>{
+    const reg = REGIONS[k];
+    try{
+      const h = await (await fetch(realtBase(reg,t.section),{headers:{'User-Agent':UA}})).text();
+      return parseRealt(h).map(a=>{
+        const town=a.townName||'';
+        const text=[a.title,a.headline,a.address,town,a.streetName].filter(Boolean).join(' ');
+        if(rx && !rx.test(text)) return null;
+        const c=approxCoord(town||reg.main, reg.main, a.code);
+        return { src:'Realt',
+          price:a.calculatedPrice||null, rooms:a.rooms, area:town, region:a.stateRegionName||'',
+          capacity:a.maxCapacity||'',
+          title:((town)+' '+(a.address||a.title||'')).replace(/\s+/g,' ').trim(),
+          photos:(a.images||a.imagesV2||[]).filter(Boolean),
+          rating:+a.rating||0, reviews:+a.reviews||0, descId:a.code,
+          phone:(a.contactPhones||[])[0]||'', name:a.contactName||'',
+          lat:c[0], lng:c[1], approx:true,
+          link:realtObjectLink(reg, t.section, a.code) };
+      }).filter(Boolean).filter(x=> x.price>0 && (!maxP||x.price<=maxP));
+    }catch(e){ return []; }
+  });
+  return [].concat(...await Promise.all(tasks));
+}
 async function searchByName(name, type, maxP){
   const q=(name||'').trim();
   if(!q) return {total:0,kufar:0,realt:0,flatbook:0,items:[]};
@@ -283,11 +310,13 @@ async function searchByName(name, type, maxP){
     try{ const items=await fromFlatbook('any','',type,maxP); return items.filter(x=> !rx || rx.test(x.title)); }
     catch(e){ return []; }
   })();
-  const [ka,fa]=await Promise.all([kufarTask,fbTask]);
+  const realtTask=(async()=>{ try{ return await fromRealtByName(rx, type, maxP); }catch(e){ return []; } })();
+  const [ka,ra,fa]=await Promise.all([kufarTask,realtTask,fbTask]);
   const seen=new Set();
-  const all=[...ka,...fa].filter(x=>{ if(seen.has(x.link))return false; seen.add(x.link); return true; })
+  const all=[...ka,...ra,...fa].filter(x=>{ if(seen.has(x.link))return false; seen.add(x.link); return true; })
                          .sort((a,b)=>a.price-b.price);
-  return { total:all.length, kufar:all.filter(x=>x.src==='Kufar').length, realt:0,
+  return { total:all.length, kufar:all.filter(x=>x.src==='Kufar').length,
+           realt:all.filter(x=>x.src==='Realt').length,
            flatbook:all.filter(x=>x.src==='Flatbook').length, items:all };
 }
 
