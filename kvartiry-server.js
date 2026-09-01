@@ -5,6 +5,7 @@
 const http = require('http');
 const PORT = process.env.PORT || 8080;   // Render задаёт свой порт через переменную окружения
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36';
+const SITE_URL = 'https://poisk-kvartir.onrender.com';
 
 // Области: realt = слаг раздела, oblast = как пишет Kufar, main = главный город (для запроса Kufar)
 const REGIONS = {
@@ -24,6 +25,33 @@ const REGIONS = {
     cities:['Могилёв','Бобруйск','Горки','Осиповичи','Кричев','Быхов','Климовичи','Шклов']}
 };
 const CITIES_MAP = Object.fromEntries(Object.entries(REGIONS).map(([k,v])=>[k, v.cities||[]]));
+
+// Центры городов для карты. Kufar отдаёт точные координаты; Realt — нет,
+// поэтому его точки ставим у центра города с небольшим разбросом (пометка "≈ по городу").
+const TOWN_CENTERS = {
+  'Брест':[52.0975,23.7340],'Барановичи':[53.1327,26.0139],'Пинск':[52.1211,26.0966],'Кобрин':[52.2130,24.3590],
+  'Берёза':[52.5350,24.9780],'Лунинец':[52.2450,26.8020],'Пружаны':[52.5580,24.4570],'Ганцевичи':[52.7550,26.4360],
+  'Иваново':[52.1440,25.5350],'Жабинка':[52.1990,24.0050],
+  'Минск':[53.9020,27.5615],'Борисов':[54.2260,28.5050],'Солигорск':[52.7880,27.5420],'Молодечно':[54.3120,26.8490],
+  'Жодино':[54.2980,28.0330],'Слуцк':[53.0270,27.5520],'Дзержинск':[53.6840,27.1440],'Вилейка':[54.4890,26.9190],
+  'Марьина Горка':[53.5120,28.1470],'Смолевичи':[54.0280,28.0830],'Логойск':[54.2000,27.8500],'Заславль':[54.0030,27.2760],
+  'Гомель':[52.4345,30.9754],'Мозырь':[52.0490,29.2450],'Жлобин':[52.8930,30.0240],'Речица':[52.3620,30.3940],
+  'Светлогорск':[52.6330,29.7350],'Калинковичи':[52.1310,29.3290],'Рогачёв':[53.0890,30.0490],'Добруш':[52.4100,31.3190],
+  'Гродно':[53.6690,23.8130],'Лида':[53.8880,25.2990],'Слоним':[53.0930,25.3190],'Волковыск':[53.1610,24.4570],
+  'Новогрудок':[53.6000,25.8280],'Ошмяны':[54.4270,25.9360],'Сморгонь':[54.4800,26.3980],'Островец':[54.6120,25.9540],
+  'Витебск':[55.1840,30.2020],'Орша':[54.5090,30.4250],'Полоцк':[55.4850,28.7860],'Новополоцк':[55.5320,28.6350],
+  'Поставы':[55.1170,26.8370],'Глубокое':[55.1350,27.6900],'Браслав':[55.6400,27.0410],'Лепель':[54.8790,28.7000],
+  'Могилёв':[53.8940,30.3310],'Бобруйск':[53.1450,29.2240],'Горки':[54.2830,30.9870],'Осиповичи':[53.2980,28.6400],
+  'Кричев':[53.7080,31.7160],'Быхов':[53.5190,30.2490],'Климовичи':[53.6070,31.9600],'Шклов':[54.2100,30.2880]
+};
+function approxCoord(town, regMain, seed){
+  const c = TOWN_CENTERS[town] || TOWN_CENTERS[regMain] || [53.70,27.95];
+  const n = Math.abs(parseInt(String(seed).replace(/\D/g,'').slice(-6)) || 0);
+  const dLat = (((n % 97) / 97) - 0.5) * 0.020;                 // ~±1.1 км
+  const dLng = (((Math.floor(n / 97) % 97) / 97) - 0.5) * 0.032;
+  return [ +(c[0] + dLat).toFixed(6), +(c[1] + dLng).toFixed(6) ];
+}
+
 // Типы: kw = слово для запроса Kufar, section = раздел Realt
 const TYPES = {
   'flat':    {kw:'квартира', section:'flat-for-day'},
@@ -39,16 +67,24 @@ async function fromKufar(reg, city, type, rooms, maxP, guests){
     const k = await (await fetch(url,{headers:{'User-Agent':UA}})).json();
     const g=(a,n)=>(a.ad_parameters||[]).find(y=>y.p===n);
     return (k.ads||[]).map(a=>{
+      // координаты Kufar: параметр p="coordinates", v=[долгота, широта]
+      let lat=null, lng=null, approx=true;
+      const cp=g(a,'coordinates');
+      if(cp && Array.isArray(cp.v) && cp.v.length>=2){
+        const lo=+cp.v[0], la=+cp.v[1];
+        if(la>50 && la<57 && lo>22 && lo<33){ lat=la; lng=lo; approx=false; }
+      }
+      const area = g(a,'area')?.vl||'';
+      if(lat==null){ const c=approxCoord(area||where, reg.main, a.ad_id); lat=c[0]; lng=c[1]; approx=true; }
       return { src:'Kufar',
         price:a.price_byn? a.price_byn/100 : null,
         rooms:+(g(a,'rooms')?.v||0),
-        area: g(a,'area')?.vl||'',
-        region: g(a,'region')?.vl||'',
+        area, region: g(a,'region')?.vl||'',
         capacity: g(a,'house_rent_couchettes')?.vl||'',
         title:a.subject||'',
         photos: (a.images||[]).map(im=>'https://rms.kufar.by/v1/gallery/'+im.path),
         rating:0, reviews:0, descId:a.ad_id,
-        phone:'', name:'', link:a.ad_link||'' };
+        phone:'', name:'', lat, lng, approx, link:a.ad_link||'' };
     }).filter(x=> x.price>0
         && (city ? new RegExp(city,'i').test(x.area) : x.region===reg.oblast)
         && (!rooms||x.rooms==rooms) && (!maxP||x.price<=maxP) && (!guests|| (+x.capacity||0)>=guests)
@@ -59,24 +95,47 @@ async function fromKufar(reg, city, type, rooms, maxP, guests){
   }catch(e){ console.error('Kufar:', e.message); return []; }
 }
 
+// Realt: у города Минск нет своего слага (minsk/minsk-region -> 404),
+// его суточные квартиры лежат в глобальном /rent/<section>/. Остальные области — по слагу.
+function realtBase(reg, section){
+  const isMinsk = (reg.realt==='minsk' || reg.realt==='minsk-region');
+  return isMinsk ? 'https://realt.by/rent/'+section+'/'
+                 : 'https://realt.by/'+reg.realt+'/rent/'+section+'/';
+}
+function realtObjectLink(reg, section, code){
+  const isMinsk = (reg.realt==='minsk' || reg.realt==='minsk-region');
+  return isMinsk ? 'https://realt.by/rent-'+section+'/object/'+code+'/'
+                 : 'https://realt.by/'+reg.realt+'/rent-'+section+'/object/'+code+'/';
+}
+function parseRealt(html){
+  const m = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+  if(!m) return [];
+  let res=null;
+  (function f(o,d){ if(d>8||!o||typeof o!=='object') return;
+    for(const k in o){ if(k==='results'&&Array.isArray(o[k])){res=o[k];return;} f(o[k],d+1); } })(JSON.parse(m[1]),0);
+  return res||[];
+}
 async function fromRealt(reg, city, type, rooms, maxP, guests){
   try{
     const t = TYPES[type]||TYPES.flat;
-    const h = await (await fetch('https://realt.by/'+reg.realt+'/rent/'+t.section+'/',{headers:{'User-Agent':UA}})).text();
-    const m = h.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
-    if(!m) return [];
-    let res=null;
-    (function f(o,d){ if(d>7||!o||typeof o!=='object') return;
-      for(const k in o){ if(k==='results'&&Array.isArray(o[k])){res=o[k];return;} f(o[k],d+1); } })(JSON.parse(m[1]),0);
-    return (res||[]).map(a=>({ src:'Realt',
-      price:a.calculatedPrice||null, rooms:a.rooms,
-      area:a.townName||'', region:a.stateRegionName||'',
-      capacity:a.maxCapacity||'',
-      title:((a.townName||'')+' '+(a.address||a.title||'')).replace(/\s+/g,' ').trim(),
-      photos:(a.images||a.imagesV2||[]).filter(Boolean),
-      rating:+a.rating||0, reviews:+a.reviews||0, descId:a.code,
-      phone:(a.contactPhones||[])[0]||'', name:a.contactName||'',
-      link:'https://realt.by/'+reg.realt+'/rent-'+t.section+'/object/'+a.code+'/' }))
+    const base = realtBase(reg, t.section);
+    // тянем 1-ю страницу; для Минска её (до 180) достаточно, пагинацию делаем на клиенте
+    const h = await (await fetch(base,{headers:{'User-Agent':UA}})).text();
+    const res = parseRealt(h);
+    return res.map(a=>{
+      const town=a.townName||'';
+      const c=approxCoord(town||reg.main, reg.main, a.code);
+      return { src:'Realt',
+        price:a.calculatedPrice||null, rooms:a.rooms,
+        area:town, region:a.stateRegionName||'',
+        capacity:a.maxCapacity||'',
+        title:((town)+' '+(a.address||a.title||'')).replace(/\s+/g,' ').trim(),
+        photos:(a.images||a.imagesV2||[]).filter(Boolean),
+        rating:+a.rating||0, reviews:+a.reviews||0, descId:a.code,
+        phone:(a.contactPhones||[])[0]||'', name:a.contactName||'',
+        lat:c[0], lng:c[1], approx:true,
+        link:realtObjectLink(reg, t.section, a.code) };
+    })
     .filter(x=> x.price>0
         && (city ? new RegExp(city,'i').test(x.area) : true)
         && (!rooms||x.rooms==rooms) && (!maxP||x.price<=maxP) && (!guests|| (+x.capacity||0)>=guests));
@@ -104,9 +163,32 @@ async function search(regKey, city, type, rooms, maxP, guests, source){
            items: all };
 }
 
+const META_DESC = 'Поиск квартир, коттеджей и усадеб на сутки по всей Беларуси в одном месте: живые объявления Kufar и Realt с фильтрами по области, городу, комнатам, гостям, цене и датам. Список и карта с ценами, телефоны собственников и описания.';
+
 const PAGE = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Поиск жилья на сутки</title>
+<title>Жильё на сутки в Беларуси — квартиры, коттеджи, усадьбы (Kufar + Realt)</title>
+<meta name="description" content="${META_DESC}">
+<meta name="keywords" content="снять квартиру на сутки, жильё на сутки Беларусь, квартира посуточно Минск, коттедж на сутки, усадьба на выходные, аренда посуточно Брест Гомель Гродно Витебск Могилёв, kufar realt">
+<meta name="robots" content="index,follow">
+<meta name="author" content="poisk-kvartir">
+<meta name="theme-color" content="#ff5a1f">
+<link rel="canonical" href="${SITE_URL}/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Поиск жилья на сутки">
+<meta property="og:title" content="Жильё на сутки в Беларуси — квартиры, коттеджи, усадьбы">
+<meta property="og:description" content="${META_DESC}">
+<meta property="og:url" content="${SITE_URL}/">
+<meta property="og:locale" content="ru_BY">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Жильё на сутки в Беларуси — Kufar + Realt в одном поиске">
+<meta name="twitter:description" content="${META_DESC}">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8F%A0%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebSite","name":"Поиск жилья на сутки","url":"${SITE_URL}/","inLanguage":"ru-BY","description":"${META_DESC}"}
+</script>
 <style>
 :root{
   --bg:#f4f5f7;
@@ -167,7 +249,7 @@ const PAGE = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
 }
 
 *{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
 body{
   margin:0;
   font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
@@ -229,7 +311,7 @@ h1 .accent{
   border-radius:var(--radius);
   padding:clamp(16px,3vw,22px);
   box-shadow:var(--shadow-md);
-  margin-bottom:22px;
+  margin-bottom:18px;
 }
 .fld{display:flex;flex-direction:column;gap:6px;min-width:0}
 .fld > span{
@@ -293,17 +375,25 @@ h1 .accent{
 .go:active{transform:translateY(1px)}
 .go:focus-visible{outline:none;box-shadow:0 0 0 4px var(--focus),0 8px 22px -6px color-mix(in srgb,var(--accent) 70%,transparent)}
 
-/* ---------- Status + hint ---------- */
+/* ---------- Toolbar: status + view switch ---------- */
+.toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:space-between;margin:2px 2px 4px}
 #stat{
   display:flex;align-items:center;gap:10px;flex-wrap:wrap;
   color:var(--txt-2);font-size:14.5px;font-weight:500;
-  padding:4px 2px 2px;
   min-height:24px;
 }
+.seg{display:inline-flex;background:var(--surface-2);border:1px solid var(--line);border-radius:999px;padding:3px;gap:2px}
+.seg button{
+  font:inherit;font-size:13.5px;font-weight:700;
+  color:var(--txt-2);background:none;border:none;cursor:pointer;
+  padding:7px 15px;border-radius:999px;display:inline-flex;align-items:center;gap:6px;
+  transition:background .15s,color .15s;
+}
+.seg button.on{background:var(--accent);color:var(--accent-ink);box-shadow:0 4px 12px -4px color-mix(in srgb,var(--accent) 70%,transparent)}
 .hint{
   color:var(--txt-3);
   font-size:13px;
-  margin:6px 2px 22px;
+  margin:16px 2px 22px;
   line-height:1.6;
 }
 
@@ -312,8 +402,37 @@ h1 .accent{
   display:grid;
   grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
   gap:clamp(16px,2.4vw,24px);
-  margin-top:18px;
+  margin-top:12px;
 }
+
+/* ---------- Map ---------- */
+#map{
+  height:min(72vh,640px);
+  border-radius:var(--radius);
+  border:1px solid var(--line);
+  box-shadow:var(--shadow-md);
+  margin-top:12px;
+  overflow:hidden;
+  z-index:0;
+}
+.leaflet-div-icon{background:none;border:none}
+.price-pin{
+  position:absolute;transform:translate(-50%,-100%);
+  white-space:nowrap;font:800 12px/1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  color:#fff;padding:5px 9px;border-radius:999px;
+  border:2px solid #fff;box-shadow:0 3px 9px rgba(0,0,0,.35);cursor:pointer;
+}
+.price-pin.Kufar{background:#2f6bff}
+.price-pin.Realt{background:#ff7a18}
+.price-pin::after{content:"";position:absolute;left:50%;top:100%;transform:translateX(-50%);border:5px solid transparent;border-top-color:#fff}
+.price-pin:hover{filter:brightness(1.06);z-index:1000}
+.leaflet-popup-content{margin:12px 14px;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.mp-price{font-weight:800;font-size:17px;color:#141821}
+.mp-price small{font-weight:500;color:#888;font-size:12px}
+.mp-meta{font-size:12.5px;color:#555;margin:2px 0 8px}
+.mp-call{display:block;font-size:13px;font-weight:700;color:#141821;margin:2px 0}
+.mp-open{display:inline-block;margin-top:6px;font-weight:800;color:#ff5a1f;text-decoration:none}
+.mp-approx{color:#9098a6;font-size:11px;margin-top:5px}
 
 /* ---------- Card ---------- */
 .card{
@@ -490,6 +609,25 @@ h1 .accent{
 }
 .act a.call:hover{filter:brightness(1.05);background:linear-gradient(120deg,var(--accent),var(--accent-2))}
 
+/* ---------- Pager ---------- */
+#pager{
+  display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:7px;
+  margin-top:26px;
+}
+.pg{
+  font:inherit;font-size:14.5px;font-weight:700;
+  min-width:42px;height:42px;padding:0 12px;
+  display:inline-flex;align-items:center;justify-content:center;
+  color:var(--txt);background:var(--surface);
+  border:1px solid var(--line);border-radius:var(--radius-xs);cursor:pointer;
+  transition:background .15s,border-color .15s,color .15s,transform .1s;
+}
+.pg:hover:not(:disabled){border-color:var(--txt-3);background:var(--surface-2)}
+.pg:active:not(:disabled){transform:translateY(1px)}
+.pg:disabled{opacity:.4;cursor:default}
+.pg.cur{background:var(--accent);color:var(--accent-ink);border-color:transparent;box-shadow:0 6px 16px -6px color-mix(in srgb,var(--accent) 70%,transparent)}
+.pg-dots{color:var(--txt-3);padding:0 2px}
+
 /* ---------- Empty state ---------- */
 .empty{
   grid-column:1 / -1;
@@ -506,6 +644,23 @@ h1 .accent{
   display:block;font-size:40px;margin-bottom:14px;filter:grayscale(.2);
 }
 
+/* ---------- Scroll to top ---------- */
+.up{
+  position:fixed;right:22px;bottom:22px;z-index:1200;
+  width:50px;height:50px;border-radius:50%;
+  border:none;cursor:pointer;
+  color:var(--accent-ink);
+  background:linear-gradient(120deg,var(--accent),var(--accent-2));
+  font-size:22px;font-weight:800;line-height:1;
+  box-shadow:0 10px 26px -8px color-mix(in srgb,var(--accent) 80%,transparent),0 4px 10px rgba(0,0,0,.15);
+  opacity:0;transform:translateY(14px) scale(.9);pointer-events:none;
+  transition:opacity .2s, transform .2s, filter .15s;
+  display:flex;align-items:center;justify-content:center;
+}
+.up.show{opacity:1;transform:none;pointer-events:auto}
+.up:hover{filter:brightness(1.06)}
+.up:active{transform:scale(.94)}
+
 /* ---------- Responsive ---------- */
 @media (min-width:640px){
   .bar{grid-template-columns:repeat(3,1fr)}
@@ -519,9 +674,9 @@ h1 .accent{
 <div class="wrap">
   <span class="kicker"><span class="dot"></span>Kufar + Realt · Беларусь</span>
   <h1>Жильё на сутки, <span class="accent">без лишних вкладок</span></h1>
-  <p class="lead">Квартиры, коттеджи и усадьбы из двух крупнейших площадок аренды — в одной ленте. Настройте фильтры и найдите вариант под свою дату и бюджет.</p>
+  <p class="lead">Квартиры, коттеджи и усадьбы на сутки из двух крупнейших площадок аренды Беларуси — Kufar и Realt — в одной ленте и на карте. Настройте фильтры и найдите вариант под свою дату и бюджет.</p>
 
-  <div class="bar">
+  <form class="bar" id="bar" onsubmit="return false">
     <label class="fld">
       <span>Область</span>
       <select id="region">
@@ -608,18 +763,33 @@ h1 .accent{
       <input id="to" type="date">
     </label>
 
-    <button id="go" class="go">Найти</button>
+    <button id="go" class="go" type="button">Найти</button>
+  </form>
+
+  <div class="toolbar">
+    <div id="stat"></div>
+    <div class="seg" role="tablist" aria-label="Вид">
+      <button id="viewList" class="on" type="button" onclick="setView('list')">☰ Список</button>
+      <button id="viewMap" type="button" onclick="setView('map')">📍 Карта</button>
+    </div>
   </div>
 
-  <div id="stat"></div>
-
+  <div id="map" style="display:none"></div>
   <div id="grid"></div>
+  <div id="pager"></div>
 
-  <p class="hint">Цены и наличие подтягиваются напрямую из объявлений Kufar и Realt. Итоговая стоимость за весь период рассчитывается по выбранным датам заезда и выезда. Перед бронированием уточняйте детали у собственника.</p>
+  <p class="hint">Цены и наличие подтягиваются напрямую из объявлений Kufar и Realt в режиме реального времени. На карте цена показана прямо на метке: <b style="color:var(--kufar)">синие</b> — Kufar (точные координаты), <b style="color:var(--realt)">оранжевые</b> — Realt (адрес примерный, по городу). Итоговая стоимость за весь период рассчитывается по датам заезда и выезда. Перед бронированием уточняйте детали у собственника.</p>
 </div>
+
+<button id="up" class="up" type="button" aria-label="Наверх" title="Наверх">↑</button>
+
 <script>
 const $=s=>document.querySelector(s);
 const CITIES = ${JSON.stringify(CITIES_MAP)};
+const PAGE_SIZE = 24;
+window.__page = 1;
+window.__view = 'list';
+
 function fillCities(){
   const reg=$('#region').value, sel=$('#city'), cur=sel.value;
   const list = reg==='any' ? [] : (CITIES[reg]||[]);
@@ -629,46 +799,55 @@ function fillCities(){
 }
 $('#region').addEventListener('change', fillCities);
 fillCities();
+
 function nights(){
   const a=$('#from').value, b=$('#to').value;
   if(!a||!b) return 0;
   const n=Math.round((new Date(b)-new Date(a))/86400000);
   return n>0? n : 0;
 }
+function sortItems(){
+  const s=$('#sort')?$('#sort').value:'price_asc';
+  (window.__items||[]).sort(function(a,b){ return s==='price_desc'? b.price-a.price : s==='rating_desc'? (((b.rating||0)-(a.rating||0))||(a.price-b.price)) : a.price-b.price; });
+}
 async function run(){
   const p=new URLSearchParams({
     region:$('#region').value, city:$('#city').value.trim(), type:$('#type').value,
     rooms:$('#rooms').value, guests:$('#guests').value, max:$('#max').value, source:$('#source').value
   });
-  $('#stat').textContent='Ищу…'; $('#grid').innerHTML='';
+  $('#stat').textContent='Ищу…'; $('#grid').innerHTML=''; $('#pager').innerHTML='';
   try{
     const d=await (await fetch('/api/search?'+p.toString())).json();
     const N=nights();
     $('#stat').textContent='Найдено '+d.total+' (Kufar '+d.kufar+' + Realt '+d.realt+')'+(N?(', расчёт на '+N+' ноч.'):'');
-    if(!d.items.length){ $('#grid').innerHTML='<div class="empty">Ничего не найдено. Смягчите фильтры.</div>'; return; }
-    window.__items=d.items;
-    renderCards();
+    window.__items=d.items||[]; window.__page=1;
+    if(!window.__items.length){ $('#grid').innerHTML='<div class="empty">Ничего не найдено. Смягчите фильтры.</div>'; if(window.__view==='map') plotMap(); return; }
+    sortItems();
+    if(window.__view==='map') plotMap(); else renderCards();
   }catch(e){ $('#stat').textContent='Ошибка: '+e.message; }
 }
 function renderCards(){
-  const items=window.__items||[]; if(!items.length) return;
-  const s=$('#sort')?$('#sort').value:'price_asc';
-  items.sort(function(a,b){ return s==='price_desc'? b.price-a.price : s==='rating_desc'? (((b.rating||0)-(a.rating||0))||(a.price-b.price)) : a.price-b.price; });
+  const all=window.__items||[];
+  if(!all.length){ $('#pager').innerHTML=''; return; }
+  sortItems();
+  const pages=Math.max(1, Math.ceil(all.length/PAGE_SIZE));
+  if(window.__page>pages) window.__page=pages;
+  if(window.__page<1) window.__page=1;
+  const start=(window.__page-1)*PAGE_SIZE;
+  const items=all.slice(start, start+PAGE_SIZE);
   const N=nights();
-  $('#grid').innerHTML=items.map(function(x,idx){
+  $('#grid').innerHTML=items.map(function(x,i){
+      const idx=start+i;   // глобальный индекс в window.__items (для слайдера/описания)
       const capChip = x.capacity ? ('<span>до '+x.capacity+' гостей</span>') : '';
       const total = N ? ('<div class="total">'+(x.price*N)+' BYN за '+N+' ноч.</div>') : '';
       const call = x.phone ? '<a class="call" href="tel:+'+x.phone+'">'+fmtPhone(x.phone)+(x.name?(' · '+x.name):'')+'</a>' : '';
       const desc = x.descId ? '<div class="desc-t" onclick="showDesc('+idx+')" id="dt'+idx+'">Описание ▾</div><div class="desc" id="dd'+idx+'" style="display:none"></div>' : '';
-      // рейтинг: 0..10 -> 5 звёзд, показываем только при отзывах
       let stars='';
       if(x.reviews>0 && x.rating>0){
         const st=Math.round(x.rating/2);
         stars='<div class="stars">'+'★'.repeat(st)+'☆'.repeat(5-st)+'<span class="num">'+x.rating.toFixed(1)+' · '+x.reviews+' отз.</span></div>';
       }
-      // бейдж источника — оверлеем на фото
       const tag='<span class="tag '+x.src+'">'+x.src+'</span>';
-      // слайдер фото
       const ph=x.photos&&x.photos.length? x.photos : [];
       let slider;
       if(ph.length){
@@ -687,6 +866,67 @@ function renderCards(){
         +'<div class="act">'+call+'<a href="'+x.link+'" target="_blank" rel="noopener">Открыть</a></div>'
         +'</div></div>';
     }).join('');
+  renderPager(pages);
+}
+function renderPager(pages){
+  const el=$('#pager');
+  if(pages<=1){ el.innerHTML=''; return; }
+  const pg=window.__page, win=2;
+  let html='<button class="pg" '+(pg<=1?'disabled':'')+' onclick="gotoPage('+(pg-1)+')" aria-label="Назад">‹</button>';
+  let start=Math.max(1,pg-win), end=Math.min(pages,pg+win);
+  if(start>1){ html+='<button class="pg" onclick="gotoPage(1)">1</button>'; if(start>2) html+='<span class="pg-dots">…</span>'; }
+  for(let i=start;i<=end;i++) html+='<button class="pg'+(i===pg?' cur':'')+'" onclick="gotoPage('+i+')">'+i+'</button>';
+  if(end<pages){ if(end<pages-1) html+='<span class="pg-dots">…</span>'; html+='<button class="pg" onclick="gotoPage('+pages+')">'+pages+'</button>'; }
+  html+='<button class="pg" '+(pg>=pages?'disabled':'')+' onclick="gotoPage('+(pg+1)+')" aria-label="Вперёд">›</button>';
+  el.innerHTML=html;
+}
+function gotoPage(p){
+  window.__page=p; renderCards();
+  const top=$('#grid').getBoundingClientRect().top+window.scrollY-80;
+  window.scrollTo({top:top,behavior:'smooth'});
+}
+// вид: список / карта
+function setView(v){
+  window.__view=v;
+  $('#viewList').classList.toggle('on', v==='list');
+  $('#viewMap').classList.toggle('on', v==='map');
+  $('#grid').style.display = v==='list' ? '' : 'none';
+  $('#pager').style.display = v==='list' ? '' : 'none';
+  $('#map').style.display = v==='map' ? '' : 'none';
+  if(v==='map') plotMap(); else renderCards();
+}
+// карта Leaflet: цена на метке, тултип при наведении, карточка в попапе
+function popupHtml(x){
+  const img=x.photos&&x.photos[0]? '<img src="'+x.photos[0]+'" style="width:100%;height:120px;object-fit:cover;border-radius:8px;display:block;margin-bottom:8px" alt="">':'';
+  const call=x.phone? '<a class="mp-call" href="tel:+'+x.phone+'">📞 '+fmtPhone(x.phone)+(x.name?(' · '+x.name):'')+'</a>':'';
+  const ap=x.approx? '<div class="mp-approx">≈ адрес примерный (по городу)</div>':'';
+  const cap=x.capacity? (' · до '+x.capacity+' гостей'):'';
+  return '<div class="mp"><div class="mp-price">'+x.price+' BYN <small>/ сутки</small></div>'
+    +'<div class="mp-meta">'+(x.area||'')+' · '+x.rooms+'-комн'+cap+'</div>'
+    +img+call
+    +'<a class="mp-open" href="'+x.link+'" target="_blank" rel="noopener">Открыть на '+x.src+' →</a>'+ap+'</div>';
+}
+function plotMap(){
+  if(typeof L==='undefined'){ $('#map').innerHTML='<div style="padding:24px;color:var(--txt-2)">Карта не загрузилась (нет связи с картографическим сервисом).</div>'; return; }
+  if(!window.__map){
+    window.__map=L.map('map',{scrollWheelZoom:true}).setView([53.70,27.95],6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(window.__map);
+    window.__mlayer=L.layerGroup().addTo(window.__map);
+  }
+  window.__mlayer.clearLayers();
+  const items=(window.__items||[]).filter(x=>x.lat&&x.lng);
+  const pts=[];
+  items.forEach(function(x){
+    const icon=L.divIcon({className:'',iconSize:[1,1],iconAnchor:[0,0],html:'<div class="price-pin '+x.src+'">'+x.price+'</div>'});
+    const mk=L.marker([x.lat,x.lng],{icon:icon,riseOnHover:true}).addTo(window.__mlayer);
+    mk.bindTooltip((x.area?x.area+' · ':'')+x.rooms+'-комн · '+x.price+' BYN'+(x.approx?' (≈)':''),{direction:'top',offset:[0,-14]});
+    mk.bindPopup(popupHtml(x),{maxWidth:260,minWidth:220});
+    pts.push([x.lat,x.lng]);
+  });
+  setTimeout(function(){
+    window.__map.invalidateSize();
+    if(pts.length) window.__map.fitBounds(pts,{padding:[45,45],maxZoom:15});
+  },60);
 }
 // телефон: 375298261243 -> +375 29 826-12-43
 function fmtPhone(p){
@@ -723,8 +963,10 @@ function slide(card, dir){
   const cnt=document.getElementById('cnt'+card); if(cnt) cnt.textContent=(next+1)+'/'+ph.length;
 }
 document.querySelectorAll('.bar select, .bar input').forEach(el=>{ if(el.id!=='sort') el.addEventListener('change',run); });
-$('#sort').addEventListener('change', renderCards);
+$('#sort').addEventListener('change', function(){ window.__page=1; renderCards(); });
 $('#go').addEventListener('click',run);
+// кнопка "наверх"
+window.addEventListener('scroll', function(){ $('#up').classList.toggle('show', window.scrollY>500); });
 window.addEventListener('load',run);
 </script></body></html>`;
 
@@ -766,6 +1008,14 @@ http.createServer(async (req,res)=>{
     text = String(text).replace(/<[^>]+>/g,' ').replace(/&nbsp;/g,' ').replace(/\s+/g,' ').trim();
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*'});
     res.end(JSON.stringify({text})); return;
+  }
+  if(u.pathname === '/robots.txt'){
+    res.writeHead(200, {'Content-Type':'text/plain; charset=utf-8'});
+    res.end('User-agent: *\nAllow: /\nSitemap: '+SITE_URL+'/sitemap.xml\n'); return;
+  }
+  if(u.pathname === '/sitemap.xml'){
+    res.writeHead(200, {'Content-Type':'application/xml; charset=utf-8'});
+    res.end('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>'+SITE_URL+'/</loc><changefreq>daily</changefreq><priority>1.0</priority></url></urlset>'); return;
   }
   res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
   res.end(PAGE);
