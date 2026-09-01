@@ -6,7 +6,7 @@ const http = require('http');
 const PORT = process.env.PORT || 8080;   // Render задаёт свой порт через переменную окружения
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36';
 const SITE_URL = 'https://poisk-kvartir.onrender.com';
-const FEEDBACK_EMAIL = process.env.FEEDBACK_EMAIL || '';   // куда слать пожелания (задаётся в переменных окружения Render)
+const FEEDBACK_EMAIL = process.env.FEEDBACK_EMAIL || 'koluda49@gmail.com';   // куда слать пожелания (можно переопределить переменной окружения Render, чтобы убрать адрес из репозитория)
 
 // Области: realt = слаг раздела, oblast = как пишет Kufar, main = главный город (для запроса Kufar)
 const REGIONS = {
@@ -1532,11 +1532,12 @@ http.createServer(async (req,res)=>{
           // FormSubmit — доставка на почту без ключей и логина (первый раз нужно подтвердить письмо)
           const fr = await fetch('https://formsubmit.co/ajax/'+encodeURIComponent(FEEDBACK_EMAIL),{
             method:'POST',
-            headers:{'Content-Type':'application/json','Accept':'application/json'},
+            headers:{'Content-Type':'application/json','Accept':'application/json',
+                     'Origin':SITE_URL,'Referer':SITE_URL+'/'},   // FormSubmit требует реальный источник
             body:JSON.stringify({ _subject:'Поиск жилья — пожелание с сайта', email: email||'не указан', Сообщение: message })
           });
           const jr = await fr.json().catch(()=>({}));
-          ok = (jr.success==='true' || jr.success===true || fr.ok);
+          ok = (String(jr.success)==='true');
           if(!ok) error = jr.message || ('HTTP '+fr.status);
         }
       }catch(e){ error=e.message; }
