@@ -202,7 +202,97 @@ async function search(regKey, city, type, rooms, maxP, guests, source){
            items: all };
 }
 
-const META_DESC = 'Поиск квартир, коттеджей и усадеб на сутки по всей Беларуси в одном месте: живые объявления Kufar и Realt с фильтрами по области, городу, комнатам, гостям, цене и датам. Список и карта с ценами, телефоны собственников и описания.';
+// ============ Россия: отели с 101hotels.com ============
+// Публичный map-эндпоинт ssg.101hotels.com/hotel/available/map?coords=[[minLng,maxLat],[maxLng,minLat]]
+// отдаёт отели в рамке с ценой/координатами/фото/рейтингом. Слаг города берём из самого отеля.
+// d = половина рамки по широте (dl = d*1.7 по долготе). d держим <=0.15,
+// иначе 101hotels отдаёт кластеры вместо отдельных отелей (порог ~0.15-0.18).
+const RF_CITIES = {
+  'moskva':          {name:'Москва',            lat:55.7558, lng:37.6173, d:0.14},
+  'sankt-peterburg': {name:'Санкт-Петербург',   lat:59.9391, lng:30.3158, d:0.14},
+  'sochi':           {name:'Сочи',              lat:43.5992, lng:39.7257, d:0.14},
+  'kazan':           {name:'Казань',            lat:55.7963, lng:49.1088, d:0.13},
+  'ekaterinburg':    {name:'Екатеринбург',      lat:56.8389, lng:60.6057, d:0.13},
+  'nizhniy-novgorod':{name:'Нижний Новгород',   lat:56.3269, lng:44.0059, d:0.13},
+  'novosibirsk':     {name:'Новосибирск',       lat:55.0084, lng:82.9357, d:0.13},
+  'krasnodar':       {name:'Краснодар',         lat:45.0355, lng:38.9753, d:0.13},
+  'kaliningrad':     {name:'Калининград',       lat:54.7104, lng:20.4522, d:0.12},
+  'rostov-na-donu':  {name:'Ростов-на-Дону',    lat:47.2225, lng:39.7188, d:0.13},
+  'volgograd':       {name:'Волгоград',         lat:48.7080, lng:44.5133, d:0.13},
+  'samara':          {name:'Самара',            lat:53.1959, lng:50.1002, d:0.13},
+  'ufa':             {name:'Уфа',               lat:54.7388, lng:55.9721, d:0.13},
+  'krasnoyarsk':     {name:'Красноярск',        lat:56.0153, lng:92.8932, d:0.12},
+  'perm':            {name:'Пермь',             lat:58.0105, lng:56.2502, d:0.13},
+  'voronezh':        {name:'Воронеж',           lat:51.6608, lng:39.2003, d:0.12},
+  'saratov':         {name:'Саратов',           lat:51.5336, lng:46.0343, d:0.12},
+  'tyumen':          {name:'Тюмень',            lat:57.1530, lng:65.5343, d:0.12},
+  'vladivostok':     {name:'Владивосток',       lat:43.1155, lng:131.8855, d:0.12},
+  'irkutsk':         {name:'Иркутск',           lat:52.2870, lng:104.2807, d:0.12},
+  'yaroslavl':       {name:'Ярославль',         lat:57.6261, lng:39.8845, d:0.11},
+  'tula':            {name:'Тула',              lat:54.1930, lng:37.6173, d:0.11},
+  'kaluga':          {name:'Калуга',            lat:54.5293, lng:36.2754, d:0.11},
+  'velikiy-novgorod':{name:'Великий Новгород',  lat:58.5215, lng:31.2755, d:0.11}
+};
+const RF_TYPES = {'1':'Отели','2':'Хостелы','3':'Гостевые дома','4':'Апартаменты','5':'Пансионаты','6':'Санатории','7':'Базы отдыха','8':'Коттеджи'};
+const RF_SERVICES = {'19':'Wi-Fi','14':'Парковка','10':'Бассейн','11':'Сауна / СПА','5':'Кондиционер','70':'Холодильник','9':'Тренажёрный зал','96':'Можно с животными','183':'Трансфер','31':'Круглосуточно','2':'Бар / ресторан'};
+const RF_CITY_OPTIONS   = Object.entries(RF_CITIES).map(([k,v],i)=>'<option value="'+k+'"'+(i===0?' selected':'')+'>'+v.name+'</option>').join('');
+const RF_TYPE_OPTIONS   = Object.entries(RF_TYPES).map(([k,v])=>'<option value="'+k+'">'+v+'</option>').join('');
+const RF_SERVICE_CHIPS  = Object.entries(RF_SERVICES).map(([k,v])=>'<button type="button" class="chip" data-v="'+k+'">'+v+'</button>').join('');
+
+function hotel101ToItem(hh){
+  const co = hh.coords || [];
+  const lng = +co[0], lat = +co[1];
+  if(!(lat>40 && lat<75 && lng>18 && lng<190)) return null;
+  const img = hh.image && (hh.image.preview_path || hh.image.path || hh.image.thumb_path);
+  const stars = +hh.stars || 0;
+  const typeName = RF_TYPES[String(hh.type_id)] || '';
+  const rs = hh.reviews_summary || {};
+  const prepay = (hh.min_price_data && hh.min_price_data.prepayment) || '';  // NO = оплата при заселении, FIRST/FULL = предоплата
+  const chips = [];
+  if(stars) chips.push('★'.repeat(stars));
+  if(typeName) chips.push(typeName);
+  if(hh.city_name) chips.push(hh.city_name);
+  if(prepay==='NO') chips.push('💳 оплата на месте');
+  return { src:'H101', cur:'₽',
+    price:+hh.min_price || 0, prepay,
+    rooms:0, area:hh.city_name||'', capacity:'',
+    title:hh.full_name||'', address:hh.address||'',
+    photos: img ? [img] : [],
+    rating:+(rs.rating)||+hh.rating||0, reviews:+(rs.number_reviews)||0,
+    descId:null, phone:'', name:'', lat, lng, approx:false, chips,
+    link:'https://101hotels.com/main/cities/'+(hh.city_url||'')+'/'+(hh.url||'') };
+}
+async function fromR101(cityKey, opts){
+  const c = RF_CITIES[cityKey] || RF_CITIES['moskva'];
+  const d = c.d || 0.18, dl = d * 1.7;   // долготу растягиваем (градус у́же по широте)
+  const coords = JSON.stringify([[c.lng-dl, c.lat+d],[c.lng+dl, c.lat-d]]);
+  const p = new URLSearchParams();
+  p.set('coords', coords);
+  if(opts.types)    p.set('types', opts.types);
+  if(opts.stars)    p.set('stars', opts.stars);
+  if(opts.services) p.set('services', opts.services);
+  if(opts.rating)   p.set('rating', opts.rating);
+  let url = 'https://ssg.101hotels.com/hotel/available/map?' + p.toString();
+  if(opts.maxP) url += '&price%5B%5D=0&price%5B%5D=' + encodeURIComponent(opts.maxP);
+  try{
+    const j = await (await fetch(url,{headers:{'User-Agent':UA,'Accept':'application/json','Accept-Language':'ru','Referer':'https://101hotels.com/','X-Requested-With':'XMLHttpRequest'}})).json();
+    const hotels = (j.response && j.response.hotels) || [];
+    return hotels.map(hotel101ToItem).filter(x=> x && x.price>0 && (!opts.maxP || x.price<=opts.maxP));
+  }catch(e){ console.error('101hotels:', e.message); return []; }
+}
+async function searchRF(cityKey, opts){
+  let items = await fromR101(cityKey, opts);
+  const seen = new Set();
+  items = items.filter(x=>{ if(seen.has(x.link)) return false; seen.add(x.link); return true; });
+  if(opts.no_card) items = items.filter(x=> x.prepay==='NO');   // оплата при заселении (без предоплаты)
+  const s = opts.sort || 'price_asc';
+  items.sort((a,b)=> s==='price_desc' ? b.price-a.price
+                   : s==='rating_desc' ? (((b.rating||0)-(a.rating||0))||(a.price-b.price))
+                   : a.price-b.price);
+  return { total: items.length, items };
+}
+
+const META_DESC = 'Поиск жилья на сутки: Беларусь (Kufar + Realt) и отели России (101hotels) в одном месте. Фильтры по городу, типу, цене, звёздам, рейтингу и удобствам, список и карта с ценами, телефоны и описания.';
 
 const PAGE = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -700,6 +790,37 @@ h1 .accent{
 .up:hover{filter:brightness(1.06)}
 .up:active{transform:scale(.94)}
 
+/* ---------- Country switch (РБ / РФ) ---------- */
+.country{
+  display:inline-flex;gap:4px;
+  background:var(--surface-2);border:1px solid var(--line);
+  border-radius:999px;padding:4px;margin:0 0 18px;
+}
+.country button{
+  font:inherit;font-size:14px;font-weight:700;
+  color:var(--txt-2);background:none;border:none;cursor:pointer;
+  padding:9px 17px;border-radius:999px;
+  transition:background .15s,color .15s;
+}
+.country button.on{background:var(--accent);color:var(--accent-ink);box-shadow:0 4px 12px -4px color-mix(in srgb,var(--accent) 70%,transparent)}
+
+/* ---------- Chips row (РФ: оплата, удобства) ---------- */
+.chiprow{grid-column:1 / -1;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.chip{
+  font:inherit;font-size:13px;font-weight:600;
+  color:var(--txt-2);background:var(--surface-2);border:1px solid var(--line);
+  border-radius:999px;padding:8px 13px;cursor:pointer;
+  transition:background .15s,color .15s,border-color .15s;
+}
+.chip:hover{border-color:var(--line-strong)}
+.chip.on{background:var(--accent);color:var(--accent-ink);border-color:transparent}
+.chip.pay.on{background:#12b76a;color:#fff}
+.chip-sep{font-size:12.5px;color:var(--txt-3);font-weight:700;margin-left:4px}
+
+/* ---------- 101Hotels (РФ) source colours ---------- */
+.tag.H101{background:linear-gradient(120deg,#7c3aed,#a855f7)}
+.price-pin.H101{background:#7c3aed}
+
 /* ---------- Responsive ---------- */
 @media (min-width:640px){
   .bar{grid-template-columns:repeat(3,1fr)}
@@ -715,13 +836,18 @@ h1 .accent{
   <h1>Жильё на сутки, <span class="accent">без лишних вкладок</span></h1>
   <p class="lead">Квартиры, коттеджи и усадьбы на сутки из двух крупнейших площадок аренды Беларуси — Kufar и Realt — в одной ленте и на карте. Настройте фильтры и найдите вариант под свою дату и бюджет.</p>
 
+  <div class="country">
+    <button id="cbBY" class="on" type="button" onclick="setCountry('by')">🇧🇾 Беларусь · посуточно</button>
+    <button id="cbRU" type="button" onclick="setCountry('ru')">🇷🇺 Россия · отели</button>
+  </div>
+
   <form class="bar" id="bar" onsubmit="return false">
     <label class="fld">
       <span>Область</span>
       <select id="region">
         <option value="any">Любая область</option>
-        <option value="brest" selected>Брестская обл.</option>
-        <option value="minsk">Минск (город)</option>
+        <option value="brest">Брестская обл.</option>
+        <option value="minsk" selected>Минск (город)</option>
         <option value="minsk-obl">Минская обл.</option>
         <option value="gomel">Гомельская обл.</option>
         <option value="grodno">Гродненская обл.</option>
@@ -805,6 +931,53 @@ h1 .accent{
     <button id="go" class="go" type="button">Найти</button>
   </form>
 
+  <form class="bar" id="barRF" style="display:none" onsubmit="return false">
+    <label class="fld">
+      <span>Город</span>
+      <select id="rfCity">${RF_CITY_OPTIONS}</select>
+    </label>
+    <label class="fld">
+      <span>Тип размещения</span>
+      <select id="rfType"><option value="">любой</option>${RF_TYPE_OPTIONS}</select>
+    </label>
+    <label class="fld">
+      <span>Звёзды</span>
+      <select id="rfStars">
+        <option value="">любые</option>
+        <option value="3,4,5">3★ и выше</option>
+        <option value="4,5">4★ и выше</option>
+        <option value="5">5★</option>
+      </select>
+    </label>
+    <label class="fld">
+      <span>Цена до, ₽/ночь</span>
+      <input id="rfMax" type="number" placeholder="без огранич.">
+    </label>
+    <label class="fld">
+      <span>Рейтинг</span>
+      <select id="rfRating">
+        <option value="">любой</option>
+        <option value="7">7+ хорошо</option>
+        <option value="8">8+ очень хорошо</option>
+        <option value="9">9+ отлично</option>
+      </select>
+    </label>
+    <label class="fld">
+      <span>Сортировка</span>
+      <select id="rfSort">
+        <option value="price_asc">Дешёвые сверху</option>
+        <option value="price_desc">Дорогие сверху</option>
+        <option value="rating_desc">По рейтингу</option>
+      </select>
+    </label>
+    <div class="chiprow">
+      <button type="button" class="chip pay" id="rfNoCard" data-pay="1">💳 Оплата при заселении</button>
+      <span class="chip-sep">Удобства:</span>
+      ${RF_SERVICE_CHIPS}
+    </div>
+    <button id="goRF" class="go" type="button">Найти отели</button>
+  </form>
+
   <div class="toolbar">
     <div id="stat"></div>
     <span id="geo" style="color:var(--txt-3);font-size:12.5px"></span>
@@ -818,7 +991,7 @@ h1 .accent{
   <div id="grid"></div>
   <div id="pager"></div>
 
-  <p class="hint">Цены и наличие подтягиваются напрямую из объявлений Kufar и Realt в режиме реального времени. На карте цена показана прямо на метке: <b style="color:var(--kufar)">синие</b> — Kufar, <b style="color:var(--realt)">оранжевые</b> — Realt. Точные координаты подтягиваются из объявления; пока адрес уточняется, метка стоит у центра города (значок ≈ в подсказке). Итоговая стоимость за весь период рассчитывается по датам заезда и выезда. Перед бронированием уточняйте детали у собственника.</p>
+  <p class="hint" id="hint">Цены и наличие подтягиваются напрямую из объявлений Kufar и Realt в режиме реального времени. На карте цена показана прямо на метке: <b style="color:var(--kufar)">синие</b> — Kufar, <b style="color:var(--realt)">оранжевые</b> — Realt. Точные координаты подтягиваются из объявления; пока адрес уточняется, метка стоит у центра города (значок ≈ в подсказке). Итоговая стоимость за весь период рассчитывается по датам заезда и выезда. Перед бронированием уточняйте детали у собственника.</p>
 </div>
 
 <button id="up" class="up" type="button" aria-label="Наверх" title="Наверх">↑</button>
@@ -829,6 +1002,25 @@ const CITIES = ${JSON.stringify(CITIES_MAP)};
 const PAGE_SIZE = 24;
 window.__page = 1;
 window.__view = 'list';
+window.__mode = 'by';   // 'by' = Беларусь (Kufar+Realt), 'ru' = Россия (101hotels)
+
+function srcName(s){ return s==='H101' ? '101Hotels' : s; }
+function curOf(x){ return (x && x.cur) ? x.cur : 'BYN'; }
+const HINT_RU = 'Отели и жильё России с 101hotels.com в реальном времени. Цена «от» за ночь показана прямо на метке карты (<b style="color:#7c3aed">фиолетовые</b> — 101Hotels, координаты точные). Доступны фильтры по типу размещения, звёздам, цене, рейтингу, удобствам и оплате при заселении. Список и карта; перед бронированием проверяйте даты и условия на 101hotels.com.';
+
+// переключение Беларусь / Россия
+function setCountry(c){
+  window.__mode = (c==='ru') ? 'ru' : 'by';
+  const ru = window.__mode==='ru';
+  $('#cbBY').classList.toggle('on', !ru);
+  $('#cbRU').classList.toggle('on', ru);
+  $('#bar').style.display   = ru ? 'none' : '';
+  $('#barRF').style.display = ru ? '' : 'none';
+  if(!window.__hintBY) window.__hintBY = $('#hint').innerHTML;
+  $('#hint').innerHTML = ru ? HINT_RU : window.__hintBY;
+  window.__page = 1;
+  run();
+}
 
 function fillCities(){
   const reg=$('#region').value, sel=$('#city'), cur=sel.value;
@@ -846,11 +1038,38 @@ function nights(){
   const n=Math.round((new Date(b)-new Date(a))/86400000);
   return n>0? n : 0;
 }
+function currentSort(){
+  return window.__mode==='ru'
+    ? ($('#rfSort')?$('#rfSort').value:'price_asc')
+    : ($('#sort')?$('#sort').value:'price_asc');
+}
 function sortItems(){
-  const s=$('#sort')?$('#sort').value:'price_asc';
+  const s=currentSort();
   (window.__items||[]).sort(function(a,b){ return s==='price_desc'? b.price-a.price : s==='rating_desc'? (((b.rating||0)-(a.rating||0))||(a.price-b.price)) : a.price-b.price; });
 }
+async function runRF(){
+  const p=new URLSearchParams({ city:$('#rfCity').value });
+  const t=$('#rfType').value;   if(t)  p.set('type', t);
+  const st=$('#rfStars').value; if(st) p.set('stars', st);
+  const mx=$('#rfMax').value;   if(mx) p.set('max', mx);
+  const rt=$('#rfRating').value;if(rt) p.set('rating', rt);
+  p.set('sort', $('#rfSort').value);
+  if($('#rfNoCard').classList.contains('on')) p.set('no_card','1');
+  const svc=[...document.querySelectorAll('#barRF .chip[data-v].on')].map(b=>b.dataset.v).join(',');
+  if(svc) p.set('services', svc);
+  $('#stat').textContent='Ищу отели…'; $('#grid').innerHTML=''; $('#pager').innerHTML='';
+  try{
+    const d=await (await fetch('/api/rf/search?'+p.toString())).json();
+    const cityName=$('#rfCity').selectedOptions[0] ? $('#rfCity').selectedOptions[0].textContent : '';
+    $('#stat').textContent='Найдено '+d.total+' отелей'+(cityName?(' · '+cityName):'');
+    window.__items=d.items||[]; window.__page=1;
+    if(!window.__items.length){ $('#grid').innerHTML='<div class="empty">Ничего не найдено. Смягчите фильтры.</div>'; if(window.__view==='map') plotMap(true); return; }
+    sortItems();
+    if(window.__view==='map') plotMap(true); else renderCards();
+  }catch(e){ $('#stat').textContent='Ошибка: '+e.message; }
+}
 async function run(){
+  if(window.__mode==='ru') return runRF();
   const p=new URLSearchParams({
     region:$('#region').value, city:$('#city').value.trim(), type:$('#type').value,
     rooms:$('#rooms').value, guests:$('#guests').value, max:$('#max').value, source:$('#source').value
@@ -887,7 +1106,10 @@ function renderCards(){
         const st=Math.round(x.rating/2);
         stars='<div class="stars">'+'★'.repeat(st)+'☆'.repeat(5-st)+'<span class="num">'+x.rating.toFixed(1)+' · '+x.reviews+' отз.</span></div>';
       }
-      const tag='<span class="tag '+x.src+'">'+x.src+'</span>';
+      const tag='<span class="tag '+x.src+'">'+srcName(x.src)+'</span>';
+      const meta = x.chips
+        ? '<div class="meta">'+x.chips.map(function(c){return '<span>'+c+'</span>';}).join('')+'</div>'
+        : '<div class="meta"><span>'+(x.area||'—')+'</span><span>'+x.rooms+'-комн</span>'+capChip+'</div>';
       const ph=x.photos&&x.photos.length? x.photos : [];
       let slider;
       if(ph.length){
@@ -900,8 +1122,8 @@ function renderCards(){
       }
       return '<div class="card">'+slider
         +'<div class="bd">'
-        +'<div class="pr">'+x.price+' BYN <span class="tot">/ сутки</span></div>'+total+stars
-        +'<div class="meta"><span>'+(x.area||'—')+'</span><span>'+x.rooms+'-комн</span>'+capChip+'</div>'
+        +'<div class="pr">'+x.price+' '+curOf(x)+' <span class="tot">/ '+(x.chips?'ночь':'сутки')+'</span></div>'+total+stars
+        +meta
         +'<div class="ttl">'+(x.title||'').replace(/</g,'&lt;')+'</div>'+desc
         +'<div class="act">'+call+'<a href="'+x.link+'" target="_blank" rel="noopener">Открыть</a></div>'
         +'</div></div>';
@@ -938,6 +1160,13 @@ function setView(v){
 // карта Leaflet: цена на метке, тултип при наведении, карточка в попапе
 function popupHtml(x){
   const img=x.photos&&x.photos[0]? '<img src="'+x.photos[0]+'" style="width:100%;height:120px;object-fit:cover;border-radius:8px;display:block;margin-bottom:8px" alt="">':'';
+  if(x.chips){   // отель 101hotels
+    const rate=(x.reviews>0&&x.rating>0)? '<div style="font-size:12px;color:#e6a400;font-weight:700;margin:2px 0">★ '+x.rating.toFixed(1)+' · '+x.reviews+' отз.</div>':'';
+    return '<div class="mp"><div class="mp-price">'+x.price+' '+curOf(x)+' <small>/ ночь</small></div>'
+      +'<div class="mp-meta">'+(x.title||'')+'</div>'
+      +'<div class="mp-meta">'+x.chips.join(' · ')+'</div>'+rate+img
+      +'<a class="mp-open" href="'+x.link+'" target="_blank" rel="noopener">Открыть на 101Hotels →</a></div>';
+  }
   const call=x.phone? '<a class="mp-call" href="tel:+'+x.phone+'">📞 '+fmtPhone(x.phone)+(x.name?(' · '+x.name):'')+'</a>':'';
   const ap=x.approx? '<div class="mp-approx">≈ адрес примерный (по городу)</div>':'';
   const cap=x.capacity? (' · до '+x.capacity+' гостей'):'';
@@ -959,7 +1188,10 @@ function plotMap(fit){
   items.forEach(function(x){
     const icon=L.divIcon({className:'',iconSize:[1,1],iconAnchor:[0,0],html:'<div class="price-pin '+x.src+'">'+x.price+'</div>'});
     const mk=L.marker([x.lat,x.lng],{icon:icon,riseOnHover:true}).addTo(window.__mlayer);
-    mk.bindTooltip((x.area?x.area+' · ':'')+x.rooms+'-комн · '+x.price+' BYN'+(x.approx?' (≈)':''),{direction:'top',offset:[0,-14]});
+    const tip = x.chips
+      ? (x.chips.join(' · ')+' · '+x.price+' '+curOf(x))
+      : ((x.area?x.area+' · ':'')+x.rooms+'-комн · '+x.price+' BYN'+(x.approx?' (≈)':''));
+    mk.bindTooltip(tip,{direction:'top',offset:[0,-14]});
     mk.bindPopup(popupHtml(x),{maxWidth:260,minWidth:220});
     pts.push([x.lat,x.lng]);
   });
@@ -1027,9 +1259,15 @@ function slide(card, dir){
   const img=document.getElementById('im'+card); if(img) img.src=ph[next];
   const cnt=document.getElementById('cnt'+card); if(cnt) cnt.textContent=(next+1)+'/'+ph.length;
 }
-document.querySelectorAll('.bar select, .bar input').forEach(el=>{ if(el.id!=='sort') el.addEventListener('change',run); });
+// Беларусь
+document.querySelectorAll('#bar select, #bar input').forEach(el=>{ if(el.id!=='sort') el.addEventListener('change',run); });
 $('#sort').addEventListener('change', function(){ window.__page=1; renderCards(); });
 $('#go').addEventListener('click',run);
+// Россия (101hotels)
+document.querySelectorAll('#barRF select, #barRF input').forEach(el=>{ if(el.id!=='rfSort') el.addEventListener('change',run); });
+$('#rfSort').addEventListener('change', function(){ window.__page=1; renderCards(); });
+document.querySelectorAll('#barRF .chip').forEach(ch=> ch.addEventListener('click', function(){ this.classList.toggle('on'); run(); }));
+$('#goRF').addEventListener('click',run);
 // кнопка "наверх"
 window.addEventListener('scroll', function(){ $('#up').classList.toggle('show', window.scrollY>500); });
 window.addEventListener('load',run);
@@ -1062,6 +1300,20 @@ http.createServer(async (req,res)=>{
       res.end(JSON.stringify({results:out}));
     });
     return;
+  }
+  if(u.pathname === '/api/rf/search'){
+    const data = await searchRF(
+      u.searchParams.get('city') || 'moskva',
+      { types:    u.searchParams.get('type')     || '',
+        stars:    u.searchParams.get('stars')    || '',
+        services: u.searchParams.get('services') || '',
+        rating:   u.searchParams.get('rating')   || '',
+        no_card:  u.searchParams.get('no_card')  || '',
+        maxP:     +(u.searchParams.get('max')    || 0),
+        sort:     u.searchParams.get('sort')     || 'price_asc' }
+    );
+    res.writeHead(200, {'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*'});
+    res.end(JSON.stringify(data)); return;
   }
   if(u.pathname === '/api/desc'){
     let text='';
