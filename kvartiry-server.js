@@ -486,6 +486,7 @@ async function fromR101(cityKey, opts){
   if(opts.stars)    p.set('stars', opts.stars);
   if(opts.services) p.set('services', opts.services);
   if(opts.rating)   p.set('rating', opts.rating);
+  if(opts.bathroom) p.set('bathroom', '1');   // «Удобства в номере»
   let url = 'https://ssg.101hotels.com/hotel/available/map?' + p.toString();
   if(opts.maxP) url += '&price%5B%5D=0&price%5B%5D=' + encodeURIComponent(opts.maxP);
   try{
@@ -1259,7 +1260,7 @@ h1 .accent{
     <div class="amen">
       <span>Удобства в номере</span>
       <div class="amen-box">
-        <label class="amen-item amen-all"><input type="checkbox" id="amenAll"> <b>Удобства в номере</b></label>
+        <label class="amen-item amen-all"><input type="checkbox" id="rfBathroom"> <b>Удобства в номере</b></label>
         ${RF_SERVICE_CHECKS}
       </div>
     </div>
@@ -1363,6 +1364,7 @@ async function runRF(){
   if($('#rfNoCard').classList.contains('on')) p.set('no_card','1');
   const svc=[...document.querySelectorAll('#barRF .amen-cb:checked')].map(cb=>cb.value).join(',');
   if(svc) p.set('services', svc);
+  if($('#rfBathroom').checked) p.set('bathroom','1');   // фильтр «Удобства в номере»
   $('#stat').textContent='Ищу отели…'; $('#grid').innerHTML=''; $('#pager').innerHTML='';
   try{
     const d=await (await fetch('/api/rf/search?'+p.toString())).json();
@@ -1596,16 +1598,9 @@ $('#sort').addEventListener('change', function(){ window.__page=1; renderCards()
 $('#go').addEventListener('click',run);
 $('#qname').addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); run(); } });
 // Россия (101hotels)
-document.querySelectorAll('#barRF select, #barRF input').forEach(el=>{ if(el.id!=='rfSort' && el.id!=='amenAll') el.addEventListener('change',run); });
+document.querySelectorAll('#barRF select, #barRF input').forEach(el=>{ if(el.id!=='rfSort') el.addEventListener('change',run); });
 $('#rfSort').addEventListener('change', function(){ window.__page=1; renderCards(); });
 document.querySelectorAll('#barRF .chip').forEach(ch=> ch.addEventListener('click', function(){ this.classList.toggle('on'); run(); }));
-// мастер-галочка «Удобства в номере»: включает/выключает все удобства сразу
-$('#amenAll').addEventListener('change', function(){
-  document.querySelectorAll('#barRF .amen-cb').forEach(function(cb){ cb.checked=$('#amenAll').checked; });
-  run();
-});
-document.querySelectorAll('#barRF .amen-cb').forEach(function(cb){ cb.addEventListener('change', function(){
-  const all=[...document.querySelectorAll('#barRF .amen-cb')]; $('#amenAll').checked=all.every(function(c){return c.checked;}); }); });
 $('#goRF').addEventListener('click',run);
 // кнопка "наверх"
 window.addEventListener('scroll', function(){ $('#up').classList.toggle('show', window.scrollY>500); });
@@ -1690,6 +1685,7 @@ http.createServer(async (req,res)=>{
         services: u.searchParams.get('services') || '',
         rating:   u.searchParams.get('rating')   || '',
         no_card:  u.searchParams.get('no_card')  || '',
+        bathroom: u.searchParams.get('bathroom') || '',
         maxP:     +(u.searchParams.get('max')    || 0),
         sort:     u.searchParams.get('sort')     || 'price_asc' }
     );
