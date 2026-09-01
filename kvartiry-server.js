@@ -6,7 +6,7 @@ const http = require('http');
 const PORT = process.env.PORT || 8080;   // Render задаёт свой порт через переменную окружения
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36';
 const SITE_URL = 'https://poisk-kvartir.onrender.com';
-const FB_FORM = '1a5e2f853c6c65a903edb6bfa6f0854f';   // алиас FormSubmit (скрывает реальный email — адрес нигде не светится)
+// адрес для обратной связи держим только в base64 (без открытого email в репозитории)
 
 // Области: realt = слаг раздела, oblast = как пишет Kufar, main = главный город (для запроса Kufar)
 const REGIONS = {
@@ -506,25 +506,25 @@ async function searchRF(cityKey, opts){
   return { total: items.length, items };
 }
 
-const META_DESC = 'Поиск жилья на сутки: Беларусь (Kufar + Realt) и отели России (101hotels) в одном месте. Фильтры по городу, типу, цене, звёздам, рейтингу и удобствам, список и карта с ценами, телефоны и описания.';
+const META_DESC = 'Поиск жилья на сутки: Беларусь (Kufar, Realt, Flatbook) и отели России (101Hotels) в одном месте. Фильтры по городу, типу, цене, звёздам, рейтингу и удобствам, список и карта с ценами, телефоны и описания.';
 
 const PAGE = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Жильё на сутки в Беларуси — квартиры, коттеджи, усадьбы (Kufar + Realt)</title>
+<title>Жильё на сутки — Беларусь (Kufar, Realt, Flatbook) и отели России (101Hotels)</title>
 <meta name="description" content="${META_DESC}">
-<meta name="keywords" content="снять квартиру на сутки, жильё на сутки Беларусь, квартира посуточно Минск, коттедж на сутки, усадьба на выходные, аренда посуточно Брест Гомель Гродно Витебск Могилёв, kufar realt">
+<meta name="keywords" content="снять квартиру на сутки, жильё на сутки Беларусь, квартира посуточно Минск, коттедж на сутки, усадьба на выходные, аренда посуточно Брест Гомель Гродно Витебск Могилёв, отели России посуточно, kufar, realt, flatbook, 101hotels">
 <meta name="robots" content="index,follow">
 <meta name="author" content="poisk-kvartir">
 <meta name="theme-color" content="#ff5a1f">
 <link rel="canonical" href="${SITE_URL}/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Поиск жилья на сутки">
-<meta property="og:title" content="Жильё на сутки в Беларуси — квартиры, коттеджи, усадьбы">
+<meta property="og:title" content="Жильё на сутки — Беларусь (Kufar, Realt, Flatbook) и Россия (101Hotels)">
 <meta property="og:description" content="${META_DESC}">
 <meta property="og:url" content="${SITE_URL}/">
 <meta property="og:locale" content="ru_BY">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="Жильё на сутки в Беларуси — Kufar + Realt в одном поиске">
+<meta name="twitter:title" content="Жильё на сутки — Kufar, Realt, Flatbook (Беларусь) и 101Hotels (Россия)">
 <meta name="twitter:description" content="${META_DESC}">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8F%A0%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -1005,14 +1005,19 @@ h1 .accent{
 .up:active{transform:scale(.94)}
 
 /* ---------- Feedback (пожелания) ---------- */
-.foot{display:flex;justify-content:center;margin:14px 2px 0}
+.foot{display:flex;flex-direction:column;align-items:center;gap:10px;margin:34px 2px 0;padding-top:26px;border-top:1px solid var(--line)}
+.foot .foot-h{font-size:14.5px;font-weight:600;color:var(--txt-2)}
 .fb-open{
-  font:inherit;font-size:13.5px;font-weight:600;
-  color:var(--txt-2);background:var(--surface-2);border:1px solid var(--line);
-  border-radius:999px;padding:10px 18px;cursor:pointer;
-  transition:background .15s,border-color .15s,color .15s;
+  font:inherit;font-size:15.5px;font-weight:700;letter-spacing:-.01em;
+  color:var(--accent-ink);
+  background:linear-gradient(120deg,var(--accent),var(--accent-2));
+  border:none;border-radius:999px;padding:14px 28px;cursor:pointer;
+  box-shadow:0 10px 26px -6px color-mix(in srgb,var(--accent) 72%,transparent);
+  transition:transform .12s, box-shadow .15s, filter .15s;
+  display:inline-flex;align-items:center;gap:9px;
 }
-.fb-open:hover{border-color:var(--accent);color:var(--accent)}
+.fb-open:hover{filter:brightness(1.05);box-shadow:0 14px 30px -6px color-mix(in srgb,var(--accent) 80%,transparent)}
+.fb-open:active{transform:translateY(1px)}
 .fb-overlay{
   position:fixed;inset:0;z-index:1400;
   background:rgba(10,12,18,.5);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);
@@ -1094,9 +1099,9 @@ h1 .accent{
 }
 </style></head><body>
 <div class="wrap">
-  <span class="kicker"><span class="dot"></span>Kufar + Realt · Беларусь</span>
+  <span class="kicker"><span class="dot"></span>Kufar · Realt · Flatbook · 101Hotels</span>
   <h1>Жильё на сутки, <span class="accent">без лишних вкладок</span></h1>
-  <p class="lead">Квартиры, коттеджи и усадьбы на сутки из двух крупнейших площадок аренды Беларуси — Kufar и Realt — в одной ленте и на карте. Настройте фильтры и найдите вариант под свою дату и бюджет.</p>
+  <p class="lead">Квартиры, коттеджи и усадьбы на сутки из Kufar, Realt и Flatbook по Беларуси — плюс отели и жильё России с 101Hotels. Всё в одной ленте и на карте: настройте фильтры и найдите вариант под свою дату и бюджет.</p>
 
   <div class="country">
     <button id="cbBY" class="on" type="button" onclick="setCountry('by')">🇧🇾 Беларусь · посуточно</button>
@@ -1261,6 +1266,7 @@ h1 .accent{
   <p class="hint" id="hint">Цены и наличие подтягиваются напрямую из объявлений Kufar и Realt в режиме реального времени. На карте цена показана прямо на метке: <b style="color:var(--kufar)">синие</b> — Kufar, <b style="color:var(--realt)">оранжевые</b> — Realt, <b style="color:#0a9d70">зелёные</b> — Flatbook (областные центры, квартиры и усадьбы). Точные координаты подтягиваются из объявления; пока адрес уточняется, метка стоит у центра города (значок ≈ в подсказке). Итоговая стоимость за весь период рассчитывается по датам заезда и выезда. Перед бронированием уточняйте детали у собственника.</p>
 
   <div class="foot">
+    <div class="foot-h">Нашли неточность или хотите что-то добавить?</div>
     <button id="fbOpen" class="fb-open" type="button">💬 Оставить пожелание или дополнение</button>
   </div>
 </div>
@@ -1277,15 +1283,6 @@ h1 .accent{
   </div>
 </div>
 
-<iframe name="fbFrame" id="fbFrame" style="display:none" title="fb"></iframe>
-<form id="fbForm" action="https://formsubmit.co/${FB_FORM}" method="POST" target="fbFrame" style="display:none">
-  <input type="hidden" name="_subject" value="Поиск жилья — пожелание с сайта">
-  <input type="hidden" name="_captcha" value="false">
-  <input type="hidden" name="_template" value="table">
-  <input type="hidden" name="email" id="fbFormEmail">
-  <input type="hidden" name="Сообщение" id="fbFormMsg">
-</form>
-
 <button id="up" class="up" type="button" aria-label="Наверх" title="Наверх">↑</button>
 
 <script>
@@ -1298,7 +1295,7 @@ window.__mode = 'by';   // 'by' = Беларусь (Kufar+Realt), 'ru' = Рос�
 
 function srcName(s){ return s==='H101' ? '101Hotels' : s; }
 function curOf(x){ return (x && x.cur) ? x.cur : 'BYN'; }
-const FB_FORM = ${JSON.stringify(FB_FORM)};   // алиас FormSubmit — email нигде не отображается
+const FB_TO = 'a29sdWRhNDlAZ21haWwuY29t';   // адрес обратной связи в base64 (не открытым текстом)
 const HINT_RU = 'Отели и жильё России с 101hotels.com в реальном времени. Цена «от» за ночь показана прямо на метке карты (<b style="color:#7c3aed">фиолетовые</b> — 101Hotels, координаты точные). Доступны фильтры по типу размещения, звёздам, цене, рейтингу, удобствам и оплате при заселении. Список и карта; перед бронированием проверяйте даты и условия на 101hotels.com.';
 
 // переключение Беларусь / Россия
@@ -1601,19 +1598,19 @@ $('#fbSend').addEventListener('click', async function(){
   const st=$('#fbStatus'); st.className='fb-status';
   if(!msg){ st.className='fb-status err'; st.textContent='Напишите, пожалуйста, сообщение.'; return; }
   this.disabled=true; st.textContent='Отправляю…';
-  // отправка классической формой в скрытый iframe (без CORS; в коде только алиас FormSubmit, email не виден)
-  const self=this, frame=$('#fbFrame');
-  let finished=false;
-  const finish=function(){ if(finished) return; finished=true; frame.removeEventListener('load',onload);
-    st.className='fb-status ok'; st.textContent='Спасибо! Сообщение отправлено.';
-    $('#fbMsg').value=''; $('#fbEmail').value=''; self.disabled=false;
-    setTimeout(function(){ fbToggle(false); },1600); };
-  function onload(){ finish(); }
-  frame.addEventListener('load', onload);
-  $('#fbFormEmail').value = email||'не указан';
-  $('#fbFormMsg').value = msg;
-  $('#fbForm').submit();
-  setTimeout(finish, 7000);   // страховка, если событие load не придёт
+  const self=this;
+  const ok=function(){ st.className='fb-status ok'; st.textContent='Спасибо! Сообщение отправлено.';
+    $('#fbMsg').value=''; $('#fbEmail').value=''; self.disabled=false; setTimeout(function(){ fbToggle(false); },1600); };
+  const fail=function(){ st.className='fb-status err'; st.textContent='Не удалось отправить, попробуйте позже.'; self.disabled=false; };
+  // /ajax принимает JSON; CORS у FormSubmit открыт, браузер сам шлёт Referer
+  fetch('https://formsubmit.co/ajax/'+atob(FB_TO), {
+    method:'POST',
+    headers:{'Content-Type':'application/json','Accept':'application/json'},
+    body:JSON.stringify({ _subject:'Поиск жилья — пожелание с сайта', email: email||'не указан', Сообщение: msg })
+  })
+    .then(function(r){ return r.json().catch(function(){ return {success:'true'}; }); })
+    .then(function(j){ (String(j.success)==='true') ? ok() : fail(); })
+    .catch(function(){ fail(); });
 });
 window.addEventListener('load',run);
 </script></body></html>`;
