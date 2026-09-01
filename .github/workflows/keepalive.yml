@@ -1,0 +1,18 @@
+name: keepalive
+# Будим сайт на Render (бесплатный тариф засыпает после ~15 мин простоя).
+# Пингуем по расписанию; GitHub может задерживать cron, поэтому в каждом запуске два пинга с паузой.
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # примерно каждые 10 минут
+  workflow_dispatch:          # можно запустить вручную из вкладки Actions
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping site (x2)
+        run: |
+          for i in 1 2; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 https://poisk-kvartir.onrender.com/ || echo "err")
+            echo "ping $i -> $code"
+            if [ "$i" -lt 2 ]; then sleep 240; fi
+          done
