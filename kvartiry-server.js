@@ -1186,6 +1186,7 @@ window.__mode = 'by';   // 'by' = Беларусь (Kufar+Realt), 'ru' = Рос�
 
 function srcName(s){ return s==='H101' ? '101Hotels' : s; }
 function curOf(x){ return (x && x.cur) ? x.cur : 'BYN'; }
+const FB_EMAIL = ${JSON.stringify(FEEDBACK_EMAIL)};   // куда идут пожелания (через formsubmit.co из браузера)
 const HINT_RU = 'Отели и жильё России с 101hotels.com в реальном времени. Цена «от» за ночь показана прямо на метке карты (<b style="color:#7c3aed">фиолетовые</b> — 101Hotels, координаты точные). Доступны фильтры по типу размещения, звёздам, цене, рейтингу, удобствам и оплате при заселении. Список и карта; перед бронированием проверяйте даты и условия на 101hotels.com.';
 
 // переключение Беларусь / Россия
@@ -1466,9 +1467,15 @@ $('#fbSend').addEventListener('click', async function(){
   if(!msg){ st.className='fb-status err'; st.textContent='Напишите, пожалуйста, сообщение.'; return; }
   this.disabled=true; st.textContent='Отправляю…';
   try{
-    const r=await (await fetch('/api/feedback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,message:msg})})).json();
-    if(r.ok){ st.className='fb-status ok'; st.textContent='Спасибо! Сообщение отправлено.'; $('#fbMsg').value=''; $('#fbEmail').value=''; setTimeout(function(){fbToggle(false);},1600); }
-    else { st.className='fb-status err'; st.textContent='Не удалось отправить'+(r.error?(': '+r.error):'')+'.'; }
+    // отправляем напрямую из браузера — FormSubmit блокирует серверные запросы с дата-центра
+    const r=await fetch('https://formsubmit.co/ajax/'+encodeURIComponent(FB_EMAIL),{
+      method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'},
+      body:JSON.stringify({ _subject:'Поиск жилья — пожелание с сайта', email: email||'не указан', Сообщение: msg })
+    });
+    const j=await r.json().catch(function(){return {};});
+    if(String(j.success)==='true'){ st.className='fb-status ok'; st.textContent='Спасибо! Сообщение отправлено.'; $('#fbMsg').value=''; $('#fbEmail').value=''; setTimeout(function(){fbToggle(false);},1600); }
+    else if(/activat/i.test(j.message||'')){ st.className='fb-status err'; st.textContent='Форма ещё активируется. Сообщение придёт после подтверждения — попробуйте чуть позже.'; }
+    else { st.className='fb-status err'; st.textContent='Не удалось отправить, попробуйте позже.'; }
   }catch(e){ st.className='fb-status err'; st.textContent='Ошибка сети, попробуйте позже.'; }
   this.disabled=false;
 });
