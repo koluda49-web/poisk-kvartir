@@ -181,15 +181,49 @@ async function fromRealt(reg, city, type, rooms, maxP, guests){
   }catch(e){ console.error('Realt:', e.message); return []; }
 }
 
+// flatbook.by — суточные квартиры (только Минск). Все данные во встроенном
+// <div id="data-geo" data-geo='[...]'>: координаты, цена, адрес, телефон, фото.
+const FLATBOOK_KEYS = new Set(['minsk','minsk-obl','any']);   // flatbook = только Минск
+async function fromFlatbook(regKey, city, rooms, maxP, guests){
+  if(!FLATBOOK_KEYS.has(regKey)) return [];
+  if(city && !/минск/i.test(city)) return [];
+  // у flatbook нет числа комнат/гостей в данных — карточка комнаты не заявляет,
+  // поэтому фильтры комнат/гостей к нему не применяем (показываем как доп. источник по Минску)
+  try{
+    const h = await (await fetch('https://flatbook.by/',{headers:{'User-Agent':UA,'Accept-Language':'ru'}})).text();
+    const m = h.match(/id="data-geo"\s+data-geo='([^']*)'/);
+    if(!m) return [];
+    let arr = JSON.parse(m[1]); if(typeof arr==='string') arr = JSON.parse(arr);
+    return arr.map(f=>{
+      const ph=String(f.phone||'').replace(/\D/g,'');
+      const phone = ph.length===9 ? ('375'+ph) : ph;
+      const metro = (f.metro_description&&f.metro_description[0]&&f.metro_description[0].metro_name)||'';
+      const addr = ((f.streetName||'')+' '+(f.streetNumber||'')).trim();
+      const note = f.seoTitle ? (' · '+String(f.seoTitle).slice(0,70)) : '';
+      return { src:'Flatbook', cur:'BYN', unit:'сутки',
+        price:+f.price_day||0, rooms:0, area:'Минск', capacity:'',
+        title: addr + note,
+        photos: f.generatedImagePath ? [f.generatedImagePath] : [],
+        rating:0, reviews:0, descId:null, phone, name:'',
+        lat:+f.latitude, lng:+f.longitude, approx:false,
+        chips: ['Минск'].concat(metro?['м. '+metro]:[]),
+        link: f.url || ('https://flatbook.by/'+f.alias+'/') };
+    }).filter(x=> x.price>0 && x.lat>50 && x.lng>22 && (!maxP||x.price<=maxP));
+  }catch(e){ console.error('Flatbook:', e.message); return []; }
+}
+
 async function search(regKey, city, type, rooms, maxP, guests, source){
   const keys = regKey==='any' ? Object.keys(REGIONS) : [ REGIONS[regKey] ? regKey : 'brest' ];
-  const useK = source!=='realt', useR = source!=='kufar';
+  const useK = source==='both' || source==='kufar';
+  const useR = source==='both' || source==='realt';
+  const useF = source==='both' || source==='flatbook';
   const tasks = [];
   keys.forEach(key=>{
     const reg = REGIONS[key];
     if(useK) tasks.push(fromKufar(reg,city,type,rooms,maxP,guests));
     if(useR) tasks.push(fromRealt(reg,city,type,rooms,maxP,guests));
   });
+  if(useF && type==='flat') tasks.push(fromFlatbook(regKey,city,rooms,maxP,guests));   // flatbook — только квартиры
   const arrs = await Promise.all(tasks);
   let all = [].concat(...arrs);
   // убрать дубли по ссылке (Kufar при 'любой области' может повторяться)
@@ -199,6 +233,7 @@ async function search(regKey, city, type, rooms, maxP, guests, source){
   return { total: all.length,
            kufar: all.filter(x=>x.src==='Kufar').length,
            realt: all.filter(x=>x.src==='Realt').length,
+           flatbook: all.filter(x=>x.src==='Flatbook').length,
            items: all };
 }
 
@@ -885,6 +920,8 @@ h1 .accent{
 /* ---------- 101Hotels (РФ) source colours ---------- */
 .tag.H101{background:linear-gradient(120deg,#7c3aed,#a855f7)}
 .price-pin.H101{background:#7c3aed}
+.tag.Flatbook{background:linear-gradient(120deg,#0a9d70,#12c78f)}
+.price-pin.Flatbook{background:#0a9d70}
 
 /* ---------- Responsive ---------- */
 @media (min-width:640px){
@@ -968,9 +1005,10 @@ h1 .accent{
     <label class="fld">
       <span>Источник</span>
       <select id="source">
-        <option value="both">Kufar + Realt</option>
+        <option value="both">Все источники</option>
         <option value="kufar">Только Kufar</option>
         <option value="realt">Только Realt</option>
+        <option value="flatbook">Только Flatbook</option>
       </select>
     </label>
 
@@ -1056,7 +1094,7 @@ h1 .accent{
   <div id="grid"></div>
   <div id="pager"></div>
 
-  <p class="hint" id="hint">Цены и наличие подтягиваются напрямую из объявлений Kufar и Realt в режиме реального времени. На карте цена показана прямо на метке: <b style="color:var(--kufar)">синие</b> — Kufar, <b style="color:var(--realt)">оранжевые</b> — Realt. Точные координаты подтягиваются из объявления; пока адрес уточняется, метка стоит у центра города (значок ≈ в подсказке). Итоговая стоимость за весь период рассчитывается по датам заезда и выезда. Перед бронированием уточняйте детали у собственника.</p>
+  <p class="hint" id="hint">Цены и наличие подтягиваются напрямую из объявлений Kufar и Realt в режиме реального времени. На карте цена показана прямо на метке: <b style="color:var(--kufar)">синие</b> — Kufar, <b style="color:var(--realt)">оранжевые</b> — Realt, <b style="color:#0a9d70">зелёные</b> — Flatbook (Минск, суточные квартиры). Точные координаты подтягиваются из объявления; пока адрес уточняется, метка стоит у центра города (значок ≈ в подсказке). Итоговая стоимость за весь период рассчитывается по датам заезда и выезда. Перед бронированием уточняйте детали у собственника.</p>
 </div>
 
 <button id="up" class="up" type="button" aria-label="Наверх" title="Наверх">↑</button>
@@ -1143,7 +1181,8 @@ async function run(){
   try{
     const d=await (await fetch('/api/search?'+p.toString())).json();
     const N=nights();
-    $('#stat').textContent='Найдено '+d.total+' (Kufar '+d.kufar+' + Realt '+d.realt+')'+(N?(', расчёт на '+N+' ноч.'):'');
+    const parts=['Kufar '+d.kufar,'Realt '+d.realt].concat(d.flatbook?['Flatbook '+d.flatbook]:[]);
+    $('#stat').textContent='Найдено '+d.total+' ('+parts.join(' + ')+')'+(N?(', расчёт на '+N+' ноч.'):'');
     window.__items=d.items||[]; window.__page=1;
     if(!window.__items.length){ $('#grid').innerHTML='<div class="empty">Ничего не найдено. Смягчите фильтры.</div>'; if(window.__view==='map') plotMap(true); return; }
     sortItems();
@@ -1187,7 +1226,7 @@ function renderCards(){
       }
       return '<div class="card">'+slider
         +'<div class="bd">'
-        +'<div class="pr">'+x.price+' '+curOf(x)+' <span class="tot">/ '+(x.chips?'ночь':'сутки')+'</span></div>'+total+stars
+        +'<div class="pr">'+x.price+' '+curOf(x)+' <span class="tot">/ '+(x.unit||(x.src==='H101'?'ночь':'сутки'))+'</span></div>'+total+stars
         +meta
         +'<div class="ttl">'+(x.title||'').replace(/</g,'&lt;')+'</div>'+desc
         +'<div class="act">'+call+'<a href="'+x.link+'" target="_blank" rel="noopener">Открыть</a></div>'
@@ -1225,12 +1264,14 @@ function setView(v){
 // карта Leaflet: цена на метке, тултип при наведении, карточка в попапе
 function popupHtml(x){
   const img=x.photos&&x.photos[0]? '<img src="'+x.photos[0]+'" style="width:100%;height:120px;object-fit:cover;border-radius:8px;display:block;margin-bottom:8px" alt="">':'';
-  if(x.chips){   // отель 101hotels
+  if(x.chips){   // отель 101hotels / flatbook (карточка по чипам)
+    const unit=x.unit||(x.src==='H101'?'ночь':'сутки');
     const rate=(x.reviews>0&&x.rating>0)? '<div style="font-size:12px;color:#e6a400;font-weight:700;margin:2px 0">★ '+x.rating.toFixed(1)+' · '+x.reviews+' отз.</div>':'';
-    return '<div class="mp"><div class="mp-price">'+x.price+' '+curOf(x)+' <small>/ ночь</small></div>'
+    const call=x.phone? '<a class="mp-call" href="tel:+'+x.phone+'">📞 '+fmtPhone(x.phone)+'</a>':'';
+    return '<div class="mp"><div class="mp-price">'+x.price+' '+curOf(x)+' <small>/ '+unit+'</small></div>'
       +'<div class="mp-meta">'+(x.title||'')+'</div>'
-      +'<div class="mp-meta">'+x.chips.join(' · ')+'</div>'+rate+img
-      +'<a class="mp-open" href="'+x.link+'" target="_blank" rel="noopener">Открыть на 101Hotels →</a></div>';
+      +'<div class="mp-meta">'+x.chips.join(' · ')+'</div>'+rate+img+call
+      +'<a class="mp-open" href="'+x.link+'" target="_blank" rel="noopener">Открыть на '+srcName(x.src)+' →</a></div>';
   }
   const call=x.phone? '<a class="mp-call" href="tel:+'+x.phone+'">📞 '+fmtPhone(x.phone)+(x.name?(' · '+x.name):'')+'</a>':'';
   const ap=x.approx? '<div class="mp-approx">≈ адрес примерный (по городу)</div>':'';
