@@ -451,7 +451,7 @@ const RF_TYPES = {'1':'Отели','2':'Хостелы','3':'Гостевые д
 const RF_SERVICES = {'5':'Кондиционер','70':'Холодильник','71':'Чайник','64':'Телевизор','7':'Фен','6':'Сейф','120':'Звукоизоляция'};
 const RF_CITY_OPTIONS   = Object.entries(RF_CITIES).map(([k,v],i)=>'<option value="'+k+'"'+(i===0?' selected':'')+'>'+v.name+'</option>').join('');
 const RF_TYPE_OPTIONS   = Object.entries(RF_TYPES).map(([k,v])=>'<option value="'+k+'">'+v+'</option>').join('');
-const RF_SERVICE_CHIPS  = Object.entries(RF_SERVICES).map(([k,v])=>'<button type="button" class="chip" data-v="'+k+'">'+v+'</button>').join('');
+const RF_SERVICE_CHECKS = Object.entries(RF_SERVICES).map(([k,v])=>'<label class="amen-item"><input type="checkbox" class="amen-cb" value="'+k+'"> '+v+'</label>').join('');
 
 function hotel101ToItem(hh){
   const co = hh.coords || [];
@@ -1081,6 +1081,11 @@ h1 .accent{
 .chip.on{background:var(--accent);color:var(--accent-ink);border-color:transparent}
 .chip.pay.on{background:#12b76a;color:#fff}
 .chip-sep{font-size:12.5px;color:var(--txt-3);font-weight:700;margin-left:4px}
+.amen{grid-column:1 / -1;margin-top:2px}
+.amen > span{display:block;font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--txt-3);padding-left:2px;margin-bottom:9px}
+.amen-box{display:flex;flex-wrap:wrap;gap:10px 18px}
+.amen-item{display:inline-flex;align-items:center;gap:7px;font-size:14px;color:var(--txt);cursor:pointer;user-select:none;font-weight:500}
+.amen-item input{width:18px;height:18px;accent-color:var(--accent);cursor:pointer;margin:0}
 
 /* ---------- 101Hotels (РФ) source colours ---------- */
 .tag.H101{background:linear-gradient(120deg,#7c3aed,#a855f7)}
@@ -1244,8 +1249,10 @@ h1 .accent{
     </label>
     <div class="chiprow">
       <button type="button" class="chip pay" id="rfNoCard" data-pay="1">💳 Оплата при заселении</button>
-      <span class="chip-sep">Удобства в номере:</span>
-      ${RF_SERVICE_CHIPS}
+    </div>
+    <div class="amen">
+      <span>Удобства в номере</span>
+      <div class="amen-box">${RF_SERVICE_CHECKS}</div>
     </div>
     <button id="goRF" class="go" type="button">Найти отели</button>
   </form>
@@ -1345,7 +1352,7 @@ async function runRF(){
   const rt=$('#rfRating').value;if(rt) p.set('rating', rt);
   p.set('sort', $('#rfSort').value);
   if($('#rfNoCard').classList.contains('on')) p.set('no_card','1');
-  const svc=[...document.querySelectorAll('#barRF .chip[data-v].on')].map(b=>b.dataset.v).join(',');
+  const svc=[...document.querySelectorAll('#barRF .amen-cb:checked')].map(cb=>cb.value).join(',');
   if(svc) p.set('services', svc);
   $('#stat').textContent='Ищу отели…'; $('#grid').innerHTML=''; $('#pager').innerHTML='';
   try{
