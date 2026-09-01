@@ -6,7 +6,7 @@ const http = require('http');
 const PORT = process.env.PORT || 8080;   // Render задаёт свой порт через переменную окружения
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36';
 const SITE_URL = 'https://poisk-kvartir.onrender.com';
-const FEEDBACK_EMAIL = process.env.FEEDBACK_EMAIL || 'koluda49@gmail.com';   // куда слать пожелания (можно переопределить переменной окружения Render, чтобы убрать адрес из репозитория)
+const FB_FORM = '1a5e2f853c6c65a903edb6bfa6f0854f';   // алиас FormSubmit (скрывает реальный email — адрес нигде не светится)
 
 // Области: realt = слаг раздела, oblast = как пишет Kufar, main = главный город (для запроса Kufar)
 const REGIONS = {
@@ -155,6 +155,32 @@ async function mapLimit(items, limit, fn){
   await Promise.all(Array.from({length:Math.min(limit,items.length||1)}, worker));
   return res;
 }
+
+// Галереи фото для Flatbook и 101hotels (в списочных данных фото одно) — тянем со страниц объектов, кэшируем.
+const GALLERY = new Map();   // "src|key" -> [urls]
+async function galleryFor(src, key){
+  const ck = src+'|'+key;
+  if(GALLERY.has(ck)) return GALLERY.get(ck);
+  let out=[];
+  try{
+    if(src==='Flatbook'){
+      const h = await (await fetch(key,{headers:{'User-Agent':UA,'Accept-Language':'ru'}})).text();
+      const set=new Set();
+      for(const m of h.matchAll(/https:\/\/flatbook\.by\/media\/cache\/resolve\/flat_page_gallery\/images\/flat\/[0-9\/]+\/original\/[a-z0-9_]+\.(?:jpg|jpeg|png|webp)/gi)) set.add(m[0]);
+      out=[...set].slice(0,20);
+    } else if(src==='H101'){
+      const at=key.indexOf('@@'); const hid=key.slice(0,at), pageUrl=key.slice(at+2);
+      const h = await (await fetch(pageUrl,{headers:{'User-Agent':UA,'Accept-Language':'ru'}})).text();
+      const set=new Set();
+      const re=new RegExp('https://s\\.101hotelscdn\\.ru/uploads/image/hotel_image/'+hid.replace(/[^0-9]/g,'')+'/[0-9a-z_]+\\.(?:jpg|jpeg|png|webp)','gi');
+      for(const m of h.matchAll(re)) set.add(m[0].replace(/_(thumb|preview|mobile_preview|mobile)\./,'.'));
+      out=[...set].slice(0,20);
+    }
+  }catch(e){ out=[]; }
+  if(GALLERY.size>6000) GALLERY.clear();
+  GALLERY.set(ck, out);
+  return out;
+}
 async function fromRealt(reg, city, type, rooms, maxP, guests){
   try{
     const t = TYPES[type]||TYPES.flat;
@@ -203,10 +229,11 @@ async function fromFlatbookCity(regKey, center, type, maxP){
       const metro = (f.metro_description&&f.metro_description[0]&&f.metro_description[0].metro_name)||'';
       const addr = ((f.streetName||'')+' '+(f.streetNumber||'')).trim();
       const note = f.seoTitle ? (' · '+String(f.seoTitle).slice(0,70)) : '';
+      const img0 = f.generatedImagePath ? String(f.generatedImagePath).replace('/yandex_card_image/','/catalog_image/') : '';
       return { src:'Flatbook', cur:'BYN', unit:'сутки',
         price:+f.price_day||0, rooms:0, area:center, capacity:'',
         title: (addr||center) + note,
-        photos: f.generatedImagePath ? [f.generatedImagePath] : [],
+        photos: img0 ? [img0] : [],
         rating:0, reviews:0, descId:null, phone, name:'',
         lat:+f.latitude, lng:+f.longitude, approx:false,
         chips: [center].concat(metro?['м. '+metro]:[]),
@@ -225,6 +252,43 @@ async function fromFlatbook(regKey, city, type, maxP){
   }).map(k=> fromFlatbookCity(k, REGIONS[k].main, type, maxP));
   const arrs = await Promise.all(tasks);
   return [].concat(...arrs);
+}
+
+// Поиск по НАЗВАНИЮ по всей Беларуси (когда известно название, но не место).
+// Kufar — полнотекстовый поиск по объявлениям; Flatbook — по всем городам (адрес/описание).
+// Realt в этом режиме пропущен: его заголовки — это адреса, по названию не ищутся.
+const KUFAR_JUNK = /прокат|пароочистит|пылесос|karcher|керхер|электроинструмент|генератор|виброплит|отбойн|перфоратор|\bдрель|бетоно|шлифов|аппарат|моющий|химчистк|фотозон|аренда авто|прицеп/i;
+async function searchByName(name, type, maxP){
+  const q=(name||'').trim();
+  if(!q) return {total:0,kufar:0,realt:0,flatbook:0,items:[]};
+  let rx=null; try{ rx=new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i'); }catch(e){}
+  const kufarTask=(async()=>{
+    try{
+      const url='https://api.kufar.by/search-api/v2/search/rendered-paginated?query='+encodeURIComponent(q+' на сутки')+'&size=42&lang=ru';
+      const k=await (await fetch(url,{headers:{'User-Agent':UA}})).json();
+      const g=(a,n)=>(a.ad_parameters||[]).find(y=>y.p===n);
+      return (k.ads||[]).map(a=>{
+        let lat=null,lng=null,approx=true; const cp=g(a,'coordinates');
+        if(cp&&Array.isArray(cp.v)&&cp.v.length>=2){ const lo=+cp.v[0],la=+cp.v[1]; if(la>50&&la<57&&lo>22&&lo<33){lat=la;lng=lo;approx=false;} }
+        const area=(g(a,'area')?.vl)||(g(a,'region')?.vl)||'';
+        if(lat==null){ const c=approxCoord(area,'Минск',a.ad_id); lat=c[0]; lng=c[1]; }
+        return { src:'Kufar', price:a.price_byn?a.price_byn/100:null, rooms:+(g(a,'rooms')?.v||0),
+          area, region:g(a,'region')?.vl||'', capacity:g(a,'house_rent_couchettes')?.vl||'',
+          title:a.subject||'', photos:(a.images||[]).map(im=>'https://rms.kufar.by/v1/gallery/'+im.path),
+          rating:0,reviews:0,descId:a.ad_id,phone:'',name:'',lat,lng,approx,link:a.ad_link||'' };
+      }).filter(x=> x.price>0 && (!maxP||x.price<=maxP) && (!rx||rx.test(x.title)) && !KUFAR_JUNK.test(x.title));
+    }catch(e){ console.error('Kufar name:', e.message); return []; }
+  })();
+  const fbTask=(async()=>{
+    try{ const items=await fromFlatbook('any','',type,maxP); return items.filter(x=> !rx || rx.test(x.title)); }
+    catch(e){ return []; }
+  })();
+  const [ka,fa]=await Promise.all([kufarTask,fbTask]);
+  const seen=new Set();
+  const all=[...ka,...fa].filter(x=>{ if(seen.has(x.link))return false; seen.add(x.link); return true; })
+                         .sort((a,b)=>a.price-b.price);
+  return { total:all.length, kufar:all.filter(x=>x.src==='Kufar').length, realt:0,
+           flatbook:all.filter(x=>x.src==='Flatbook').length, items:all };
 }
 
 async function search(regKey, city, type, rooms, maxP, guests, source){
@@ -358,7 +422,7 @@ function hotel101ToItem(hh){
   const co = hh.coords || [];
   const lng = +co[0], lat = +co[1];
   if(!(lat>40 && lat<75 && lng>18 && lng<190)) return null;
-  const img = hh.image && (hh.image.preview_path || hh.image.path || hh.image.thumb_path);
+  const img = hh.image && (hh.image.path || hh.image.preview_path || hh.image.thumb_path);
   const stars = +hh.stars || 0;
   const typeName = RF_TYPES[String(hh.type_id)] || '';
   const rs = hh.reviews_summary || {};
@@ -368,7 +432,7 @@ function hotel101ToItem(hh){
   if(typeName) chips.push(typeName);
   if(hh.city_name) chips.push(hh.city_name);
   if(prepay==='NO') chips.push('💳 оплата на месте');
-  return { src:'H101', cur:'₽',
+  return { src:'H101', cur:'₽', hid:hh.id,
     price:+hh.min_price || 0, prepay,
     rooms:0, area:hh.city_name||'', capacity:'',
     title:hh.full_name||'', address:hh.address||'',
@@ -1005,6 +1069,10 @@ h1 .accent{
   </div>
 
   <form class="bar" id="bar" onsubmit="return false">
+    <label class="fld" style="grid-column:1 / -1">
+      <span>🔎 Поиск по названию — если знаете название, но не город (по всей Беларуси)</span>
+      <input id="qname" type="text" placeholder="например: усадьба «Веста»">
+    </label>
     <label class="fld">
       <span>Область</span>
       <select id="region">
@@ -1174,6 +1242,15 @@ h1 .accent{
   </div>
 </div>
 
+<iframe name="fbFrame" id="fbFrame" style="display:none" title="fb"></iframe>
+<form id="fbForm" action="https://formsubmit.co/${FB_FORM}" method="POST" target="fbFrame" style="display:none">
+  <input type="hidden" name="_subject" value="Поиск жилья — пожелание с сайта">
+  <input type="hidden" name="_captcha" value="false">
+  <input type="hidden" name="_template" value="table">
+  <input type="hidden" name="email" id="fbFormEmail">
+  <input type="hidden" name="Сообщение" id="fbFormMsg">
+</form>
+
 <button id="up" class="up" type="button" aria-label="Наверх" title="Наверх">↑</button>
 
 <script>
@@ -1186,7 +1263,7 @@ window.__mode = 'by';   // 'by' = Беларусь (Kufar+Realt), 'ru' = Рос�
 
 function srcName(s){ return s==='H101' ? '101Hotels' : s; }
 function curOf(x){ return (x && x.cur) ? x.cur : 'BYN'; }
-const FB_EMAIL = ${JSON.stringify(FEEDBACK_EMAIL)};   // куда идут пожелания (через formsubmit.co из браузера)
+const FB_FORM = ${JSON.stringify(FB_FORM)};   // алиас FormSubmit — email нигде не отображается
 const HINT_RU = 'Отели и жильё России с 101hotels.com в реальном времени. Цена «от» за ночь показана прямо на метке карты (<b style="color:#7c3aed">фиолетовые</b> — 101Hotels, координаты точные). Доступны фильтры по типу размещения, звёздам, цене, рейтингу, удобствам и оплате при заселении. Список и карта; перед бронированием проверяйте даты и условия на 101hotels.com.';
 
 // переключение Беларусь / Россия
@@ -1251,16 +1328,18 @@ async function runRF(){
 }
 async function run(){
   if(window.__mode==='ru') return runRF();
+  const name=$('#qname')?$('#qname').value.trim():'';
   const p=new URLSearchParams({
     region:$('#region').value, city:$('#city').value.trim(), type:$('#type').value,
     rooms:$('#rooms').value, guests:$('#guests').value, max:$('#max').value, source:$('#source').value
   });
+  if(name) p.set('name', name);
   $('#stat').textContent='Ищу…'; $('#grid').innerHTML=''; $('#pager').innerHTML='';
   try{
     const d=await (await fetch('/api/search?'+p.toString())).json();
     const N=nights();
-    const parts=['Kufar '+d.kufar,'Realt '+d.realt].concat(d.flatbook?['Flatbook '+d.flatbook]:[]);
-    $('#stat').textContent='Найдено '+d.total+' ('+parts.join(' + ')+')'+(N?(', расчёт на '+N+' ноч.'):'');
+    const parts=[]; if(d.kufar)parts.push('Kufar '+d.kufar); if(d.realt)parts.push('Realt '+d.realt); if(d.flatbook)parts.push('Flatbook '+d.flatbook);
+    $('#stat').textContent='Найдено '+d.total+(parts.length?(' ('+parts.join(' + ')+')'):'')+(name?(' по запросу «'+name+'»'):'')+(N?(', расчёт на '+N+' ноч.'):'');
     window.__items=d.items||[]; window.__page=1;
     if(!window.__items.length){ $('#grid').innerHTML='<div class="empty">Ничего не найдено. Смягчите фильтры.</div>'; if(window.__view==='map') plotMap(true); return; }
     sortItems();
@@ -1311,6 +1390,26 @@ function renderCards(){
         +'</div></div>';
     }).join('');
   renderPager(pages);
+  loadGalleries();
+}
+// Дотягиваем галереи фото для Flatbook/101hotels (на текущей странице) — чтобы работал слайдер
+async function loadGalleries(){
+  if(window.__galBusy) return;
+  const start=(window.__page-1)*PAGE_SIZE;
+  const pageItems=(window.__items||[]).slice(start, start+PAGE_SIZE);
+  const need=pageItems.filter(x=>(x.src==='Flatbook'||x.src==='H101') && (!x.photos||x.photos.length<2) && !x.__galTried && x.link);
+  if(!need.length) return;
+  window.__galBusy=true;
+  need.forEach(x=>x.__galTried=true);
+  const reqs=need.map(x=>({ src:x.src, key: x.src==='H101' ? (x.hid+'@@'+x.link) : x.link }));
+  try{
+    const r=await (await fetch('/api/gallery',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reqs:reqs})})).json();
+    const res=r.results||{};
+    let changed=false;
+    need.forEach(x=>{ const key=x.src==='H101'?(x.hid+'@@'+x.link):x.link; const g=res[key]; if(g&&g.length>1){ x.photos=g; changed=true; } });
+    window.__galBusy=false;
+    if(changed && window.__view==='list') renderCards();
+  }catch(e){ window.__galBusy=false; }
 }
 function renderPager(pages){
   const el=$('#pager');
@@ -1447,6 +1546,7 @@ function slide(card, dir){
 document.querySelectorAll('#bar select, #bar input').forEach(el=>{ if(el.id!=='sort') el.addEventListener('change',run); });
 $('#sort').addEventListener('change', function(){ window.__page=1; renderCards(); });
 $('#go').addEventListener('click',run);
+$('#qname').addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); run(); } });
 // Россия (101hotels)
 document.querySelectorAll('#barRF select, #barRF input').forEach(el=>{ if(el.id!=='rfSort') el.addEventListener('change',run); });
 $('#rfSort').addEventListener('change', function(){ window.__page=1; renderCards(); });
@@ -1466,18 +1566,19 @@ $('#fbSend').addEventListener('click', async function(){
   const st=$('#fbStatus'); st.className='fb-status';
   if(!msg){ st.className='fb-status err'; st.textContent='Напишите, пожалуйста, сообщение.'; return; }
   this.disabled=true; st.textContent='Отправляю…';
-  try{
-    // отправляем напрямую из браузера — FormSubmit блокирует серверные запросы с дата-центра
-    const r=await fetch('https://formsubmit.co/ajax/'+encodeURIComponent(FB_EMAIL),{
-      method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'},
-      body:JSON.stringify({ _subject:'Поиск жилья — пожелание с сайта', email: email||'не указан', Сообщение: msg })
-    });
-    const j=await r.json().catch(function(){return {};});
-    if(String(j.success)==='true'){ st.className='fb-status ok'; st.textContent='Спасибо! Сообщение отправлено.'; $('#fbMsg').value=''; $('#fbEmail').value=''; setTimeout(function(){fbToggle(false);},1600); }
-    else if(/activat/i.test(j.message||'')){ st.className='fb-status err'; st.textContent='Форма ещё активируется. Сообщение придёт после подтверждения — попробуйте чуть позже.'; }
-    else { st.className='fb-status err'; st.textContent='Не удалось отправить, попробуйте позже.'; }
-  }catch(e){ st.className='fb-status err'; st.textContent='Ошибка сети, попробуйте позже.'; }
-  this.disabled=false;
+  // отправка классической формой в скрытый iframe (без CORS; в коде только алиас FormSubmit, email не виден)
+  const self=this, frame=$('#fbFrame');
+  let finished=false;
+  const finish=function(){ if(finished) return; finished=true; frame.removeEventListener('load',onload);
+    st.className='fb-status ok'; st.textContent='Спасибо! Сообщение отправлено.';
+    $('#fbMsg').value=''; $('#fbEmail').value=''; self.disabled=false;
+    setTimeout(function(){ fbToggle(false); },1600); };
+  function onload(){ finish(); }
+  frame.addEventListener('load', onload);
+  $('#fbFormEmail').value = email||'не указан';
+  $('#fbFormMsg').value = msg;
+  $('#fbForm').submit();
+  setTimeout(finish, 7000);   // страховка, если событие load не придёт
 });
 window.addEventListener('load',run);
 </script></body></html>`;
@@ -1485,15 +1586,18 @@ window.addEventListener('load',run);
 http.createServer(async (req,res)=>{
   const u = new URL(req.url, 'http://localhost');
   if(u.pathname === '/api/search'){
-    const data = await search(
-      u.searchParams.get('region')||'brest',
-      (u.searchParams.get('city')||'').trim(),
-      u.searchParams.get('type')||'flat',
-      u.searchParams.get('rooms')||'',
-      +(u.searchParams.get('max')||0),
-      +(u.searchParams.get('guests')||0),
-      u.searchParams.get('source')||'both'
-    );
+    const name=(u.searchParams.get('name')||'').trim();
+    const data = name
+      ? await searchByName(name, u.searchParams.get('type')||'flat', +(u.searchParams.get('max')||0))
+      : await search(
+          u.searchParams.get('region')||'brest',
+          (u.searchParams.get('city')||'').trim(),
+          u.searchParams.get('type')||'flat',
+          u.searchParams.get('rooms')||'',
+          +(u.searchParams.get('max')||0),
+          +(u.searchParams.get('guests')||0),
+          u.searchParams.get('source')||'both'
+        );
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*'});
     res.end(JSON.stringify(data)); return;
   }
@@ -1506,6 +1610,19 @@ http.createServer(async (req,res)=>{
       const out={};
       await mapLimit(urls, 10, async (url)=>{ out[url]=await realtGeo(url); });
       res.writeHead(200, {'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*'});
+      res.end(JSON.stringify({results:out}));
+    });
+    return;
+  }
+  if(u.pathname === '/api/gallery' && req.method === 'POST'){
+    let body='';
+    req.on('data', c=>{ body+=c; if(body.length>60000) req.destroy(); });
+    req.on('end', async ()=>{
+      let reqs=[];
+      try{ reqs=(JSON.parse(body).reqs||[]).filter(x=>x&&x.key&&(x.src==='Flatbook'||x.src==='H101')).slice(0,30); }catch(e){}
+      const out={};
+      await mapLimit(reqs, 8, async (rq)=>{ out[rq.key]=await galleryFor(rq.src, rq.key); });
+      res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
       res.end(JSON.stringify({results:out}));
     });
     return;
@@ -1523,35 +1640,6 @@ http.createServer(async (req,res)=>{
     );
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*'});
     res.end(JSON.stringify(data)); return;
-  }
-  if(u.pathname === '/api/feedback' && req.method === 'POST'){
-    let body='';
-    req.on('data', c=>{ body+=c; if(body.length>30000) req.destroy(); });
-    req.on('end', async ()=>{
-      let ok=false, error='';
-      try{
-        const d=JSON.parse(body||'{}');
-        const message=String(d.message||'').trim().slice(0,4000);
-        const email=String(d.email||'').trim().slice(0,200);
-        if(!message){ error='Пустое сообщение'; }
-        else if(!FEEDBACK_EMAIL){ error='Приём сообщений пока не настроен'; }
-        else{
-          // FormSubmit — доставка на почту без ключей и логина (первый раз нужно подтвердить письмо)
-          const fr = await fetch('https://formsubmit.co/ajax/'+encodeURIComponent(FEEDBACK_EMAIL),{
-            method:'POST',
-            headers:{'Content-Type':'application/json','Accept':'application/json',
-                     'Origin':SITE_URL,'Referer':SITE_URL+'/'},   // FormSubmit требует реальный источник
-            body:JSON.stringify({ _subject:'Поиск жилья — пожелание с сайта', email: email||'не указан', Сообщение: message })
-          });
-          const jr = await fr.json().catch(()=>({}));
-          ok = (String(jr.success)==='true');
-          if(!ok) error = jr.message || ('HTTP '+fr.status);
-        }
-      }catch(e){ error=e.message; }
-      res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
-      res.end(JSON.stringify({ok, error}));
-    });
-    return;
   }
   if(u.pathname === '/api/desc'){
     let text='';
