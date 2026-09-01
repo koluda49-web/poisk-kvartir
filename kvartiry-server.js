@@ -1085,7 +1085,12 @@ h1 .accent{
 .amen > span{display:block;font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--txt-3);padding-left:2px;margin-bottom:9px}
 .amen-box{display:flex;flex-wrap:wrap;gap:10px 18px}
 .amen-item{display:inline-flex;align-items:center;gap:7px;font-size:14px;color:var(--txt);cursor:pointer;user-select:none;font-weight:500}
-.amen-item input{width:18px;height:18px;accent-color:var(--accent);cursor:pointer;margin:0}
+.amen-item input{
+  -webkit-appearance:auto; appearance:auto;   /* сброс .bar input, иначе чекбокс без галочки */
+  width:18px; height:18px; min-height:0; flex:0 0 auto;
+  padding:0; margin:0; border:none; border-radius:0; background:none; box-shadow:none;
+  accent-color:var(--accent); cursor:pointer;
+}
 .amen-item.amen-all{color:var(--txt);padding-right:16px;margin-right:6px;border-right:1px solid var(--line)}
 
 /* ---------- 101Hotels (РФ) source colours ---------- */
