@@ -1,0 +1,12 @@
+{
+  "name": "poisk-kvartir",
+  "version": "1.0.0",
+  "description": "Поиск жилья на сутки — Kufar + Realt",
+  "main": "kvartiry-server.js",
+  "scripts": {
+    "start": "node kvartiry-server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
