@@ -60,6 +60,19 @@ const TYPES = {
   'usadba':  {kw:'усадьба',  section:'cottage-for-day'}
 };
 
+// Удобства РБ. Общий набор, который есть у Kufar (подписи в ad_parameters) и Flatbook (apartment_comfort).
+// rx — совпадение по тексту удобств Kufar; fb — точное значение apartment_comfort у Flatbook. Realt удобств в списке не отдаёт.
+const RB_AMENITIES = [
+  {key:'wifi',   label:'Wi-Fi',             rx:/wi-?fi/i,      fb:'Интернет Wi-Fi'},
+  {key:'wash',   label:'Стиральная машина', rx:/стиральн/i,    fb:'Стиральная машина'},
+  {key:'fridge', label:'Холодильник',       rx:/холодильник/i, fb:'Холодильник'},
+  {key:'tv',     label:'Телевизор',         rx:/телевизор/i,   fb:'Телевизор'},
+  {key:'micro',  label:'Микроволновка',     rx:/микроволнов/i, fb:'Микроволновая печь'},
+  {key:'hair',   label:'Фен',               rx:/\bфен/i,       fb:'Фен'}
+];
+const RB_AMEN_BY_KEY = Object.fromEntries(RB_AMENITIES.map(a=>[a.key,a]));
+const RB_AMEN_CHECKS = RB_AMENITIES.map(a=>'<label class="amen-item"><input type="checkbox" class="rb-amen-cb" value="'+a.key+'"> '+a.label+'</label>').join('');
+
 async function fromKufar(reg, city, type, rooms, maxP, guests){
   try{
     const t = TYPES[type]||TYPES.flat;
@@ -77,12 +90,13 @@ async function fromKufar(reg, city, type, rooms, maxP, guests){
       }
       const area = g(a,'area')?.vl||'';
       if(lat==null){ const c=approxCoord(area||where, reg.main, a.ad_id); lat=c[0]; lng=c[1]; approx=true; }
+      const amenText = [].concat(g(a,'flat_improvement')?.vl||[], g(a,'flat_bath')?.vl||[], g(a,'flat_kitchen')?.vl||[]).join(' ');
       return { src:'Kufar',
         price:a.price_byn? a.price_byn/100 : null,
         rooms:+(g(a,'rooms')?.v||0),
         area, region: g(a,'region')?.vl||'',
         capacity: g(a,'house_rent_couchettes')?.vl||'',
-        title:a.subject||'',
+        title:a.subject||'', amenText,
         photos: (a.images||[]).map(im=>'https://rms.kufar.by/v1/gallery/'+im.path),
         rating:0, reviews:0, descId:a.ad_id,
         phone:'', name:'', lat, lng, approx, link:a.ad_link||'' };
@@ -217,16 +231,20 @@ function parseFlatbookGeo(html){
   if(!m) return [];
   try{ let a=JSON.parse(m[1]); if(typeof a==='string') a=JSON.parse(a); return Array.isArray(a)?a:[]; }catch(e){ return []; }
 }
-async function fromFlatbookCity(regKey, center, type, maxP, rooms){
+async function fromFlatbookCity(regKey, center, type, maxP, rooms, amenFb){
   const sub = FLATBOOK_SUB[regKey];
   const host = sub ? ('https://'+sub+'.flatbook.by') : 'https://flatbook.by';
   const path = (type==='flat') ? '/' : '/kottedzhi/';   // усадьбы и коттеджи — один раздел
-  // фильтр по комнатам flatbook понимает только для квартир (room_number[]=N); "3" = 3+
-  let q='';
+  // фильтры flatbook понимает только для квартир: room_number[]=N ("3"=3+) и apartment_comfort[]=<название>
+  const params=[];
   if(type==='flat' && rooms){
     const nums = String(rooms)==='3' ? [3,4,5,6] : [rooms];
-    q = '?' + nums.map(n=>'room_number%5B%5D='+n).join('&');
+    nums.forEach(n=>params.push('room_number%5B%5D='+n));
   }
+  if(type==='flat' && amenFb && amenFb.length){
+    amenFb.forEach(v=>params.push('apartment_comfort%5B%5D='+encodeURIComponent(v)));
+  }
+  const q = params.length ? ('?'+params.join('&')) : '';
   try{
     const h = await (await fetch(host+path+q,{headers:{'User-Agent':UA,'Accept-Language':'ru'}})).text();
     return parseFlatbookGeo(h).map(f=>{
@@ -247,7 +265,7 @@ async function fromFlatbookCity(regKey, center, type, maxP, rooms){
     }).filter(x=> x.price>0 && x.lat>50 && x.lng>22 && (!maxP||x.price<=maxP));
   }catch(e){ console.error('Flatbook '+host+':', e.message); return []; }
 }
-async function fromFlatbook(regKey, city, type, maxP, rooms){
+async function fromFlatbook(regKey, city, type, maxP, rooms, amenFb){
   const keys = regKey==='any'
     ? ['minsk','brest','gomel','grodno','vitebsk','mogilev']
     : (FLATBOOK_SUB[regKey]!==undefined ? [regKey] : []);
@@ -255,7 +273,7 @@ async function fromFlatbook(regKey, city, type, maxP, rooms){
   const tasks = keys.filter(k=>{
     const center = REGIONS[k] && REGIONS[k].main;
     return center && (!city || new RegExp(city,'i').test(center));
-  }).map(k=> fromFlatbookCity(k, REGIONS[k].main, type, maxP, rooms));
+  }).map(k=> fromFlatbookCity(k, REGIONS[k].main, type, maxP, rooms, amenFb));
   const arrs = await Promise.all(tasks);
   return [].concat(...arrs);
 }
@@ -326,10 +344,12 @@ async function searchByName(name, type, maxP){
            flatbook:all.filter(x=>x.src==='Flatbook').length, items:all };
 }
 
-async function search(regKey, city, type, rooms, maxP, guests, source){
+async function search(regKey, city, type, rooms, maxP, guests, source, amen){
+  const amenList = (amen||[]).map(k=>RB_AMEN_BY_KEY[k]).filter(Boolean);
+  const hasAmen = amenList.length>0;
   const keys = regKey==='any' ? Object.keys(REGIONS) : [ REGIONS[regKey] ? regKey : 'brest' ];
   const useK = source==='both' || source==='kufar';
-  const useR = source==='both' || source==='realt';
+  const useR = (source==='both' || source==='realt') && !hasAmen;   // у Realt нет данных удобств в списке → при фильтре удобств не участвует
   const useF = source==='both' || source==='flatbook';
   const tasks = [];
   keys.forEach(key=>{
@@ -337,9 +357,11 @@ async function search(regKey, city, type, rooms, maxP, guests, source){
     if(useK) tasks.push(fromKufar(reg,city,type,rooms,maxP,guests));
     if(useR) tasks.push(fromRealt(reg,city,type,rooms,maxP,guests));
   });
-  if(useF) tasks.push(fromFlatbook(regKey,city,type,maxP,rooms));   // flatbook: квартиры (с фильтром комнат) и усадьбы/коттеджи по центрам областей
+  if(useF) tasks.push(fromFlatbook(regKey,city,type,maxP,rooms, amenList.map(a=>a.fb).filter(Boolean)));   // flatbook: комнаты + удобства (apartment_comfort)
   const arrs = await Promise.all(tasks);
   let all = [].concat(...arrs);
+  // фильтр удобств для Kufar по тексту удобств (Flatbook уже отфильтрован на своей стороне)
+  if(hasAmen) all = all.filter(x=> x.src!=='Kufar' || amenList.every(a=> a.rx.test(x.amenText||'')));
   // убрать дубли по ссылке (Kufar при 'любой области' может повторяться)
   const seen = new Set();
   all = all.filter(x=>{ if(seen.has(x.link)) return false; seen.add(x.link); return true; })
@@ -1212,6 +1234,10 @@ h1 .accent{
       <input id="to" type="date">
     </label>
 
+    <div class="amen">
+      <span>Удобства в номере</span>
+      <div class="amen-box">${RB_AMEN_CHECKS}</div>
+    </div>
     <button id="go" class="go" type="button">Найти</button>
   </form>
 
@@ -1384,6 +1410,8 @@ async function run(){
     rooms:$('#rooms').value, guests:$('#guests').value, max:$('#max').value, source:$('#source').value
   });
   if(name) p.set('name', name);
+  const amen=[...document.querySelectorAll('#bar .rb-amen-cb:checked')].map(cb=>cb.value).join(',');
+  if(amen) p.set('amen', amen);
   $('#stat').textContent='Ищу…'; $('#grid').innerHTML=''; $('#pager').innerHTML='';
   try{
     const d=await (await fetch('/api/search?'+p.toString())).json();
@@ -1646,7 +1674,8 @@ http.createServer(async (req,res)=>{
           u.searchParams.get('rooms')||'',
           +(u.searchParams.get('max')||0),
           +(u.searchParams.get('guests')||0),
-          u.searchParams.get('source')||'both'
+          u.searchParams.get('source')||'both',
+          (u.searchParams.get('amen')||'').split(',').filter(Boolean)
         );
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*'});
     res.end(JSON.stringify(data)); return;
