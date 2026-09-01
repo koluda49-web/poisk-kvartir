@@ -115,6 +115,45 @@ function parseRealt(html){
     for(const k in o){ if(k==='results'&&Array.isArray(o[k])){res=o[k];return;} f(o[k],d+1); } })(JSON.parse(m[1]),0);
   return res||[];
 }
+
+// Точные координаты объекта Realt лежат на его странице:
+// ...locationInfo.location = [долгота, широта]. В списке их нет — достаём по требованию.
+const REALT_GEO = new Map();   // objectUrl -> [lat,lng] | null (кэш на время жизни инстанса)
+function extractRealtLocation(html){
+  const m = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+  if(!m) return null;
+  let found=null;
+  try{
+    (function f(o,d){ if(found||d>13||!o||typeof o!=='object') return;
+      for(const k in o){ const v=o[k];
+        if(k==='location' && Array.isArray(v) && v.length>=2 && typeof v[0]==='number' && typeof v[1]==='number'){
+          const a=v[0], b=v[1];
+          if(b>50&&b<57&&a>22&&a<33){ found=[b,a]; return; }   // [lon,lat] -> [lat,lng]
+          if(a>50&&a<57&&b>22&&b<33){ found=[a,b]; return; }   // на случай [lat,lon]
+        }
+        if(v && typeof v==='object') f(v,d+1);
+      } })(JSON.parse(m[1]),0);
+  }catch(e){}
+  return found;
+}
+async function realtGeo(url){
+  if(REALT_GEO.has(url)) return REALT_GEO.get(url);
+  let loc=null;
+  try{
+    const h = await (await fetch(url,{headers:{'User-Agent':UA}})).text();
+    loc = extractRealtLocation(h);
+  }catch(e){ loc=null; }
+  if(REALT_GEO.size>8000) REALT_GEO.clear();   // мягкий предел кэша
+  REALT_GEO.set(url, loc);
+  return loc;
+}
+// ограничение параллелизма, чтобы не завалить бесплатный инстанс
+async function mapLimit(items, limit, fn){
+  const res=new Array(items.length); let i=0;
+  async function worker(){ while(i<items.length){ const idx=i++; res[idx]=await fn(items[idx],idx); } }
+  await Promise.all(Array.from({length:Math.min(limit,items.length||1)}, worker));
+  return res;
+}
 async function fromRealt(reg, city, type, rooms, maxP, guests){
   try{
     const t = TYPES[type]||TYPES.flat;
@@ -768,6 +807,7 @@ h1 .accent{
 
   <div class="toolbar">
     <div id="stat"></div>
+    <span id="geo" style="color:var(--txt-3);font-size:12.5px"></span>
     <div class="seg" role="tablist" aria-label="Вид">
       <button id="viewList" class="on" type="button" onclick="setView('list')">☰ Список</button>
       <button id="viewMap" type="button" onclick="setView('map')">📍 Карта</button>
@@ -778,7 +818,7 @@ h1 .accent{
   <div id="grid"></div>
   <div id="pager"></div>
 
-  <p class="hint">Цены и наличие подтягиваются напрямую из объявлений Kufar и Realt в режиме реального времени. На карте цена показана прямо на метке: <b style="color:var(--kufar)">синие</b> — Kufar (точные координаты), <b style="color:var(--realt)">оранжевые</b> — Realt (адрес примерный, по городу). Итоговая стоимость за весь период рассчитывается по датам заезда и выезда. Перед бронированием уточняйте детали у собственника.</p>
+  <p class="hint">Цены и наличие подтягиваются напрямую из объявлений Kufar и Realt в режиме реального времени. На карте цена показана прямо на метке: <b style="color:var(--kufar)">синие</b> — Kufar, <b style="color:var(--realt)">оранжевые</b> — Realt. Точные координаты подтягиваются из объявления; пока адрес уточняется, метка стоит у центра города (значок ≈ в подсказке). Итоговая стоимость за весь период рассчитывается по датам заезда и выезда. Перед бронированием уточняйте детали у собственника.</p>
 </div>
 
 <button id="up" class="up" type="button" aria-label="Наверх" title="Наверх">↑</button>
@@ -821,9 +861,9 @@ async function run(){
     const N=nights();
     $('#stat').textContent='Найдено '+d.total+' (Kufar '+d.kufar+' + Realt '+d.realt+')'+(N?(', расчёт на '+N+' ноч.'):'');
     window.__items=d.items||[]; window.__page=1;
-    if(!window.__items.length){ $('#grid').innerHTML='<div class="empty">Ничего не найдено. Смягчите фильтры.</div>'; if(window.__view==='map') plotMap(); return; }
+    if(!window.__items.length){ $('#grid').innerHTML='<div class="empty">Ничего не найдено. Смягчите фильтры.</div>'; if(window.__view==='map') plotMap(true); return; }
     sortItems();
-    if(window.__view==='map') plotMap(); else renderCards();
+    if(window.__view==='map'){ plotMap(true); enrichRealt(); } else renderCards();
   }catch(e){ $('#stat').textContent='Ошибка: '+e.message; }
 }
 function renderCards(){
@@ -893,7 +933,7 @@ function setView(v){
   $('#grid').style.display = v==='list' ? '' : 'none';
   $('#pager').style.display = v==='list' ? '' : 'none';
   $('#map').style.display = v==='map' ? '' : 'none';
-  if(v==='map') plotMap(); else renderCards();
+  if(v==='map'){ plotMap(true); enrichRealt(); } else renderCards();
 }
 // карта Leaflet: цена на метке, тултип при наведении, карточка в попапе
 function popupHtml(x){
@@ -906,7 +946,7 @@ function popupHtml(x){
     +img+call
     +'<a class="mp-open" href="'+x.link+'" target="_blank" rel="noopener">Открыть на '+x.src+' →</a>'+ap+'</div>';
 }
-function plotMap(){
+function plotMap(fit){
   if(typeof L==='undefined'){ $('#map').innerHTML='<div style="padding:24px;color:var(--txt-2)">Карта не загрузилась (нет связи с картографическим сервисом).</div>'; return; }
   if(!window.__map){
     window.__map=L.map('map',{scrollWheelZoom:true}).setView([53.70,27.95],6);
@@ -925,8 +965,33 @@ function plotMap(){
   });
   setTimeout(function(){
     window.__map.invalidateSize();
-    if(pts.length) window.__map.fitBounds(pts,{padding:[45,45],maxZoom:15});
+    if(fit && pts.length) window.__map.fitBounds(pts,{padding:[45,45],maxZoom:15});
   },60);
+}
+// Точные координаты Realt подгружаем со страниц объектов порциями (фоном, с кэшем на сервере)
+async function enrichRealt(){
+  if(window.__enriching) return;            // защита от повторного входа
+  window.__enriching=true;
+  const note=$('#geo');
+  try{
+    while(window.__view==='map'){
+      const need=(window.__items||[]).filter(x=>x.src==='Realt' && x.approx && x.link && !x.__geoTried);
+      if(!need.length) break;
+      if(note) note.textContent='уточняю точные адреса Realt… (' + need.length + ')';
+      const chunk=need.slice(0,40);
+      chunk.forEach(x=>x.__geoTried=true);
+      let moved=0;
+      try{
+        const r=await (await fetch('/api/geo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({urls:chunk.map(x=>x.link)})})).json();
+        const res=r.results||{};
+        chunk.forEach(x=>{ const c=res[x.link]; if(c && c.length===2){ x.lat=c[0]; x.lng=c[1]; x.approx=false; moved++; } });
+      }catch(e){}
+      if(moved && window.__view==='map') plotMap(false);   // перерисовать без сброса масштаба
+    }
+  } finally {
+    window.__enriching=false;
+    if(note) note.textContent='';
+  }
 }
 // телефон: 375298261243 -> +375 29 826-12-43
 function fmtPhone(p){
@@ -984,6 +1049,19 @@ http.createServer(async (req,res)=>{
     );
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*'});
     res.end(JSON.stringify(data)); return;
+  }
+  if(u.pathname === '/api/geo' && req.method === 'POST'){
+    let body='';
+    req.on('data', c=>{ body+=c; if(body.length>200000) req.destroy(); });
+    req.on('end', async ()=>{
+      let urls=[];
+      try{ urls=(JSON.parse(body).urls||[]).filter(x=>typeof x==='string' && /realt\.by/.test(x)).slice(0,60); }catch(e){}
+      const out={};
+      await mapLimit(urls, 10, async (url)=>{ out[url]=await realtGeo(url); });
+      res.writeHead(200, {'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*'});
+      res.end(JSON.stringify({results:out}));
+    });
+    return;
   }
   if(u.pathname === '/api/desc'){
     let text='';
