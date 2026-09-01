@@ -1086,6 +1086,7 @@ h1 .accent{
 .amen-box{display:flex;flex-wrap:wrap;gap:10px 18px}
 .amen-item{display:inline-flex;align-items:center;gap:7px;font-size:14px;color:var(--txt);cursor:pointer;user-select:none;font-weight:500}
 .amen-item input{width:18px;height:18px;accent-color:var(--accent);cursor:pointer;margin:0}
+.amen-item.amen-all{color:var(--txt);padding-right:16px;margin-right:6px;border-right:1px solid var(--line)}
 
 /* ---------- 101Hotels (РФ) source colours ---------- */
 .tag.H101{background:linear-gradient(120deg,#7c3aed,#a855f7)}
@@ -1252,7 +1253,10 @@ h1 .accent{
     </div>
     <div class="amen">
       <span>Удобства в номере</span>
-      <div class="amen-box">${RF_SERVICE_CHECKS}</div>
+      <div class="amen-box">
+        <label class="amen-item amen-all"><input type="checkbox" id="amenAll"> <b>Удобства в номере</b></label>
+        ${RF_SERVICE_CHECKS}
+      </div>
     </div>
     <button id="goRF" class="go" type="button">Найти отели</button>
   </form>
@@ -1587,9 +1591,16 @@ $('#sort').addEventListener('change', function(){ window.__page=1; renderCards()
 $('#go').addEventListener('click',run);
 $('#qname').addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); run(); } });
 // Россия (101hotels)
-document.querySelectorAll('#barRF select, #barRF input').forEach(el=>{ if(el.id!=='rfSort') el.addEventListener('change',run); });
+document.querySelectorAll('#barRF select, #barRF input').forEach(el=>{ if(el.id!=='rfSort' && el.id!=='amenAll') el.addEventListener('change',run); });
 $('#rfSort').addEventListener('change', function(){ window.__page=1; renderCards(); });
 document.querySelectorAll('#barRF .chip').forEach(ch=> ch.addEventListener('click', function(){ this.classList.toggle('on'); run(); }));
+// мастер-галочка «Удобства в номере»: включает/выключает все удобства сразу
+$('#amenAll').addEventListener('change', function(){
+  document.querySelectorAll('#barRF .amen-cb').forEach(function(cb){ cb.checked=$('#amenAll').checked; });
+  run();
+});
+document.querySelectorAll('#barRF .amen-cb').forEach(function(cb){ cb.addEventListener('change', function(){
+  const all=[...document.querySelectorAll('#barRF .amen-cb')]; $('#amenAll').checked=all.every(function(c){return c.checked;}); }); });
 $('#goRF').addEventListener('click',run);
 // кнопка "наверх"
 window.addEventListener('scroll', function(){ $('#up').classList.toggle('show', window.scrollY>500); });
