@@ -217,12 +217,18 @@ function parseFlatbookGeo(html){
   if(!m) return [];
   try{ let a=JSON.parse(m[1]); if(typeof a==='string') a=JSON.parse(a); return Array.isArray(a)?a:[]; }catch(e){ return []; }
 }
-async function fromFlatbookCity(regKey, center, type, maxP){
+async function fromFlatbookCity(regKey, center, type, maxP, rooms){
   const sub = FLATBOOK_SUB[regKey];
   const host = sub ? ('https://'+sub+'.flatbook.by') : 'https://flatbook.by';
   const path = (type==='flat') ? '/' : '/kottedzhi/';   // усадьбы и коттеджи — один раздел
+  // фильтр по комнатам flatbook понимает только для квартир (room_number[]=N); "3" = 3+
+  let q='';
+  if(type==='flat' && rooms){
+    const nums = String(rooms)==='3' ? [3,4,5,6] : [rooms];
+    q = '?' + nums.map(n=>'room_number%5B%5D='+n).join('&');
+  }
   try{
-    const h = await (await fetch(host+path,{headers:{'User-Agent':UA,'Accept-Language':'ru'}})).text();
+    const h = await (await fetch(host+path+q,{headers:{'User-Agent':UA,'Accept-Language':'ru'}})).text();
     return parseFlatbookGeo(h).map(f=>{
       const ph=String(f.phone||'').replace(/\D/g,'');
       const phone = ph.length===9 ? ('375'+ph) : ph;
@@ -241,7 +247,7 @@ async function fromFlatbookCity(regKey, center, type, maxP){
     }).filter(x=> x.price>0 && x.lat>50 && x.lng>22 && (!maxP||x.price<=maxP));
   }catch(e){ console.error('Flatbook '+host+':', e.message); return []; }
 }
-async function fromFlatbook(regKey, city, type, maxP){
+async function fromFlatbook(regKey, city, type, maxP, rooms){
   const keys = regKey==='any'
     ? ['minsk','brest','gomel','grodno','vitebsk','mogilev']
     : (FLATBOOK_SUB[regKey]!==undefined ? [regKey] : []);
@@ -249,7 +255,7 @@ async function fromFlatbook(regKey, city, type, maxP){
   const tasks = keys.filter(k=>{
     const center = REGIONS[k] && REGIONS[k].main;
     return center && (!city || new RegExp(city,'i').test(center));
-  }).map(k=> fromFlatbookCity(k, REGIONS[k].main, type, maxP));
+  }).map(k=> fromFlatbookCity(k, REGIONS[k].main, type, maxP, rooms));
   const arrs = await Promise.all(tasks);
   return [].concat(...arrs);
 }
@@ -331,7 +337,7 @@ async function search(regKey, city, type, rooms, maxP, guests, source){
     if(useK) tasks.push(fromKufar(reg,city,type,rooms,maxP,guests));
     if(useR) tasks.push(fromRealt(reg,city,type,rooms,maxP,guests));
   });
-  if(useF) tasks.push(fromFlatbook(regKey,city,type,maxP));   // flatbook: квартиры и усадьбы/коттеджи по центрам областей
+  if(useF) tasks.push(fromFlatbook(regKey,city,type,maxP,rooms));   // flatbook: квартиры (с фильтром комнат) и усадьбы/коттеджи по центрам областей
   const arrs = await Promise.all(tasks);
   let all = [].concat(...arrs);
   // убрать дубли по ссылке (Kufar при 'любой области' может повторяться)
