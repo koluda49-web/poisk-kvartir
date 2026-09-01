@@ -1,6 +1,6 @@
 // Поиск жилья на сутки — Kufar + Realt. Квартиры / коттеджи / усадьбы.
 // Запуск: node kvartiry-server.js  ->  http://localhost:8080  (или двойной клик "Открыть поиск.bat")
-// Крутится локально, ничего никуда не заливает.
+// На Render порт берётся из переменной окружения PORT.
 
 const http = require('http');
 const PORT = process.env.PORT || 8080;   // Render задаёт свой порт через переменную окружения
@@ -108,73 +108,514 @@ const PAGE = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Поиск жилья на сутки</title>
 <style>
- :root{--bg:#f5f6f8;--card:#fff;--text:#1a1d22;--muted:#6b7280;--line:#e5e7eb;--accent:#0b6b3a;--kufar:#1a73e8;--realt:#e8541a}
- @media(prefers-color-scheme:dark){:root{--bg:#13151a;--card:#1c1f26;--text:#e8eaed;--muted:#9aa0a6;--line:#2b303a;--accent:#37c07f}}
- *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 -apple-system,Segoe UI,Roboto,Arial,sans-serif}
- .wrap{max-width:960px;margin:0 auto;padding:22px 14px 60px}
- h1{font-size:22px;margin:0 0 16px}
- .bar{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:16px}
- @media(max-width:680px){.bar{grid-template-columns:repeat(2,1fr)}}
- label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
- select,input{width:100%;padding:10px 12px;font-size:15px;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--text)}
- .go{grid-column:1/-1;padding:12px;border:0;border-radius:9px;background:var(--accent);color:#fff;font-size:16px;font-weight:600;cursor:pointer}
- .stat{color:var(--muted);font-size:14px;margin:0 2px 14px}
- .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
- .card{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
- .slider{position:relative;aspect-ratio:4/3;background:#8882;overflow:hidden}
- .slider .im{width:100%;height:100%;object-fit:cover;display:block}
- .slider .nav{position:absolute;top:50%;transform:translateY(-50%);width:34px;height:34px;border:0;border-radius:50%;
-   background:rgba(0,0,0,.45);color:#fff;font-size:20px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}
- .slider .prev{left:8px}.slider .next{right:8px}
- .slider .cnt{position:absolute;bottom:8px;right:10px;background:rgba(0,0,0,.55);color:#fff;font-size:12px;padding:2px 8px;border-radius:20px}
- .stars{font-size:14px;color:#f5a623;letter-spacing:1px}
- .stars .num{color:var(--muted);font-size:12px;margin-left:4px}
- .ph{aspect-ratio:4/3;background:#8882 center/cover no-repeat}
- .bd{padding:12px;display:flex;flex-direction:column;gap:6px;flex:1}
- .pr{font-size:20px;font-weight:700}
- .tot{font-size:13px;color:var(--accent);font-weight:600}
- .meta{font-size:13px;color:var(--muted)}
- .ttl{font-size:14px;line-height:1.35;max-height:3.7em;overflow:hidden}
- .tag{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;color:#fff}
- .tag.Kufar{background:var(--kufar)}.tag.Realt{background:var(--realt)}
- .act{margin-top:auto;display:flex;gap:8px;padding-top:6px}
- .act a{flex:1;text-align:center;text-decoration:none;font-size:13px;font-weight:600;padding:9px;border-radius:8px;border:1px solid var(--line);color:var(--text)}
- .act a.call{background:var(--accent);color:#fff;border-color:transparent}
- .desc-t{font-size:13px;color:var(--kufar);cursor:pointer;user-select:none}
- .desc{font-size:13px;color:var(--muted);line-height:1.45;white-space:pre-line;margin-top:2px}
- .empty{color:var(--muted);text-align:center;padding:40px}
- .hint{font-size:12px;color:var(--muted);margin:12px 2px 0}
-</style></head><body><div class="wrap">
-<h1>🏠 Жильё на сутки — Kufar + Realt</h1>
-<div class="bar">
-  <div><label>Область</label><select id="region">
-    <option value="any">Любая область</option>
-    <option value="brest" selected>Брестская обл.</option>
-    <option value="minsk">Минск (город)</option>
-    <option value="minsk-obl">Минская обл.</option>
-    <option value="gomel">Гомельская обл.</option>
-    <option value="grodno">Гродненская обл.</option>
-    <option value="vitebsk">Витебская обл.</option>
-    <option value="mogilev">Могилёвская обл.</option>
-  </select></div>
-  <div><label>Город</label><select id="city"><option value="">любой</option></select></div>
-  <div><label>Тип жилья</label><select id="type">
-    <option value="flat">Квартира</option>
-    <option value="cottage">Коттедж / дом</option>
-    <option value="usadba">Усадьба</option>
-  </select></div>
-  <div><label>Комнат</label><select id="rooms"><option value="">любое</option><option>1</option><option selected>2</option><option value="3">3+</option></select></div>
-  <div><label>Гостей</label><select id="guests"><option value="">любое</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option value="8">8+</option></select></div>
-  <div><label>Цена до, BYN</label><input id="max" type="number" placeholder="без огранич."></div>
-  <div><label>Источник</label><select id="source"><option value="both">Kufar + Realt</option><option value="kufar">Только Kufar</option><option value="realt">Только Realt</option></select></div>
-  <div><label>Сортировка</label><select id="sort"><option value="price_asc">Дешёвые сверху</option><option value="price_desc">Дорогие сверху</option><option value="rating_desc">По рейтингу</option></select></div>
-  <div><label>Заезд</label><input id="from" type="date"></div>
-  <div><label>Выезд</label><input id="to" type="date"></div>
-  <button class="go" id="go">Найти</button>
-</div>
-<div class="stat" id="stat"></div>
-<div class="grid" id="grid"></div>
-<p class="hint">Даты считают итог за все ночи (цена × ночей). Наличие на конкретные даты уточняйте у хозяина — площадки его не гарантируют. Усадьбы/коттеджи по Realt идут из раздела коттеджей.</p>
+:root{
+  --bg:#f4f5f7;
+  --bg-grad-1:#eef0f4;
+  --bg-grad-2:#f6f7f9;
+  --surface:#ffffff;
+  --surface-2:#f7f8fa;
+  --surface-3:#eef0f4;
+  --line:#e2e5ea;
+  --line-strong:#d3d7de;
+  --txt:#141821;
+  --txt-2:#4a5160;
+  --txt-3:#8b93a3;
+  --accent:#ff5a1f;
+  --accent-2:#ff7d47;
+  --accent-ink:#ffffff;
+  --accent-soft:rgba(255,90,31,.12);
+  --gold:#f5a623;
+  --kufar:#2f6bff;
+  --kufar-soft:rgba(47,107,255,.14);
+  --realt:#ff7a18;
+  --realt-soft:rgba(255,122,24,.14);
+  --shadow-sm:0 1px 2px rgba(20,24,33,.05),0 2px 8px rgba(20,24,33,.05);
+  --shadow-md:0 6px 24px rgba(20,24,33,.09),0 2px 8px rgba(20,24,33,.05);
+  --shadow-lg:0 18px 50px rgba(20,24,33,.14);
+  --radius:20px;
+  --radius-sm:12px;
+  --radius-xs:10px;
+  --focus:rgba(255,90,31,.35);
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0a0c12;
+    --bg-grad-1:#0d1018;
+    --bg-grad-2:#07080d;
+    --surface:#14171f;
+    --surface-2:#191d27;
+    --surface-3:#1f2430;
+    --line:#252b38;
+    --line-strong:#323a4a;
+    --txt:#f2f4f8;
+    --txt-2:#aab2c2;
+    --txt-3:#6b7386;
+    --accent:#ff6a34;
+    --accent-2:#ff8a58;
+    --accent-ink:#0a0c12;
+    --accent-soft:rgba(255,106,52,.16);
+    --gold:#ffc247;
+    --kufar:#5b8bff;
+    --kufar-soft:rgba(91,139,255,.18);
+    --realt:#ff8a3d;
+    --realt-soft:rgba(255,138,61,.18);
+    --shadow-sm:0 1px 2px rgba(0,0,0,.4);
+    --shadow-md:0 10px 30px rgba(0,0,0,.5);
+    --shadow-lg:0 24px 60px rgba(0,0,0,.6);
+    --focus:rgba(255,106,52,.45);
+  }
+}
+
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  color:var(--txt);
+  background:var(--bg);
+  background-image:
+    radial-gradient(1200px 700px at 85% -10%, var(--accent-soft), transparent 60%),
+    radial-gradient(900px 600px at 5% 0%, var(--kufar-soft), transparent 55%),
+    linear-gradient(180deg,var(--bg-grad-1),var(--bg-grad-2));
+  background-attachment:fixed;
+  -webkit-font-smoothing:antialiased;
+  line-height:1.5;
+  letter-spacing:-.01em;
+}
+
+.wrap{
+  max-width:1200px;
+  margin:0 auto;
+  padding:clamp(20px,4vw,52px) clamp(16px,4vw,40px) 80px;
+}
+
+/* ---------- Heading ---------- */
+h1{
+  font-size:clamp(30px,6vw,54px);
+  line-height:1.04;
+  font-weight:800;
+  letter-spacing:-.03em;
+  margin:6px 0 8px;
+}
+h1 .accent{
+  background:linear-gradient(120deg,var(--accent),var(--accent-2));
+  -webkit-background-clip:text;
+  background-clip:text;
+  color:transparent;
+}
+.lead{
+  color:var(--txt-2);
+  font-size:clamp(15px,2.4vw,19px);
+  max-width:60ch;
+  margin:0 0 clamp(22px,4vw,34px);
+}
+.kicker{
+  display:inline-flex;align-items:center;gap:8px;
+  font-size:12.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent);
+  background:var(--accent-soft);
+  border:1px solid color-mix(in srgb,var(--accent) 22%,transparent);
+  padding:6px 13px;border-radius:999px;
+}
+.kicker .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
+
+/* ---------- Filter bar ---------- */
+.bar{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:12px;
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  padding:clamp(16px,3vw,22px);
+  box-shadow:var(--shadow-md);
+  margin-bottom:22px;
+}
+.fld{display:flex;flex-direction:column;gap:6px;min-width:0}
+.fld > span{
+  font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--txt-3);padding-left:2px;
+}
+.fld.span-2{grid-column:span 2}
+
+.bar select,
+.bar input{
+  width:100%;
+  font:inherit;font-size:15px;
+  color:var(--txt);
+  background:var(--surface-2);
+  border:1px solid var(--line);
+  border-radius:var(--radius-sm);
+  padding:12px 14px;
+  min-height:48px;
+  transition:border-color .15s, box-shadow .15s, background .15s;
+  appearance:none;-webkit-appearance:none;
+}
+.bar input::placeholder{color:var(--txt-3)}
+.bar select{
+  padding-right:40px;
+  background-image:linear-gradient(45deg,transparent 50%,var(--txt-2) 50%),linear-gradient(135deg,var(--txt-2) 50%,transparent 50%);
+  background-position:calc(100% - 20px) 21px, calc(100% - 15px) 21px;
+  background-size:5px 5px,5px 5px;
+  background-repeat:no-repeat;
+  cursor:pointer;
+}
+.bar select:hover,.bar input:hover{border-color:var(--line-strong)}
+.bar select:focus,.bar input:focus{
+  outline:none;
+  border-color:var(--accent);
+  background:var(--surface);
+  box-shadow:0 0 0 4px var(--focus);
+}
+.bar input[type=date]{cursor:pointer}
+.bar input[type=date]::-webkit-calendar-picker-indicator{opacity:.6;cursor:pointer}
+@media (prefers-color-scheme: dark){
+  .bar input[type=date]::-webkit-calendar-picker-indicator{filter:invert(1) opacity(.6)}
+}
+
+/* ---------- Find button ---------- */
+.go{
+  grid-column:1 / -1;
+  font:inherit;font-size:16.5px;font-weight:700;letter-spacing:-.01em;
+  color:var(--accent-ink);
+  background:linear-gradient(120deg,var(--accent),var(--accent-2));
+  border:none;
+  border-radius:var(--radius-sm);
+  padding:15px 22px;
+  min-height:54px;
+  cursor:pointer;
+  box-shadow:0 8px 22px -6px color-mix(in srgb,var(--accent) 70%,transparent);
+  transition:transform .12s, box-shadow .15s, filter .15s;
+  display:inline-flex;align-items:center;justify-content:center;gap:9px;
+}
+.go::before{content:"⌕";font-size:20px;line-height:1;margin-top:-1px}
+.go:hover{filter:brightness(1.04);box-shadow:0 12px 28px -6px color-mix(in srgb,var(--accent) 75%,transparent)}
+.go:active{transform:translateY(1px)}
+.go:focus-visible{outline:none;box-shadow:0 0 0 4px var(--focus),0 8px 22px -6px color-mix(in srgb,var(--accent) 70%,transparent)}
+
+/* ---------- Status + hint ---------- */
+#stat{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  color:var(--txt-2);font-size:14.5px;font-weight:500;
+  padding:4px 2px 2px;
+  min-height:24px;
+}
+.hint{
+  color:var(--txt-3);
+  font-size:13px;
+  margin:6px 2px 22px;
+  line-height:1.6;
+}
+
+/* ---------- Grid ---------- */
+#grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
+  gap:clamp(16px,2.4vw,24px);
+  margin-top:18px;
+}
+
+/* ---------- Card ---------- */
+.card{
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  overflow:hidden;
+  display:flex;flex-direction:column;
+  box-shadow:var(--shadow-sm);
+  transition:transform .18s cubic-bezier(.2,.7,.3,1), box-shadow .2s, border-color .2s;
+}
+.card:hover{
+  transform:translateY(-4px);
+  box-shadow:var(--shadow-lg);
+  border-color:var(--line-strong);
+}
+
+/* ---------- Slider ---------- */
+.slider{
+  position:relative;
+  aspect-ratio:4/3;
+  background:var(--surface-3);
+  overflow:hidden;
+}
+.slider .im{
+  position:absolute;inset:0;
+  width:100%;height:100%;
+  object-fit:cover;
+  display:block;
+}
+.slider::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(180deg,rgba(0,0,0,.28) 0%,transparent 26%,transparent 62%,rgba(0,0,0,.32) 100%);
+}
+
+/* slider nav arrows */
+.nav{
+  position:absolute;top:50%;transform:translateY(-50%);
+  z-index:3;
+  width:38px;height:38px;
+  display:flex;align-items:center;justify-content:center;
+  border:none;cursor:pointer;
+  border-radius:50%;
+  background:rgba(15,17,23,.5);
+  color:#fff;font-size:0;
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  opacity:0;
+  transition:opacity .18s, background .15s, transform .12s;
+}
+.card:hover .nav{opacity:1}
+.nav:hover{background:rgba(15,17,23,.78)}
+.nav:active{transform:translateY(-50%) scale(.92)}
+.nav::before{content:"";width:9px;height:9px;border-top:2px solid #fff;border-right:2px solid #fff}
+.prev{left:10px}
+.prev::before{transform:rotate(-135deg);margin-left:3px}
+.next{right:10px}
+.next::before{transform:rotate(45deg);margin-right:3px}
+@media (hover:none){.nav{opacity:.85}}
+
+/* photo counter */
+.cnt{
+  position:absolute;bottom:12px;right:12px;z-index:3;
+  font-size:12px;font-weight:600;
+  color:#fff;
+  background:rgba(15,17,23,.55);
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  padding:4px 9px;border-radius:999px;
+  letter-spacing:.02em;
+}
+
+/* source tag on photo */
+.tag{
+  position:absolute;top:12px;left:12px;z-index:3;
+  font-size:11.5px;font-weight:800;letter-spacing:.03em;
+  color:#fff;
+  padding:5px 11px;border-radius:999px;
+  box-shadow:0 4px 12px rgba(0,0,0,.25);
+  backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
+}
+.tag.Kufar{background:linear-gradient(120deg,var(--kufar),#4d80ff)}
+.tag.Realt{background:linear-gradient(120deg,var(--realt),#ff9a3d)}
+
+/* ---------- Card body ---------- */
+.bd{
+  display:flex;flex-direction:column;gap:10px;
+  padding:16px 17px 17px;
+  flex:1;
+}
+
+/* price row */
+.pr{
+  display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;
+  font-size:26px;font-weight:800;letter-spacing:-.02em;
+  color:var(--txt);
+  line-height:1.05;
+}
+.pr .tot{
+  font-size:13px;font-weight:600;
+  color:var(--txt-3);
+  letter-spacing:0;
+}
+.total{font-size:13.5px;font-weight:700;color:var(--accent);letter-spacing:-.01em}
+
+/* meta line (rooms/guests/etc) */
+.meta{
+  display:flex;flex-wrap:wrap;gap:6px 8px;
+  font-size:13px;color:var(--txt-2);
+  align-items:center;
+}
+.meta > *{
+  background:var(--surface-2);
+  border:1px solid var(--line);
+  padding:3px 9px;border-radius:8px;
+  font-weight:500;
+  white-space:nowrap;
+}
+
+/* title */
+.ttl{
+  font-size:16.5px;font-weight:700;letter-spacing:-.01em;
+  color:var(--txt);
+  line-height:1.32;
+  margin:0;
+}
+
+/* rating */
+.stars{
+  display:inline-flex;align-items:center;gap:6px;
+  font-size:14px;font-weight:600;color:var(--gold);
+  letter-spacing:.04em;
+}
+.stars .num{
+  color:var(--txt-2);font-weight:600;font-size:13px;letter-spacing:0;
+}
+
+/* description */
+.desc-t{
+  font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--accent);cursor:pointer;user-select:none;
+  margin-top:2px;
+}
+.desc{
+  font-size:13.5px;color:var(--txt-2);
+  line-height:1.55;
+  margin:0;white-space:pre-line;
+}
+
+/* actions */
+.act{
+  display:flex;gap:9px;flex-wrap:wrap;
+  margin-top:auto;padding-top:6px;
+}
+.act a{
+  flex:1 1 auto;
+  text-align:center;
+  text-decoration:none;
+  font-size:14px;font-weight:700;letter-spacing:-.01em;
+  color:var(--txt);
+  background:var(--surface-2);
+  border:1px solid var(--line-strong);
+  border-radius:var(--radius-xs);
+  padding:11px 14px;
+  min-height:44px;
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  transition:background .15s, border-color .15s, transform .1s, color .15s;
+}
+.act a:hover{background:var(--surface-3);border-color:var(--txt-3)}
+.act a:active{transform:translateY(1px)}
+.act a.call{
+  color:var(--accent-ink);
+  background:linear-gradient(120deg,var(--accent),var(--accent-2));
+  border-color:transparent;
+  box-shadow:0 6px 16px -6px color-mix(in srgb,var(--accent) 70%,transparent);
+}
+.act a.call:hover{filter:brightness(1.05);background:linear-gradient(120deg,var(--accent),var(--accent-2))}
+
+/* ---------- Empty state ---------- */
+.empty{
+  grid-column:1 / -1;
+  text-align:center;
+  color:var(--txt-2);
+  padding:clamp(40px,8vw,72px) 24px;
+  background:var(--surface);
+  border:1px dashed var(--line-strong);
+  border-radius:var(--radius);
+  font-size:15.5px;
+}
+.empty::before{
+  content:"🏠";
+  display:block;font-size:40px;margin-bottom:14px;filter:grayscale(.2);
+}
+
+/* ---------- Responsive ---------- */
+@media (min-width:640px){
+  .bar{grid-template-columns:repeat(3,1fr)}
+  .fld.span-2{grid-column:span 1}
+}
+@media (min-width:1000px){
+  .bar{grid-template-columns:repeat(6,1fr)}
+  .go{grid-column:1 / -1}
+}
+</style></head><body>
+<div class="wrap">
+  <span class="kicker"><span class="dot"></span>Kufar + Realt · Беларусь</span>
+  <h1>Жильё на сутки, <span class="accent">без лишних вкладок</span></h1>
+  <p class="lead">Квартиры, коттеджи и усадьбы из двух крупнейших площадок аренды — в одной ленте. Настройте фильтры и найдите вариант под свою дату и бюджет.</p>
+
+  <div class="bar">
+    <label class="fld">
+      <span>Область</span>
+      <select id="region">
+        <option value="any">Любая область</option>
+        <option value="brest" selected>Брестская обл.</option>
+        <option value="minsk">Минск (город)</option>
+        <option value="minsk-obl">Минская обл.</option>
+        <option value="gomel">Гомельская обл.</option>
+        <option value="grodno">Гродненская обл.</option>
+        <option value="vitebsk">Витебская обл.</option>
+        <option value="mogilev">Могилёвская обл.</option>
+      </select>
+    </label>
+
+    <label class="fld">
+      <span>Город</span>
+      <select id="city">
+        <option value="">любой</option>
+      </select>
+    </label>
+
+    <label class="fld">
+      <span>Тип жилья</span>
+      <select id="type">
+        <option value="flat">Квартира</option>
+        <option value="cottage">Коттедж / дом</option>
+        <option value="usadba">Усадьба</option>
+      </select>
+    </label>
+
+    <label class="fld">
+      <span>Комнат</span>
+      <select id="rooms">
+        <option value="">любое</option>
+        <option value="1">1</option>
+        <option value="2" selected>2</option>
+        <option value="3">3+</option>
+      </select>
+    </label>
+
+    <label class="fld">
+      <span>Гостей</span>
+      <select id="guests">
+        <option value="">любое</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5">5</option>
+        <option value="6">6</option>
+        <option value="8">8+</option>
+      </select>
+    </label>
+
+    <label class="fld">
+      <span>Цена до, руб/сутки</span>
+      <input id="max" type="number" placeholder="без огранич.">
+    </label>
+
+    <label class="fld">
+      <span>Источник</span>
+      <select id="source">
+        <option value="both">Kufar + Realt</option>
+        <option value="kufar">Только Kufar</option>
+        <option value="realt">Только Realt</option>
+      </select>
+    </label>
+
+    <label class="fld">
+      <span>Сортировка</span>
+      <select id="sort">
+        <option value="price_asc">Дешёвые сверху</option>
+        <option value="price_desc">Дорогие сверху</option>
+        <option value="rating_desc">По рейтингу</option>
+      </select>
+    </label>
+
+    <label class="fld">
+      <span>Заезд</span>
+      <input id="from" type="date">
+    </label>
+
+    <label class="fld">
+      <span>Выезд</span>
+      <input id="to" type="date">
+    </label>
+
+    <button id="go" class="go">Найти</button>
+  </div>
+
+  <div id="stat"></div>
+
+  <div id="grid"></div>
+
+  <p class="hint">Цены и наличие подтягиваются напрямую из объявлений Kufar и Realt. Итоговая стоимость за весь период рассчитывается по выбранным датам заезда и выезда. Перед бронированием уточняйте детали у собственника.</p>
 </div>
 <script>
 const $=s=>document.querySelector(s);
@@ -215,32 +656,33 @@ function renderCards(){
   items.sort(function(a,b){ return s==='price_desc'? b.price-a.price : s==='rating_desc'? (((b.rating||0)-(a.rating||0))||(a.price-b.price)) : a.price-b.price; });
   const N=nights();
   $('#grid').innerHTML=items.map(function(x,idx){
-      const cap=x.capacity? (' · до '+x.capacity+' гостей'):'';
-      const total=N? ('<div class="tot">'+(x.price*N)+' BYN за '+N+' ноч.</div>'):'';
+      const capChip = x.capacity ? ('<span>до '+x.capacity+' гостей</span>') : '';
+      const total = N ? ('<div class="total">'+(x.price*N)+' BYN за '+N+' ноч.</div>') : '';
       const call = x.phone ? '<a class="call" href="tel:+'+x.phone+'">'+fmtPhone(x.phone)+(x.name?(' · '+x.name):'')+'</a>' : '';
       const desc = x.descId ? '<div class="desc-t" onclick="showDesc('+idx+')" id="dt'+idx+'">Описание ▾</div><div class="desc" id="dd'+idx+'" style="display:none"></div>' : '';
       // рейтинг: 0..10 -> 5 звёзд, показываем только при отзывах
       let stars='';
       if(x.reviews>0 && x.rating>0){
-        const s=Math.round(x.rating/2);
-        stars='<div class="stars">'+'★'.repeat(s)+'☆'.repeat(5-s)+'<span class="num">'+x.rating.toFixed(1)+' · '+x.reviews+' отз.</span></div>';
+        const st=Math.round(x.rating/2);
+        stars='<div class="stars">'+'★'.repeat(st)+'☆'.repeat(5-st)+'<span class="num">'+x.rating.toFixed(1)+' · '+x.reviews+' отз.</span></div>';
       }
+      // бейдж источника — оверлеем на фото
+      const tag='<span class="tag '+x.src+'">'+x.src+'</span>';
       // слайдер фото
       const ph=x.photos&&x.photos.length? x.photos : [];
       let slider;
       if(ph.length){
         const nav = ph.length>1
-          ? '<button class="nav prev" onclick="slide('+idx+',-1)">‹</button><button class="nav next" onclick="slide('+idx+',1)">›</button><div class="cnt" id="cnt'+idx+'">1/'+ph.length+'</div>'
+          ? '<button class="nav prev" onclick="slide('+idx+',-1)"></button><button class="nav next" onclick="slide('+idx+',1)"></button><div class="cnt" id="cnt'+idx+'">1/'+ph.length+'</div>'
           : '';
-        slider='<div class="slider"><img class="im" id="im'+idx+'" src="'+ph[0]+'" loading="lazy" alt="">'+nav+'</div>';
+        slider='<div class="slider">'+tag+'<img class="im" id="im'+idx+'" src="'+ph[0]+'" loading="lazy" alt="">'+nav+'</div>';
       } else {
-        slider='<div class="slider"></div>';
+        slider='<div class="slider">'+tag+'</div>';
       }
       return '<div class="card">'+slider
         +'<div class="bd">'
-        +'<div><span class="tag '+x.src+'">'+x.src+'</span></div>'
-        +'<div class="pr">'+x.price+' BYN<span class="meta"> / сутки</span></div>'+total+stars
-        +'<div class="meta">'+(x.area||'')+' · '+x.rooms+'-комн'+cap+'</div>'
+        +'<div class="pr">'+x.price+' BYN <span class="tot">/ сутки</span></div>'+total+stars
+        +'<div class="meta"><span>'+(x.area||'—')+'</span><span>'+x.rooms+'-комн</span>'+capChip+'</div>'
         +'<div class="ttl">'+(x.title||'').replace(/</g,'&lt;')+'</div>'+desc
         +'<div class="act">'+call+'<a href="'+x.link+'" target="_blank" rel="noopener">Открыть</a></div>'
         +'</div></div>';
