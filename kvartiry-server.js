@@ -6,6 +6,7 @@ const http = require('http');
 const PORT = process.env.PORT || 8080;   // Render задаёт свой порт через переменную окружения
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36';
 const SITE_URL = 'https://poisk-kvartir.onrender.com';
+const FEEDBACK_EMAIL = process.env.FEEDBACK_EMAIL || '';   // куда слать пожелания (задаётся в переменных окружения Render)
 
 // Области: realt = слаг раздела, oblast = как пишет Kufar, main = главный город (для запроса Kufar)
 const REGIONS = {
@@ -904,6 +905,52 @@ h1 .accent{
 .up:hover{filter:brightness(1.06)}
 .up:active{transform:scale(.94)}
 
+/* ---------- Feedback (пожелания) ---------- */
+.foot{display:flex;justify-content:center;margin:14px 2px 0}
+.fb-open{
+  font:inherit;font-size:13.5px;font-weight:600;
+  color:var(--txt-2);background:var(--surface-2);border:1px solid var(--line);
+  border-radius:999px;padding:10px 18px;cursor:pointer;
+  transition:background .15s,border-color .15s,color .15s;
+}
+.fb-open:hover{border-color:var(--accent);color:var(--accent)}
+.fb-overlay{
+  position:fixed;inset:0;z-index:1400;
+  background:rgba(10,12,18,.5);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);
+  display:none;align-items:center;justify-content:center;padding:18px;
+}
+.fb-overlay.show{display:flex}
+.fb-panel{
+  width:100%;max-width:460px;position:relative;
+  background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--radius);box-shadow:var(--shadow-lg);padding:24px 22px 22px;
+}
+.fb-panel h3{margin:0 0 4px;font-size:19px;font-weight:800;letter-spacing:-.02em}
+.fb-panel .sub{margin:0 0 14px;color:var(--txt-3);font-size:13px;line-height:1.5}
+.fb-panel input,.fb-panel textarea{
+  width:100%;font:inherit;font-size:15px;color:var(--txt);
+  background:var(--surface-2);border:1px solid var(--line);
+  border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:10px;
+}
+.fb-panel textarea{min-height:120px;resize:vertical}
+.fb-panel input:focus,.fb-panel textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 4px var(--focus)}
+.fb-send{
+  width:100%;font:inherit;font-size:16px;font-weight:700;
+  color:var(--accent-ink);background:linear-gradient(120deg,var(--accent),var(--accent-2));
+  border:none;border-radius:var(--radius-sm);padding:13px;cursor:pointer;
+}
+.fb-send:hover{filter:brightness(1.05)}
+.fb-send:disabled{opacity:.6;cursor:default}
+.fb-close{
+  position:absolute;top:12px;right:14px;width:32px;height:32px;
+  border:none;background:var(--surface-2);border-radius:50%;
+  font-size:20px;color:var(--txt-2);cursor:pointer;line-height:1;
+}
+.fb-close:hover{background:var(--surface-3)}
+.fb-status{font-size:13.5px;margin-top:10px;min-height:18px}
+.fb-status.ok{color:#12b76a}
+.fb-status.err{color:#e5484d}
+
 /* ---------- Country switch (РБ / РФ) ---------- */
 .country{
   display:inline-flex;gap:4px;
@@ -1109,6 +1156,22 @@ h1 .accent{
   <div id="pager"></div>
 
   <p class="hint" id="hint">Цены и наличие подтягиваются напрямую из объявлений Kufar и Realt в режиме реального времени. На карте цена показана прямо на метке: <b style="color:var(--kufar)">синие</b> — Kufar, <b style="color:var(--realt)">оранжевые</b> — Realt, <b style="color:#0a9d70">зелёные</b> — Flatbook (областные центры, квартиры и усадьбы). Точные координаты подтягиваются из объявления; пока адрес уточняется, метка стоит у центра города (значок ≈ в подсказке). Итоговая стоимость за весь период рассчитывается по датам заезда и выезда. Перед бронированием уточняйте детали у собственника.</p>
+
+  <div class="foot">
+    <button id="fbOpen" class="fb-open" type="button">💬 Оставить пожелание или дополнение</button>
+  </div>
+</div>
+
+<div class="fb-overlay" id="fbModal">
+  <div class="fb-panel">
+    <button class="fb-close" id="fbClose" type="button" aria-label="Закрыть">×</button>
+    <h3>Пожелания и дополнения</h3>
+    <p class="sub">Что улучшить, какой сайт или город добавить, что не так — напишите, я прочитаю.</p>
+    <input id="fbEmail" type="email" placeholder="Ваш email (необязательно, если нужен ответ)">
+    <textarea id="fbMsg" placeholder="Ваши пожелания, замечания, идеи…"></textarea>
+    <button class="fb-send" id="fbSend" type="button">Отправить</button>
+    <div class="fb-status" id="fbStatus"></div>
+  </div>
 </div>
 
 <button id="up" class="up" type="button" aria-label="Наверх" title="Наверх">↑</button>
@@ -1390,6 +1453,25 @@ document.querySelectorAll('#barRF .chip').forEach(ch=> ch.addEventListener('clic
 $('#goRF').addEventListener('click',run);
 // кнопка "наверх"
 window.addEventListener('scroll', function(){ $('#up').classList.toggle('show', window.scrollY>500); });
+$('#up').addEventListener('click', function(){ window.scrollTo({top:0,behavior:'smooth'}); });
+// форма "оставить пожелание"
+function fbToggle(v){ $('#fbModal').classList.toggle('show', v); }
+$('#fbOpen').addEventListener('click', function(){ fbToggle(true); setTimeout(function(){$('#fbMsg').focus();},50); });
+$('#fbClose').addEventListener('click', function(){ fbToggle(false); });
+$('#fbModal').addEventListener('click', function(e){ if(e.target===this) fbToggle(false); });
+document.addEventListener('keydown', function(e){ if(e.key==='Escape') fbToggle(false); });
+$('#fbSend').addEventListener('click', async function(){
+  const msg=$('#fbMsg').value.trim(), email=$('#fbEmail').value.trim();
+  const st=$('#fbStatus'); st.className='fb-status';
+  if(!msg){ st.className='fb-status err'; st.textContent='Напишите, пожалуйста, сообщение.'; return; }
+  this.disabled=true; st.textContent='Отправляю…';
+  try{
+    const r=await (await fetch('/api/feedback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,message:msg})})).json();
+    if(r.ok){ st.className='fb-status ok'; st.textContent='Спасибо! Сообщение отправлено.'; $('#fbMsg').value=''; $('#fbEmail').value=''; setTimeout(function(){fbToggle(false);},1600); }
+    else { st.className='fb-status err'; st.textContent='Не удалось отправить'+(r.error?(': '+r.error):'')+'.'; }
+  }catch(e){ st.className='fb-status err'; st.textContent='Ошибка сети, попробуйте позже.'; }
+  this.disabled=false;
+});
 window.addEventListener('load',run);
 </script></body></html>`;
 
@@ -1434,6 +1516,34 @@ http.createServer(async (req,res)=>{
     );
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*'});
     res.end(JSON.stringify(data)); return;
+  }
+  if(u.pathname === '/api/feedback' && req.method === 'POST'){
+    let body='';
+    req.on('data', c=>{ body+=c; if(body.length>30000) req.destroy(); });
+    req.on('end', async ()=>{
+      let ok=false, error='';
+      try{
+        const d=JSON.parse(body||'{}');
+        const message=String(d.message||'').trim().slice(0,4000);
+        const email=String(d.email||'').trim().slice(0,200);
+        if(!message){ error='Пустое сообщение'; }
+        else if(!FEEDBACK_EMAIL){ error='Приём сообщений пока не настроен'; }
+        else{
+          // FormSubmit — доставка на почту без ключей и логина (первый раз нужно подтвердить письмо)
+          const fr = await fetch('https://formsubmit.co/ajax/'+encodeURIComponent(FEEDBACK_EMAIL),{
+            method:'POST',
+            headers:{'Content-Type':'application/json','Accept':'application/json'},
+            body:JSON.stringify({ _subject:'Поиск жилья — пожелание с сайта', email: email||'не указан', Сообщение: message })
+          });
+          const jr = await fr.json().catch(()=>({}));
+          ok = (jr.success==='true' || jr.success===true || fr.ok);
+          if(!ok) error = jr.message || ('HTTP '+fr.status);
+        }
+      }catch(e){ error=e.message; }
+      res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
+      res.end(JSON.stringify({ok, error}));
+    });
+    return;
   }
   if(u.pathname === '/api/desc'){
     let text='';
