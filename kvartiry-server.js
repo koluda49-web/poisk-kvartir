@@ -181,35 +181,49 @@ async function fromRealt(reg, city, type, rooms, maxP, guests){
   }catch(e){ console.error('Realt:', e.message); return []; }
 }
 
-// flatbook.by — суточные квартиры (только Минск). Все данные во встроенном
-// <div id="data-geo" data-geo='[...]'>: координаты, цена, адрес, телефон, фото.
-const FLATBOOK_KEYS = new Set(['minsk','minsk-obl','any']);   // flatbook = только Минск
-async function fromFlatbook(regKey, city, rooms, maxP, guests){
-  if(!FLATBOOK_KEYS.has(regKey)) return [];
-  if(city && !/минск/i.test(city)) return [];
-  // у flatbook нет числа комнат/гостей в данных — карточка комнаты не заявляет,
-  // поэтому фильтры комнат/гостей к нему не применяем (показываем как доп. источник по Минску)
+// flatbook.by — суточные квартиры и усадьбы/коттеджи по областным центрам РБ.
+// Города = поддомены ({city}.flatbook.by, Минск = основной), усадьбы/коттеджи = путь /kottedzhi/.
+// Все данные во встроенном <div id="data-geo" data-geo='[...]'>: координаты, цена, адрес, телефон, фото.
+const FLATBOOK_SUB = {'minsk':'','minsk-obl':'','brest':'brest','gomel':'gomel','grodno':'grodno','vitebsk':'vitebsk','mogilev':'mogilev'};
+function parseFlatbookGeo(html){
+  const m = html.match(/id="data-geo"\s+data-geo='([^']*)'/);
+  if(!m) return [];
+  try{ let a=JSON.parse(m[1]); if(typeof a==='string') a=JSON.parse(a); return Array.isArray(a)?a:[]; }catch(e){ return []; }
+}
+async function fromFlatbookCity(regKey, center, type, maxP){
+  const sub = FLATBOOK_SUB[regKey];
+  const host = sub ? ('https://'+sub+'.flatbook.by') : 'https://flatbook.by';
+  const path = (type==='flat') ? '/' : '/kottedzhi/';   // усадьбы и коттеджи — один раздел
   try{
-    const h = await (await fetch('https://flatbook.by/',{headers:{'User-Agent':UA,'Accept-Language':'ru'}})).text();
-    const m = h.match(/id="data-geo"\s+data-geo='([^']*)'/);
-    if(!m) return [];
-    let arr = JSON.parse(m[1]); if(typeof arr==='string') arr = JSON.parse(arr);
-    return arr.map(f=>{
+    const h = await (await fetch(host+path,{headers:{'User-Agent':UA,'Accept-Language':'ru'}})).text();
+    return parseFlatbookGeo(h).map(f=>{
       const ph=String(f.phone||'').replace(/\D/g,'');
       const phone = ph.length===9 ? ('375'+ph) : ph;
       const metro = (f.metro_description&&f.metro_description[0]&&f.metro_description[0].metro_name)||'';
       const addr = ((f.streetName||'')+' '+(f.streetNumber||'')).trim();
       const note = f.seoTitle ? (' · '+String(f.seoTitle).slice(0,70)) : '';
       return { src:'Flatbook', cur:'BYN', unit:'сутки',
-        price:+f.price_day||0, rooms:0, area:'Минск', capacity:'',
-        title: addr + note,
+        price:+f.price_day||0, rooms:0, area:center, capacity:'',
+        title: (addr||center) + note,
         photos: f.generatedImagePath ? [f.generatedImagePath] : [],
         rating:0, reviews:0, descId:null, phone, name:'',
         lat:+f.latitude, lng:+f.longitude, approx:false,
-        chips: ['Минск'].concat(metro?['м. '+metro]:[]),
-        link: f.url || ('https://flatbook.by/'+f.alias+'/') };
+        chips: [center].concat(metro?['м. '+metro]:[]),
+        link: f.url || (host+'/'+f.alias+'/') };
     }).filter(x=> x.price>0 && x.lat>50 && x.lng>22 && (!maxP||x.price<=maxP));
-  }catch(e){ console.error('Flatbook:', e.message); return []; }
+  }catch(e){ console.error('Flatbook '+host+':', e.message); return []; }
+}
+async function fromFlatbook(regKey, city, type, maxP){
+  const keys = regKey==='any'
+    ? ['minsk','brest','gomel','grodno','vitebsk','mogilev']
+    : (FLATBOOK_SUB[regKey]!==undefined ? [regKey] : []);
+  // flatbook работает по областным центрам; если выбран конкретный НЕ центр — не подмешиваем
+  const tasks = keys.filter(k=>{
+    const center = REGIONS[k] && REGIONS[k].main;
+    return center && (!city || new RegExp(city,'i').test(center));
+  }).map(k=> fromFlatbookCity(k, REGIONS[k].main, type, maxP));
+  const arrs = await Promise.all(tasks);
+  return [].concat(...arrs);
 }
 
 async function search(regKey, city, type, rooms, maxP, guests, source){
@@ -223,7 +237,7 @@ async function search(regKey, city, type, rooms, maxP, guests, source){
     if(useK) tasks.push(fromKufar(reg,city,type,rooms,maxP,guests));
     if(useR) tasks.push(fromRealt(reg,city,type,rooms,maxP,guests));
   });
-  if(useF && type==='flat') tasks.push(fromFlatbook(regKey,city,rooms,maxP,guests));   // flatbook — только квартиры
+  if(useF) tasks.push(fromFlatbook(regKey,city,type,maxP));   // flatbook: квартиры и усадьбы/коттеджи по центрам областей
   const arrs = await Promise.all(tasks);
   let all = [].concat(...arrs);
   // убрать дубли по ссылке (Kufar при 'любой области' может повторяться)
@@ -1094,7 +1108,7 @@ h1 .accent{
   <div id="grid"></div>
   <div id="pager"></div>
 
-  <p class="hint" id="hint">Цены и наличие подтягиваются напрямую из объявлений Kufar и Realt в режиме реального времени. На карте цена показана прямо на метке: <b style="color:var(--kufar)">синие</b> — Kufar, <b style="color:var(--realt)">оранжевые</b> — Realt, <b style="color:#0a9d70">зелёные</b> — Flatbook (Минск, суточные квартиры). Точные координаты подтягиваются из объявления; пока адрес уточняется, метка стоит у центра города (значок ≈ в подсказке). Итоговая стоимость за весь период рассчитывается по датам заезда и выезда. Перед бронированием уточняйте детали у собственника.</p>
+  <p class="hint" id="hint">Цены и наличие подтягиваются напрямую из объявлений Kufar и Realt в режиме реального времени. На карте цена показана прямо на метке: <b style="color:var(--kufar)">синие</b> — Kufar, <b style="color:var(--realt)">оранжевые</b> — Realt, <b style="color:#0a9d70">зелёные</b> — Flatbook (областные центры, квартиры и усадьбы). Точные координаты подтягиваются из объявления; пока адрес уточняется, метка стоит у центра города (значок ≈ в подсказке). Итоговая стоимость за весь период рассчитывается по датам заезда и выезда. Перед бронированием уточняйте детали у собственника.</p>
 </div>
 
 <button id="up" class="up" type="button" aria-label="Наверх" title="Наверх">↑</button>
