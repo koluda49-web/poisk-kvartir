@@ -98,4 +98,6 @@ check('Брест и Минск дают разные списки',
       'списки совпали — значит кэш перепутал области');
 
 console.log('\nИтог: успешно ' + passed + ', провалено ' + failed);
-process.exit(failed ? 1 : 0);
+// Выходим через exitCode, а не process.exit: резкий выход не даёт node закрыть
+// сетевое соединение и на Windows роняет его с ошибкой libuv.
+process.exitCode = failed ? 1 : 0;
