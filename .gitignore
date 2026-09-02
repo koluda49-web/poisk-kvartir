@@ -1,3 +1,4 @@
 node_modules/
 отчёт-*.html
 *.log
+stats-data.json

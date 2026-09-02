@@ -6,6 +6,216 @@ const http = require('http');
 const PORT = process.env.PORT || 8080;   // Render задаёт свой порт через переменную окружения
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36';
 const SITE_URL = 'https://poisk-kvartir.onrender.com';
+
+// ── Своя статистика посещений (без Метрики/Analytics) ──────────────────────
+// События копятся в памяти и раз в 30 секунд сбрасываются в файл рядом с сервером.
+// ВАЖНО: на бесплатном Render диск временный — при передеплое и перезапуске файл теряется.
+const fs = require('fs');
+const STATS_FILE = process.env.STATS_FILE || (__dirname + '/stats-data.json');
+const STATS_KEY  = process.env.STATS_KEY  || 'poisk2026';   // страница /stats?key=…
+const STATS_MAX  = 60000;                                   // сколько событий держим в памяти
+let STATS = [], statsDirty = false;
+
+try{
+  STATS = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
+  if(!Array.isArray(STATS)) STATS = [];
+  console.log('Статистика: загружено событий — ' + STATS.length);
+}catch(e){ STATS = []; }
+
+function statsSave(){
+  if(!statsDirty) return;
+  statsDirty = false;
+  try{ fs.writeFileSync(STATS_FILE, JSON.stringify(STATS)); }
+  catch(e){ console.log('Статистика: не записалась —', e.message); }
+}
+setInterval(statsSave, 30000).unref();
+['SIGTERM','SIGINT'].forEach(function(sig){ process.on(sig, function(){ statsSave(); process.exit(0); }); });
+
+function statsAdd(ev){
+  STATS.push(ev);
+  if(STATS.length > STATS_MAX) STATS.splice(0, STATS.length - STATS_MAX);
+  statsDirty = true;
+}
+
+// откуда пришёл человек — приводим к понятному названию
+function refHost(r){
+  try{
+    if(!r) return 'прямой заход';
+    const h = new URL(String(r)).hostname.replace(/^www\./,'');
+    if(/tiktok/i.test(h))            return 'TikTok';
+    if(/instagram/i.test(h))         return 'Instagram';
+    if(/t\.me|telegram/i.test(h))    return 'Telegram';
+    if(/vk\.com/i.test(h))           return 'ВКонтакте';
+    if(/google/i.test(h))            return 'Google';
+    if(/yandex|ya\.ru/i.test(h))     return 'Яндекс';
+    if(/facebook|fb\.com/i.test(h))  return 'Facebook';
+    if(h.indexOf('poisk-kvartir') >= 0) return 'внутри сайта';
+    return h.slice(0,40);
+  }catch(e){ return 'прямой заход'; }
+}
+
+// из тела запроса берём только заранее разрешённые поля
+const T_FIELDS = ['n','w','ttfb','load','sec','scroll','total','auto','c','region','city','type','rooms','max','host'];
+function statsFields(o){
+  const out = {};
+  for(const k of T_FIELDS){
+    const v = o[k];
+    if(v === undefined || v === null || v === '') continue;
+    out[k] = (typeof v === 'number') ? v : String(v).slice(0,40);
+  }
+  return out;
+}
+
+// ── страница /stats ────────────────────────────────────────────────────────
+const DAY_MS = 86400000;
+
+function statsPage(){
+  const now = Date.now();
+  const esc = function(t){ return String(t).replace(/[&<>]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]; }); };
+  const since = function(ms){ return STATS.filter(function(x){ return now - x.t <= ms; }); };
+  const uniq  = function(a){ return new Set(a.map(function(x){ return x.v; })).size; };
+  const only  = function(a, e){ return a.filter(function(x){ return x.e === e; }); };
+
+  const dayA = since(DAY_MS), weekA = since(7*DAY_MS);
+  const first = STATS.length ? new Date(STATS[0].t) : null;
+
+  function top(arr, fn, limit){
+    const m = new Map();
+    for(const x of arr){
+      const k = fn(x);
+      if(k === undefined || k === null || k === '') continue;
+      m.set(k, (m.get(k)||0)+1);
+    }
+    return [...m.entries()].sort(function(a,b){ return b[1]-a[1]; }).slice(0, limit || 10);
+  }
+  function bars(rows){
+    if(!rows.length) return '<p class="none">пока пусто</p>';
+    const max = rows[0][1];
+    return '<table class="bars">' + rows.map(function(r){
+      return '<tr><td class="k">' + esc(r[0]) + '</td><td class="b"><i style="width:' +
+        Math.max(3, Math.round(r[1]/max*100)) + '%"></i></td><td class="n">' + r[1] + '</td></tr>';
+    }).join('') + '</table>';
+  }
+  function tile(label, value, note){
+    return '<div class="tile"><div class="lab">' + label + '</div><div class="val">' + value +
+           '</div>' + (note ? '<div class="note">' + note + '</div>' : '') + '</div>';
+  }
+  const pct = function(a, b){ return b ? Math.round(a/b*100) + '%' : '—'; };
+  function median(nums){
+    if(!nums.length) return 0;
+    const a = nums.slice().sort(function(x,y){ return x-y; });
+    return a[Math.floor(a.length/2)];
+  }
+  const avg = function(arr){ return arr.length ? Math.round(arr.reduce(function(a,b){ return a+b; }, 0)/arr.length) : 0; };
+
+  // воронка за 7 дней: считаем по сессиям (один визит = одна сессия)
+  const sessView   = new Set(only(weekA,'view').map(function(x){ return x.s; }));
+  const sessSearch = new Set(only(weekA,'search').filter(function(x){ return x.p && x.p.auto === 0; }).map(function(x){ return x.s; }));
+  const sessGoal   = new Set(weekA.filter(function(x){ return x.e === 'open' || x.e === 'call'; }).map(function(x){ return x.s; }));
+  const sessMap    = new Set(only(weekA,'map').map(function(x){ return x.s; }));
+
+  // по дням
+  const days = [];
+  for(let i = 13; i >= 0; i--){
+    const from = now - (i+1)*DAY_MS, to = now - i*DAY_MS;
+    const a = STATS.filter(function(x){ return x.t > from && x.t <= to; });
+    days.push([ new Date(to - DAY_MS/2).toLocaleDateString('ru-RU', {day:'2-digit', month:'2-digit'}),
+                only(a,'view').length, uniq(only(a,'view')) ]);
+  }
+
+  // скорость первой загрузки — та самая проблема со сном Render
+  const loads  = only(weekA,'view').map(function(x){ return x.p && x.p.load; })
+                   .filter(function(v){ return typeof v === 'number' && v > 0; });
+  const slow5  = loads.filter(function(v){ return v >= 5000; }).length;
+  const slow15 = loads.filter(function(v){ return v >= 15000; }).length;
+
+  // вовлечённость
+  const ends = only(weekA,'end');
+  const secs = ends.map(function(x){ return x.p && x.p.sec; }).filter(function(v){ return typeof v === 'number'; });
+  const scrl = ends.map(function(x){ return x.p && x.p.scroll; }).filter(function(v){ return typeof v === 'number'; });
+
+  const last = STATS.slice(-40).reverse().map(function(x){
+    return '<tr><td>' + new Date(x.t).toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) +
+      '</td><td>' + esc(x.e) + '</td><td>' + esc(x.r || '') + '</td><td>' + esc(x.m || '') +
+      '</td><td class="raw">' + esc(JSON.stringify(x.p || {})) + '</td></tr>';
+  }).join('');
+
+  return '<!doctype html><html lang="ru"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<meta name="robots" content="noindex,nofollow"><title>Статистика — Поиск жилья</title><style>' +
+    'body{margin:0;background:#f4f5f7;color:#141821;font:15px/1.5 -apple-system,Segoe UI,Roboto,sans-serif}' +
+    '.wrap{max-width:900px;margin:0 auto;padding:20px 16px 60px}' +
+    'h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:28px 0 10px;color:#4a5160}' +
+    '.sub{color:#8b93a3;font-size:13px;margin:0 0 18px}' +
+    '.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}' +
+    '.tile{background:#fff;border:1px solid #e2e5ea;border-radius:14px;padding:14px}' +
+    '.lab{font-size:12px;color:#8b93a3;text-transform:uppercase;letter-spacing:.03em}' +
+    '.val{font-size:26px;font-weight:800;margin-top:2px}' +
+    '.note{font-size:12px;color:#8b93a3;margin-top:2px}' +
+    '.card{background:#fff;border:1px solid #e2e5ea;border-radius:14px;padding:14px 16px}' +
+    'table{width:100%;border-collapse:collapse;font-size:14px}' +
+    '.bars td{padding:3px 0}.bars .k{width:42%;color:#4a5160}.bars .n{width:52px;text-align:right;font-weight:700}' +
+    '.bars .b i{display:block;height:10px;border-radius:6px;background:#ff5a1f}' +
+    '.funnel div{margin:6px 0}.funnel b{font-size:18px}' +
+    '.log td{border-top:1px solid #eef0f4;padding:5px 6px;vertical-align:top}' +
+    '.log .raw{color:#8b93a3;font-size:12px;word-break:break-all}' +
+    '.none{color:#8b93a3;font-size:14px;margin:4px 0}' +
+    '.warn{background:#fff4ee;border:1px solid #ffd3bd;border-radius:12px;padding:12px 14px;font-size:14px;margin-top:10px}' +
+    '</style></head><body><div class="wrap">' +
+    '<h1>Статистика сайта</h1>' +
+    '<p class="sub">Событий в памяти: ' + STATS.length +
+      (first ? (' · с ' + first.toLocaleString('ru-RU')) : '') +
+      ' · данные лежат в файле на сервере и теряются при передеплое</p>' +
+
+    '<div class="tiles">' +
+      tile('Заходов сегодня', only(dayA,'view').length, uniq(only(dayA,'view')) + ' чел.') +
+      tile('Заходов за 7 дней', only(weekA,'view').length, uniq(only(weekA,'view')) + ' чел.') +
+      tile('Всего заходов', only(STATS,'view').length, uniq(only(STATS,'view')) + ' чел.') +
+      tile('Открыли объявление', weekA.filter(function(x){ return x.e==='open'||x.e==='call'; }).length, 'за 7 дней') +
+    '</div>' +
+
+    '<h2>Путь посетителя за 7 дней</h2><div class="card funnel">' +
+      '<div><b>' + sessView.size + '</b> зашли на сайт</div>' +
+      '<div><b>' + sessSearch.size + '</b> сами запустили поиск — ' + pct(sessSearch.size, sessView.size) + '</div>' +
+      '<div><b>' + sessMap.size + '</b> открыли карту — ' + pct(sessMap.size, sessView.size) + '</div>' +
+      '<div><b>' + sessGoal.size + '</b> открыли объявление или позвонили — ' + pct(sessGoal.size, sessView.size) + '</div>' +
+    '</div>' +
+
+    '<h2>Откуда приходят (7 дней)</h2><div class="card">' +
+      bars(top(only(weekA,'view'), function(x){ return x.r; }, 12)) + '</div>' +
+
+    '<h2>Скорость первой загрузки (7 дней)</h2><div class="card">' +
+      '<div class="tiles">' +
+        tile('Обычно', (median(loads)/1000).toFixed(1) + ' с', 'медиана') +
+        tile('Ждали дольше 5 с', slow5, pct(slow5, loads.length) + ' заходов') +
+        tile('Ждали дольше 15 с', slow15, pct(slow15, loads.length) + ' заходов') +
+      '</div>' +
+      (slow15 ? '<div class="warn">Столько людей упёрлось в спящий сервер Render. Почти все такие заходы — потерянные.</div>' : '') +
+    '</div>' +
+
+    '<h2>Заходы по дням</h2><div class="card">' +
+      bars(days.map(function(d){ return [d[0] + ' — ' + d[2] + ' чел.', d[1]]; })) + '</div>' +
+
+    '<h2>Что искали (7 дней)</h2><div class="card">' +
+      bars(top(only(weekA,'search').filter(function(x){ return x.p && x.p.auto === 0; }),
+               function(x){ return (x.p.c === 'ru' ? 'Россия · ' : '') + (x.p.city || x.p.region || '—') + ' · ' + (x.p.type || ''); }, 12)) +
+    '</div>' +
+
+    '<h2>Устройства и вовлечённость (7 дней)</h2><div class="card"><div class="tiles">' +
+      tile('С телефона', only(weekA,'view').filter(function(x){ return x.m === 'моб.'; }).length, 'заходов') +
+      tile('С компьютера', only(weekA,'view').filter(function(x){ return x.m === 'комп.'; }).length, 'заходов') +
+      tile('Среднее время', avg(secs) + ' с', 'на сайте') +
+      tile('Долистали до', avg(scrl) + '%', 'страницы') +
+    '</div></div>' +
+
+    '<h2>Последние события</h2><div class="card"><table class="log">' +
+      '<tr><td><b>когда</b></td><td><b>что</b></td><td><b>откуда</b></td><td><b>устр.</b></td><td><b>подробности</b></td></tr>' +
+      (last || '<tr><td colspan="5" class="none">пока пусто</td></tr>') +
+    '</table></div>' +
+
+    '</div></body></html>';
+}
+
 // адрес для обратной связи держим только в base64 (без открытого email в репозитории)
 
 // Области: realt = слаг раздела, oblast = как пишет Kufar, main = главный город (для запроса Kufar)
@@ -1396,6 +1606,9 @@ async function runRF(){
     const d=await (await fetch('/api/rf/search?'+p.toString())).json();
     const cityName=$('#rfCity').selectedOptions[0] ? $('#rfCity').selectedOptions[0].textContent : '';
     $('#stat').textContent='Найдено '+d.total+' отелей'+(cityName?(' · '+cityName):'');
+    if(window.__T) window.__T('search', { c:'ru', auto: window.__firstRun?1:0,
+      city:cityName||$('#rfCity').value, type:$('#rfType').value||'любой', total:d.total });
+    window.__firstRun = 0;
     window.__items=d.items||[]; window.__page=1;
     if(!window.__items.length){ $('#grid').innerHTML='<div class="empty">Ничего не найдено. Смягчите фильтры.</div>'; if(window.__view==='map') plotMap(true); return; }
     sortItems();
@@ -1418,6 +1631,10 @@ async function run(){
     const N=nights();
     const parts=[]; if(d.kufar)parts.push('Kufar '+d.kufar); if(d.realt)parts.push('Realt '+d.realt); if(d.flatbook)parts.push('Flatbook '+d.flatbook);
     $('#stat').textContent='Найдено '+d.total+(parts.length?(' ('+parts.join(' + ')+')'):'')+(name?(' по запросу «'+name+'»'):'')+(N?(', расчёт на '+N+' ноч.'):'');
+    if(window.__T) window.__T('search', { c:'by', auto: window.__firstRun?1:0, region:$('#region').value,
+      city:$('#city').value.trim()||'—', type:$('#type').value, rooms:$('#rooms').value||'любое',
+      max:+$('#max').value||0, total:d.total });
+    window.__firstRun = 0;
     window.__items=d.items||[]; window.__page=1;
     if(!window.__items.length){ $('#grid').innerHTML='<div class="empty">Ничего не найдено. Смягчите фильтры.</div>'; if(window.__view==='map') plotMap(true); return; }
     sortItems();
@@ -1509,6 +1726,7 @@ function gotoPage(p){
 // вид: список / карта
 function setView(v){
   window.__view=v;
+  if(v==='map' && window.__T) window.__T('map', {});
   $('#viewList').classList.toggle('on', v==='list');
   $('#viewMap').classList.toggle('on', v==='map');
   $('#grid').style.display = v==='list' ? '' : 'none';
@@ -1658,6 +1876,50 @@ $('#fbSend').addEventListener('click', async function(){
     .then(function(j){ (String(j.success)==='true') ? ok() : fail(); })
     .catch(function(){ fail(); });
 });
+// ── своя статистика: ничего не уходит на сторонние сервисы ─────────────────
+(function(){
+  try{
+    var vid = localStorage.getItem('pk_vid'), isNew = 0;
+    if(!vid){ vid = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('pk_vid', vid); isNew = 1; }
+    var sid = Math.random().toString(36).slice(2);
+    window.__T = function(e, d){
+      try{
+        var o = d || {}; o.e = e; o.v = vid; o.s = sid;
+        var b = JSON.stringify(o);
+        if(navigator.sendBeacon) navigator.sendBeacon('/api/t', new Blob([b], {type:'application/json'}));
+        else fetch('/api/t', {method:'POST', body:b, keepalive:true});
+      }catch(_){}
+    };
+    window.addEventListener('load', function(){
+      var n = (performance.getEntriesByType('navigation')||[])[0];
+      window.__T('view', { r: document.referrer||'', n: isNew, w: innerWidth,
+                           ttfb: n ? Math.round(n.responseStart) : 0,
+                           load: n ? Math.round(n.loadEventEnd || n.duration) : 0 });
+    });
+    var maxS = 0, t0 = Date.now(), sent = false;
+    addEventListener('scroll', function(){
+      var d = (scrollY + innerHeight) / Math.max(1, document.body.scrollHeight);
+      if(d > maxS) maxS = d;
+    }, {passive:true});
+    function bye(){
+      if(sent) return; sent = true;
+      window.__T('end', { sec: Math.round((Date.now()-t0)/1000), scroll: Math.min(100, Math.round(maxS*100)) });
+    }
+    addEventListener('pagehide', bye);
+    document.addEventListener('visibilitychange', function(){ if(document.visibilityState === 'hidden') bye(); });
+    // переходы в объявление и звонки
+    document.addEventListener('click', function(ev){
+      var a = (ev.target && ev.target.closest) ? ev.target.closest('a') : null;
+      if(!a) return;
+      var href = a.getAttribute('href') || '';
+      if(/^tel:/.test(href)) window.__T('call', {});
+      else if(a.target === '_blank' && /^https?:/.test(href)){
+        try{ window.__T('open', { host: new URL(a.href).hostname.replace(/^www\./,'') }); }catch(_){}
+      }
+    }, true);
+  }catch(_){}
+})();
+window.__firstRun = 1;
 window.addEventListener('load',run);
 </script></body></html>`;
 
@@ -1744,6 +2006,36 @@ http.createServer(async (req,res)=>{
     text = String(text).replace(/<[^>]+>/g,' ').replace(/&nbsp;/g,' ').replace(/\s+/g,' ').trim();
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*'});
     res.end(JSON.stringify({text})); return;
+  }
+  // приём событий статистики со страницы
+  if(u.pathname === '/api/t' && req.method === 'POST'){
+    let body='';
+    req.on('data', c=>{ body+=c; if(body.length>4000) req.destroy(); });
+    req.on('end', ()=>{
+      try{
+        const d  = JSON.parse(body||'{}');
+        const ua = String(req.headers['user-agent']||'');
+        statsAdd({
+          t: Date.now(),
+          e: String(d.e||'').slice(0,16),
+          v: String(d.v||'').slice(0,32),
+          s: String(d.s||'').slice(0,32),
+          r: refHost(d.r),
+          m: /Mobile|Android|iPhone|iPad/i.test(ua) ? 'моб.' : 'комп.',
+          p: statsFields(d)
+        });
+      }catch(e){}
+      res.writeHead(204); res.end();
+    });
+    return;
+  }
+  if(u.pathname === '/stats'){
+    if(u.searchParams.get('key') !== STATS_KEY){
+      res.writeHead(403, {'Content-Type':'text/plain; charset=utf-8'});
+      res.end('Нужен ключ: /stats?key=…'); return;
+    }
+    res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+    res.end(statsPage()); return;
   }
   if(u.pathname === '/robots.txt'){
     res.writeHead(200, {'Content-Type':'text/plain; charset=utf-8'});
