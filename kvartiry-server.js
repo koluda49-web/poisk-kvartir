@@ -1891,10 +1891,14 @@ $('#fbSend').addEventListener('click', async function(){
       }catch(_){}
     };
     window.addEventListener('load', function(){
-      var n = (performance.getEntriesByType('navigation')||[])[0];
-      window.__T('view', { r: document.referrer||'', n: isNew, w: innerWidth,
-                           ttfb: n ? Math.round(n.responseStart) : 0,
-                           load: n ? Math.round(n.loadEventEnd || n.duration) : 0 });
+      // на такт позже: в момент самого события loadEventEnd ещё не проставлен
+      setTimeout(function(){
+        var n = (performance.getEntriesByType('navigation')||[])[0];
+        var load = n ? Math.round(n.loadEventEnd || n.duration || 0) : 0;
+        if(!load) load = Math.round(performance.now());
+        window.__T('view', { r: document.referrer||'', n: isNew, w: innerWidth,
+                             ttfb: n ? Math.round(n.responseStart) : 0, load: load });
+      }, 0);
     });
     var maxS = 0, t0 = Date.now(), sent = false;
     addEventListener('scroll', function(){
