@@ -739,6 +739,57 @@ async function searchRF(cityKey, opts){
   return { total: items.length, items };
 }
 
+// ── Кэш результатов поиска ────────────────────────────────────────────────
+// Одинаковые запросы в течение 8 минут отдаём из памяти: и быстрее, и источники
+// не получают шквал обращений, если на сайт разом придёт много людей.
+const CACHE_TTL = 8 * 60 * 1000;
+const CACHE_MAX = 300;
+const SEARCH_CACHE = new Map();   // ключ -> { at, data }
+const INFLIGHT = new Map();       // ключ -> Promise (чтобы не считать одно и то же дважды)
+
+function cacheKey(u){
+  return u.pathname + '?' + [...u.searchParams.entries()]
+    .sort((a,b)=> a[0] < b[0] ? -1 : 1)
+    .map(kv => kv[0] + '=' + kv[1]).join('&');
+}
+async function cached(key, fn){
+  const hit = SEARCH_CACHE.get(key);
+  if(hit && Date.now() - hit.at <= CACHE_TTL) return hit.data;
+  if(hit) SEARCH_CACHE.delete(key);
+  if(INFLIGHT.has(key)) return INFLIGHT.get(key);
+  const p = (async ()=>{
+    try{
+      const data = await fn();
+      SEARCH_CACHE.set(key, { at: Date.now(), data });
+      if(SEARCH_CACHE.size > CACHE_MAX){
+        let oldK = null, oldT = Infinity;
+        for(const [k,v] of SEARCH_CACHE) if(v.at < oldT){ oldT = v.at; oldK = k; }
+        if(oldK) SEARCH_CACHE.delete(oldK);
+      }
+      return data;
+    } finally { INFLIGHT.delete(key); }
+  })();
+  INFLIGHT.set(key, p);
+  return p;
+}
+
+// сам поиск по параметрам запроса — вынесен, чтобы им же пользовался прогрев
+function runSearchQuery(q){
+  const name = (q.get('name')||'').trim();
+  return name
+    ? searchByName(name, q.get('type')||'flat', +(q.get('max')||0))
+    : search(
+        q.get('region')||'brest',
+        (q.get('city')||'').trim(),
+        q.get('type')||'flat',
+        q.get('rooms')||'',
+        +(q.get('max')||0),
+        +(q.get('guests')||0),
+        q.get('source')||'both',
+        (q.get('amen')||'').split(',').filter(Boolean)
+      );
+}
+
 const META_DESC = 'Поиск жилья на сутки: Беларусь (Kufar, Realt, Flatbook) и отели России (101Hotels) в одном месте. Фильтры по городу, типу, цене, звёздам, рейтингу и удобствам, список и карта с ценами, телефоны и описания.';
 
 const PAGE = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
@@ -1552,7 +1603,7 @@ const FB_TO = 'a29sdWRhNDlAZ21haWwuY29t';   // адрес обратной св�
 const HINT_RU = 'Отели и жильё России с 101hotels.com в реальном времени. Цена «от» за ночь показана прямо на метке карты (<b style="color:#7c3aed">фиолетовые</b> — 101Hotels, координаты точные). Доступны фильтры по типу размещения, звёздам, цене, рейтингу, удобствам и оплате при заселении. Список и карта; перед бронированием проверяйте даты и условия на 101hotels.com.';
 
 // переключение Беларусь / Россия
-function setCountry(c){
+function setCountry(c, quiet){
   window.__mode = (c==='ru') ? 'ru' : 'by';
   const ru = window.__mode==='ru';
   $('#cbBY').classList.toggle('on', !ru);
@@ -1562,7 +1613,7 @@ function setCountry(c){
   if(!window.__hintBY) window.__hintBY = $('#hint').innerHTML;
   $('#hint').innerHTML = ru ? HINT_RU : window.__hintBY;
   window.__page = 1;
-  run();
+  if(!quiet) run();
 }
 
 function fillCities(){
@@ -1591,6 +1642,7 @@ function sortItems(){
   (window.__items||[]).sort(function(a,b){ return s==='price_desc'? b.price-a.price : s==='rating_desc'? (((b.rating||0)-(a.rating||0))||(a.price-b.price)) : a.price-b.price; });
 }
 async function runRF(){
+  syncUrl();
   const p=new URLSearchParams({ city:$('#rfCity').value });
   const t=$('#rfType').value;   if(t)  p.set('type', t);
   const st=$('#rfStars').value; if(st) p.set('stars', st);
@@ -1615,31 +1667,84 @@ async function runRF(){
     if(window.__view==='map') plotMap(true); else renderCards();
   }catch(e){ $('#stat').textContent='Ошибка: '+e.message; }
 }
+// Поиск идёт по трём источникам параллельно, и каждый рисуется сразу, как ответил:
+// Kufar обычно отвечает первым, поэтому человек видит квартиры, не дожидаясь остальных.
+const SRC_NAME = { kufar:'Kufar', realt:'Realt', flatbook:'Flatbook' };
 async function run(){
   if(window.__mode==='ru') return runRF();
   const name=$('#qname')?$('#qname').value.trim():'';
-  const p=new URLSearchParams({
+  const base=new URLSearchParams({
     region:$('#region').value, city:$('#city').value.trim(), type:$('#type').value,
-    rooms:$('#rooms').value, guests:$('#guests').value, max:$('#max').value, source:$('#source').value
+    rooms:$('#rooms').value, guests:$('#guests').value, max:$('#max').value
   });
-  if(name) p.set('name', name);
   const amen=[...document.querySelectorAll('#bar .rb-amen-cb:checked')].map(cb=>cb.value).join(',');
-  if(amen) p.set('amen', amen);
+  if(amen) base.set('amen', amen);
+  syncUrl();
+
+  const auto = window.__firstRun?1:0; window.__firstRun = 0;
+  const token = ++window.__runToken;
   $('#stat').textContent='Ищу…'; $('#grid').innerHTML=''; $('#pager').innerHTML='';
-  try{
-    const d=await (await fetch('/api/search?'+p.toString())).json();
-    const N=nights();
-    const parts=[]; if(d.kufar)parts.push('Kufar '+d.kufar); if(d.realt)parts.push('Realt '+d.realt); if(d.flatbook)parts.push('Flatbook '+d.flatbook);
-    $('#stat').textContent='Найдено '+d.total+(parts.length?(' ('+parts.join(' + ')+')'):'')+(name?(' по запросу «'+name+'»'):'')+(N?(', расчёт на '+N+' ноч.'):'');
-    if(window.__T) window.__T('search', { c:'by', auto: window.__firstRun?1:0, region:$('#region').value,
-      city:$('#city').value.trim()||'—', type:$('#type').value, rooms:$('#rooms').value||'любое',
-      max:+$('#max').value||0, total:d.total });
-    window.__firstRun = 0;
-    window.__items=d.items||[]; window.__page=1;
-    if(!window.__items.length){ $('#grid').innerHTML='<div class="empty">Ничего не найдено. Смягчите фильтры.</div>'; if(window.__view==='map') plotMap(true); return; }
+  window.__items=[]; window.__page=1;
+
+  const N=nights();
+  const tail = (name?(' по запросу «'+name+'»'):'') + (N?(', расчёт на '+N+' ноч.'):'');
+  const draw = function(){
     sortItems();
     if(window.__view==='map'){ plotMap(true); enrichRealt(); } else renderCards();
-  }catch(e){ $('#stat').textContent='Ошибка: '+e.message; }
+  };
+
+  // поиск по названию сервер делает сразу по всем источникам — один запрос
+  if(name){
+    const p=new URLSearchParams(base); p.set('source', $('#source').value); p.set('name', name);
+    try{
+      const d=await (await fetch('/api/search?'+p.toString())).json();
+      if(token!==window.__runToken) return;
+      const parts=[]; if(d.kufar)parts.push('Kufar '+d.kufar); if(d.realt)parts.push('Realt '+d.realt); if(d.flatbook)parts.push('Flatbook '+d.flatbook);
+      $('#stat').textContent='Найдено '+d.total+(parts.length?(' ('+parts.join(' + ')+')'):'')+tail;
+      window.__items=d.items||[];
+      if(!window.__items.length){ $('#grid').innerHTML='<div class="empty">Ничего не найдено. Смягчите фильтры.</div>'; if(window.__view==='map') plotMap(true); }
+      else draw();
+      if(window.__T) window.__T('search', { c:'by', auto:auto, region:$('#region').value,
+        city:$('#city').value.trim()||'—', type:$('#type').value, rooms:$('#rooms').value||'любое',
+        max:+$('#max').value||0, total:d.total });
+    }catch(e){ if(token===window.__runToken) $('#stat').textContent='Ошибка: '+e.message; }
+    return;
+  }
+
+  const pick=$('#source').value;
+  let sources = (pick==='both') ? ['kufar','realt','flatbook'] : [pick];
+  if(amen) sources = sources.filter(function(x){ return x!=='realt'; });   // у Realt нет данных удобств в списке
+
+  const seen=new Set(), counts={};
+  let done=0, failed=0;
+
+  await Promise.all(sources.map(async function(src){
+    const p=new URLSearchParams(base); p.set('source', src);
+    try{
+      const d=await (await fetch('/api/search?'+p.toString())).json();
+      if(token!==window.__runToken) return;
+      (d.items||[]).forEach(function(x){ if(!seen.has(x.link)){ seen.add(x.link); window.__items.push(x); } });
+      counts[src]=d.total||0;
+    }catch(e){ failed++; }
+    if(token!==window.__runToken) return;
+    done++;
+    const parts=sources.filter(function(x){ return counts[x]; }).map(function(x){ return SRC_NAME[x]+' '+counts[x]; });
+    const head='Найдено '+window.__items.length+(parts.length?(' ('+parts.join(' + ')+')'):'');
+    $('#stat').textContent = (done<sources.length) ? (head+' · ищу ещё…') : (head+tail);
+    if(window.__items.length) draw();
+  }));
+
+  if(token!==window.__runToken) return;
+  if(!window.__items.length){
+    $('#grid').innerHTML = failed===sources.length
+      ? '<div class="empty">Источники не ответили. Попробуйте ещё раз через минуту.</div>'
+      : '<div class="empty">Ничего не найдено. Смягчите фильтры.</div>';
+    $('#stat').textContent = failed===sources.length ? 'Ошибка загрузки' : ('Найдено 0'+tail);
+    if(window.__view==='map') plotMap(true);
+  }
+  if(window.__T) window.__T('search', { c:'by', auto:auto, region:$('#region').value,
+    city:$('#city').value.trim()||'—', type:$('#type').value, rooms:$('#rooms').value||'любое',
+    max:+$('#max').value||0, total:window.__items.length });
 }
 function renderCards(){
   const all=window.__items||[];
@@ -1923,6 +2028,73 @@ $('#fbSend').addEventListener('click', async function(){
     }, true);
   }catch(_){}
 })();
+window.__runToken = 0;
+
+// ── Фильтры в адресной строке ─────────────────────────────────────────────
+// Поиск можно скинуть ссылкой: /?region=brest&type=flat&max=50
+// В адрес пишем только то, что отличается от значений по умолчанию.
+const URL_DEFAULTS = { region:'minsk', city:'', type:'flat', rooms:'2', guests:'', max:'', source:'both', sort:'price_asc' };
+function syncUrl(){
+  try{
+    const p=new URLSearchParams();
+    if(window.__mode==='ru'){
+      p.set('country','ru');
+      p.set('city', $('#rfCity').value);
+      if($('#rfType').value)   p.set('type',   $('#rfType').value);
+      if($('#rfStars').value)  p.set('stars',  $('#rfStars').value);
+      if($('#rfRating').value) p.set('rating', $('#rfRating').value);
+      if($('#rfMax').value)    p.set('max',    $('#rfMax').value);
+      if($('#rfSort').value!=='price_asc') p.set('sort', $('#rfSort').value);
+      if($('#rfNoCard').classList.contains('on')) p.set('nocard','1');
+      if($('#rfBathroom').checked) p.set('bath','1');
+      const svc=[...document.querySelectorAll('#barRF .amen-cb:checked')].map(cb=>cb.value).join(',');
+      if(svc) p.set('services', svc);
+    } else {
+      ['region','city','type','rooms','guests','max','source','sort'].forEach(function(k){
+        const v=$('#'+k).value;
+        if(v && v!==URL_DEFAULTS[k]) p.set(k, v);
+      });
+      const nm=$('#qname').value.trim(); if(nm) p.set('name', nm);
+      const am=[...document.querySelectorAll('#bar .rb-amen-cb:checked')].map(cb=>cb.value).join(',');
+      if(am) p.set('amen', am);
+      if($('#from').value) p.set('from', $('#from').value);
+      if($('#to').value)   p.set('to',   $('#to').value);
+    }
+    const q=p.toString();
+    history.replaceState(null, '', q ? ('/?'+q) : '/');
+  }catch(e){}
+}
+// разобрать адрес при открытии и подставить в форму (поиск запустится сам)
+function applyUrl(){
+  try{
+    const q=new URLSearchParams(location.search);
+    if(![...q.keys()].length) return;
+    const set=function(id,v){ const el=$('#'+id); if(el && v!==null && v!==undefined) el.value=v; };
+    if(q.get('country')==='ru'){
+      set('rfCity',   q.get('city'));
+      set('rfType',   q.get('type'));
+      set('rfStars',  q.get('stars'));
+      set('rfRating', q.get('rating'));
+      set('rfMax',    q.get('max'));
+      set('rfSort',   q.get('sort') || 'price_asc');
+      if(q.get('nocard')==='1') $('#rfNoCard').classList.add('on');
+      if(q.get('bath')==='1')   $('#rfBathroom').checked = true;
+      const svc=(q.get('services')||'').split(',').filter(Boolean);
+      document.querySelectorAll('#barRF .amen-cb').forEach(function(cb){ cb.checked = svc.indexOf(cb.value)>=0; });
+      setCountry('ru', true);
+      return;
+    }
+    ['region','type','rooms','guests','max','source','sort'].forEach(function(k){ if(q.get(k)!==null) set(k, q.get(k)); });
+    fillCities();                                  // список городов зависит от области
+    if(q.get('city')) set('city', q.get('city'));
+    if(q.get('name')) set('qname', q.get('name'));
+    if(q.get('from')) set('from', q.get('from'));
+    if(q.get('to'))   set('to',   q.get('to'));
+    const am=(q.get('amen')||'').split(',').filter(Boolean);
+    document.querySelectorAll('#bar .rb-amen-cb').forEach(function(cb){ cb.checked = am.indexOf(cb.value)>=0; });
+  }catch(e){}
+}
+applyUrl();
 window.__firstRun = 1;
 window.addEventListener('load',run);
 </script></body></html>`;
@@ -1930,19 +2102,7 @@ window.addEventListener('load',run);
 http.createServer(async (req,res)=>{
   const u = new URL(req.url, 'http://localhost');
   if(u.pathname === '/api/search'){
-    const name=(u.searchParams.get('name')||'').trim();
-    const data = name
-      ? await searchByName(name, u.searchParams.get('type')||'flat', +(u.searchParams.get('max')||0))
-      : await search(
-          u.searchParams.get('region')||'brest',
-          (u.searchParams.get('city')||'').trim(),
-          u.searchParams.get('type')||'flat',
-          u.searchParams.get('rooms')||'',
-          +(u.searchParams.get('max')||0),
-          +(u.searchParams.get('guests')||0),
-          u.searchParams.get('source')||'both',
-          (u.searchParams.get('amen')||'').split(',').filter(Boolean)
-        );
+    const data = await cached(cacheKey(u), ()=> runSearchQuery(u.searchParams));
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*'});
     res.end(JSON.stringify(data)); return;
   }
@@ -1973,7 +2133,7 @@ http.createServer(async (req,res)=>{
     return;
   }
   if(u.pathname === '/api/rf/search'){
-    const data = await searchRF(
+    const data = await cached(cacheKey(u), ()=> searchRF(
       u.searchParams.get('city') || 'moskva',
       { types:    u.searchParams.get('type')     || '',
         stars:    u.searchParams.get('stars')    || '',
@@ -1983,7 +2143,7 @@ http.createServer(async (req,res)=>{
         bathroom: u.searchParams.get('bathroom') || '',
         maxP:     +(u.searchParams.get('max')    || 0),
         sort:     u.searchParams.get('sort')     || 'price_asc' }
-    );
+    ));
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*'});
     res.end(JSON.stringify(data)); return;
   }
@@ -2052,3 +2212,24 @@ http.createServer(async (req,res)=>{
   res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
   res.end(PAGE);
 }).listen(PORT, ()=> console.log('Открой http://localhost:'+PORT));
+
+// ── Прогрев ───────────────────────────────────────────────────────────────
+// Render на бесплатном тарифе усыпляет сервис, и первый живой посетитель
+// ждёт не только запуск, но и «холодные» соединения с Kufar/Realt/Flatbook.
+// Поэтому сразу после старта сами прогоняем тот же поиск, что открывается
+// по умолчанию — результат ложится в кэш, и человек получает его мгновенно.
+const WARM_UP = [
+  '/api/search?region=minsk&city=&type=flat&rooms=2&guests=&max=&source=kufar',
+  '/api/search?region=minsk&city=&type=flat&rooms=2&guests=&max=&source=realt',
+  '/api/search?region=minsk&city=&type=flat&rooms=2&guests=&max=&source=flatbook'
+];
+function warmUp(){
+  WARM_UP.forEach(function(path){
+    const uu = new URL(path, 'http://localhost');
+    cached(cacheKey(uu), ()=> runSearchQuery(uu.searchParams))
+      .then(function(d){ console.log('Прогрев ' + uu.searchParams.get('source') + ': ' + d.total); })
+      .catch(function(e){ console.log('Прогрев не удался:', e.message); });
+  });
+}
+setTimeout(warmUp, 1500);
+setInterval(warmUp, 7 * 60 * 1000).unref();   // держим кэш тёплым
