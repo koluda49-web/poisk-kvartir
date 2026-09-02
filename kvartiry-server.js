@@ -322,12 +322,13 @@ async function kufarRaw(reg, city, type){
   });
 }
 
-async function fromKufar(reg, city, type, rooms, maxP, guests){
+async function fromKufar(reg, city, type, rooms, maxP, guests, minP){
   try{
     const list = await kufarRaw(reg, city, type);
     return list.filter(x=>
          (city ? new RegExp(city,'i').test(x.area) : x.region===reg.oblast)
-      && (!rooms||x.rooms==rooms) && (!maxP||x.price<=maxP) && (!guests|| (+x.capacity||0)>=guests));
+      && (!rooms||x.rooms==rooms) && (!maxP||x.price<=maxP) && (!minP||x.price>=minP)
+      && (!guests|| (+x.capacity||0)>=guests));
   }catch(e){ console.error('Kufar:', e.message); return []; }
 }
 
@@ -441,12 +442,13 @@ async function realtRaw(reg, type){
   });
 }
 
-async function fromRealt(reg, city, type, rooms, maxP, guests){
+async function fromRealt(reg, city, type, rooms, maxP, guests, minP){
   try{
     const list = await realtRaw(reg, type);
     return list.filter(x=>
          (city ? new RegExp(city,'i').test(x.area) : true)
-      && (!rooms||x.rooms==rooms) && (!maxP||x.price<=maxP) && (!guests|| (+x.capacity||0)>=guests));
+      && (!rooms||x.rooms==rooms) && (!maxP||x.price<=maxP) && (!minP||x.price>=minP)
+      && (!guests|| (+x.capacity||0)>=guests));
   }catch(e){ console.error('Realt:', e.message); return []; }
 }
 
@@ -461,9 +463,9 @@ function parseFlatbookGeo(html){
 }
 // Flatbook понимает комнаты и удобства на своей стороне, поэтому они входят в ключ.
 // Цена отсеивается после, значит её смена берётся из памяти.
-async function fromFlatbookCity(regKey, center, type, maxP, rooms, amenFb){
+async function fromFlatbookCity(regKey, center, type, maxP, rooms, amenFb, minP){
   const list = await flatbookRaw(regKey, center, type, rooms, amenFb);
-  return list.filter(x=> !maxP || x.price<=maxP);
+  return list.filter(x=> (!maxP || x.price<=maxP) && (!minP || x.price>=minP));
 }
 
 async function flatbookRaw(regKey, center, type, rooms, amenFb){
@@ -502,7 +504,7 @@ async function flatbookRaw(regKey, center, type, rooms, amenFb){
   }catch(e){ console.error('Flatbook '+host+':', e.message); return []; }
  });
 }
-async function fromFlatbook(regKey, city, type, maxP, rooms, amenFb){
+async function fromFlatbook(regKey, city, type, maxP, rooms, amenFb, minP){
   const keys = regKey==='any'
     ? ['minsk','brest','gomel','grodno','vitebsk','mogilev']
     : (FLATBOOK_SUB[regKey]!==undefined ? [regKey] : []);
@@ -510,7 +512,7 @@ async function fromFlatbook(regKey, city, type, maxP, rooms, amenFb){
   const tasks = keys.filter(k=>{
     const center = REGIONS[k] && REGIONS[k].main;
     return center && (!city || new RegExp(city,'i').test(center));
-  }).map(k=> fromFlatbookCity(k, REGIONS[k].main, type, maxP, rooms, amenFb));
+  }).map(k=> fromFlatbookCity(k, REGIONS[k].main, type, maxP, rooms, amenFb, minP));
   const arrs = await Promise.all(tasks);
   return [].concat(...arrs);
 }
@@ -521,7 +523,7 @@ const KUFAR_JUNK = /прокат|пароочистит|пылесос|karcher|�
 // Realt по названию: перебираем разделы всех областей и матчим по тексту списка
 // (title/headline/адрес/город). Имена в глубоком описании тут не видны — только то, что в списке.
 const RB_REALT_KEYS = ['minsk','brest','gomel','grodno','vitebsk','mogilev'];   // minsk-obl = тот же глобальный список, что minsk
-async function fromRealtByName(rx, type, maxP){
+async function fromRealtByName(rx, type, maxP, minP){
   const t = TYPES[type]||TYPES.flat;
   const tasks = RB_REALT_KEYS.map(async k=>{
     const reg = REGIONS[k];
@@ -541,12 +543,12 @@ async function fromRealtByName(rx, type, maxP){
           phone:(a.contactPhones||[])[0]||'', name:a.contactName||'',
           lat:c[0], lng:c[1], approx:true,
           link:realtObjectLink(reg, t.section, a.code) };
-      }).filter(Boolean).filter(x=> x.price>0 && (!maxP||x.price<=maxP));
+      }).filter(Boolean).filter(x=> x.price>0 && (!maxP||x.price<=maxP) && (!minP||x.price>=minP));
     }catch(e){ return []; }
   });
   return [].concat(...await Promise.all(tasks));
 }
-async function searchByName(name, type, maxP){
+async function searchByName(name, type, maxP, minP){
   const q=(name||'').trim();
   if(!q) return {total:0,kufar:0,realt:0,flatbook:0,items:[]};
   let rx=null; try{ rx=new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i'); }catch(e){}
@@ -564,7 +566,7 @@ async function searchByName(name, type, maxP){
           area, region:g(a,'region')?.vl||'', capacity:g(a,'house_rent_couchettes')?.vl||'',
           title:a.subject||'', photos:(a.images||[]).map(im=>'https://rms.kufar.by/v1/gallery/'+im.path),
           rating:0,reviews:0,descId:a.ad_id,phone:'',name:'',lat,lng,approx,link:a.ad_link||'' };
-      }).filter(x=> x.price>0 && (!maxP||x.price<=maxP) && (!rx||rx.test(x.title)) && !KUFAR_JUNK.test(x.title));
+      }).filter(x=> x.price>0 && (!maxP||x.price<=maxP) && (!minP||x.price>=minP) && (!rx||rx.test(x.title)) && !KUFAR_JUNK.test(x.title));
     }catch(e){ console.error('Kufar name:', e.message); return []; }
   })();
   const fbTask=(async()=>{
@@ -581,7 +583,7 @@ async function searchByName(name, type, maxP){
            flatbook:all.filter(x=>x.src==='Flatbook').length, items:all };
 }
 
-async function search(regKey, city, type, rooms, maxP, guests, source, amen){
+async function search(regKey, city, type, rooms, maxP, guests, source, amen, minP){
   const amenList = (amen||[]).map(k=>RB_AMEN_BY_KEY[k]).filter(Boolean);
   const hasAmen = amenList.length>0;
   const keys = regKey==='any' ? Object.keys(REGIONS) : [ REGIONS[regKey] ? regKey : 'brest' ];
@@ -591,10 +593,10 @@ async function search(regKey, city, type, rooms, maxP, guests, source, amen){
   const tasks = [];
   keys.forEach(key=>{
     const reg = REGIONS[key];
-    if(useK) tasks.push(fromKufar(reg,city,type,rooms,maxP,guests));
-    if(useR) tasks.push(fromRealt(reg,city,type,rooms,maxP,guests));
+    if(useK) tasks.push(fromKufar(reg,city,type,rooms,maxP,guests,minP));
+    if(useR) tasks.push(fromRealt(reg,city,type,rooms,maxP,guests,minP));
   });
-  if(useF) tasks.push(fromFlatbook(regKey,city,type,maxP,rooms, amenList.map(a=>a.fb).filter(Boolean)));   // flatbook: комнаты + удобства (apartment_comfort)
+  if(useF) tasks.push(fromFlatbook(regKey,city,type,maxP,rooms, amenList.map(a=>a.fb).filter(Boolean), minP));   // flatbook: комнаты + удобства (apartment_comfort)
   const arrs = await Promise.all(tasks);
   let all = [].concat(...arrs);
   // фильтр удобств для Kufar по тексту удобств (Flatbook уже отфильтрован на своей стороне)
@@ -751,7 +753,7 @@ async function fromR101(cityKey, opts){
   try{
     const j = await (await fetch(url,{headers:{'User-Agent':UA,'Accept':'application/json','Accept-Language':'ru','Referer':'https://101hotels.com/','X-Requested-With':'XMLHttpRequest'}})).json();
     const hotels = (j.response && j.response.hotels) || [];
-    return hotels.map(hotel101ToItem).filter(x=> x && x.price>0 && (!opts.maxP || x.price<=opts.maxP));
+    return hotels.map(hotel101ToItem).filter(x=> x && x.price>0 && (!opts.maxP || x.price<=opts.maxP) && (!opts.minP || x.price>=opts.minP));
   }catch(e){ console.error('101hotels:', e.message); return []; }
 }
 async function searchRF(cityKey, opts){
@@ -814,8 +816,9 @@ async function cached(key, fn){
 // сам поиск по параметрам запроса — вынесен, чтобы им же пользовался прогрев
 function runSearchQuery(q){
   const name = (q.get('name')||'').trim();
+  const minP = +(q.get('min')||0);
   return name
-    ? searchByName(name, q.get('type')||'flat', +(q.get('max')||0))
+    ? searchByName(name, q.get('type')||'flat', +(q.get('max')||0), minP)
     : search(
         q.get('region')||'brest',
         (q.get('city')||'').trim(),
@@ -824,7 +827,8 @@ function runSearchQuery(q){
         +(q.get('max')||0),
         +(q.get('guests')||0),
         q.get('source')||'both',
-        (q.get('amen')||'').split(',').filter(Boolean)
+        (q.get('amen')||'').split(',').filter(Boolean),
+        minP
       );
 }
 
@@ -1663,6 +1667,16 @@ h1 .accent{
     </label>
 
     <label class="fld">
+      <span>Цена от, руб</span>
+      <input id="min" type="number" min="0" placeholder="любая">
+    </label>
+
+    <label class="fld">
+      <span>Цена до, руб</span>
+      <input id="max" type="number" min="0" placeholder="без огранич.">
+    </label>
+
+    <label class="fld">
       <span>Гостей</span>
       <select id="guests">
         <option value="">любое</option>
@@ -1673,11 +1687,6 @@ h1 .accent{
         <option value="6">6</option>
         <option value="8">8+</option>
       </select>
-    </label>
-
-    <label class="fld">
-      <span>Цена до, руб/сутки</span>
-      <input id="max" type="number" placeholder="без огранич.">
     </label>
 
     <label class="fld">
@@ -1736,8 +1745,12 @@ h1 .accent{
       </select>
     </label>
     <label class="fld">
-      <span>Цена до, ₽/ночь</span>
-      <input id="rfMax" type="number" placeholder="без огранич.">
+      <span>Цена от, ₽</span>
+      <input id="rfMin" type="number" min="0" placeholder="любая">
+    </label>
+    <label class="fld">
+      <span>Цена до, ₽</span>
+      <input id="rfMax" type="number" min="0" placeholder="без огранич.">
     </label>
     <label class="fld">
       <span>Рейтинг</span>
@@ -1874,6 +1887,7 @@ async function runRF(){
   const t=$('#rfType').value;   if(t)  p.set('type', t);
   const st=$('#rfStars').value; if(st) p.set('stars', st);
   const mx=$('#rfMax').value;   if(mx) p.set('max', mx);
+  const mn=$('#rfMin').value;   if(mn) p.set('min', mn);
   const rt=$('#rfRating').value;if(rt) p.set('rating', rt);
   p.set('sort', $('#rfSort').value);
   if($('#rfNoCard').classList.contains('on')) p.set('no_card','1');
@@ -1902,7 +1916,7 @@ async function run(){
   const name=$('#qname')?$('#qname').value.trim():'';
   const base=new URLSearchParams({
     region:$('#region').value, city:$('#city').value.trim(), type:$('#type').value,
-    rooms:$('#rooms').value, guests:$('#guests').value, max:$('#max').value
+    rooms:$('#rooms').value, guests:$('#guests').value, max:$('#max').value, min:$('#min').value
   });
   const amen=[...document.querySelectorAll('#bar .rb-amen-cb:checked')].map(cb=>cb.value).join(',');
   if(amen) base.set('amen', amen);
@@ -2358,12 +2372,17 @@ document.addEventListener('click', function(ev){
 function filtersSummary(){
   if(window.__mode==='ru'){
     const c=$('#rfCity').selectedOptions[0];
-    return (c?c.textContent:'') + ($('#rfMax').value?(' · до '+$('#rfMax').value+' ₽'):'');
+    const a=$('#rfMin').value, b=$('#rfMax').value;
+    const price = (a&&b) ? (' · '+a+'–'+b+' ₽') : a ? (' · от '+a+' ₽') : b ? (' · до '+b+' ₽') : '';
+    return (c?c.textContent:'') + price;
   }
   const reg=$('#region').selectedOptions[0], typ=$('#type').selectedOptions[0];
   const parts=[ ($('#city').value || (reg?reg.textContent:'')), (typ?typ.textContent:'') ];
   if($('#rooms').value) parts.push($('#rooms').value+'-комн');
-  if($('#max').value)   parts.push('до '+$('#max').value+' р.');
+  const mn=$('#min').value, mx=$('#max').value;
+  if(mn && mx)      parts.push(mn+'–'+mx+' р.');
+  else if(mn)       parts.push('от '+mn+' р.');
+  else if(mx)       parts.push('до '+mx+' р.');
   if($('#onlyPhoto').checked) parts.push('с фото');
   return parts.filter(Boolean).join(' · ');
 }
@@ -2399,7 +2418,7 @@ favSave();
 // ── Фильтры в адресной строке ─────────────────────────────────────────────
 // Поиск можно скинуть ссылкой: /?region=brest&type=flat&max=50
 // В адрес пишем только то, что отличается от значений по умолчанию.
-const URL_DEFAULTS = { region:'minsk', city:'', type:'flat', rooms:'', guests:'', max:'', source:'both', sort:'price_asc' };
+const URL_DEFAULTS = { region:'minsk', city:'', type:'flat', rooms:'', guests:'', min:'', max:'', source:'both', sort:'price_asc' };
 function syncUrl(){
   try{
     const p=new URLSearchParams();
@@ -2410,6 +2429,7 @@ function syncUrl(){
       if($('#rfStars').value)  p.set('stars',  $('#rfStars').value);
       if($('#rfRating').value) p.set('rating', $('#rfRating').value);
       if($('#rfMax').value)    p.set('max',    $('#rfMax').value);
+      if($('#rfMin').value)    p.set('min',    $('#rfMin').value);
       if($('#rfSort').value!=='price_asc') p.set('sort', $('#rfSort').value);
       if($('#rfNoCard').classList.contains('on')) p.set('nocard','1');
       if($('#rfBathroom').checked) p.set('bath','1');
@@ -2417,7 +2437,7 @@ function syncUrl(){
       if(svc) p.set('services', svc);
       if($('#rfOnlyPhoto').checked) p.set('photo','1');
     } else {
-      ['region','city','type','rooms','guests','max','source','sort'].forEach(function(k){
+      ['region','city','type','rooms','guests','min','max','source','sort'].forEach(function(k){
         const v=$('#'+k).value;
         if(v && v!==URL_DEFAULTS[k]) p.set(k, v);
       });
@@ -2444,6 +2464,7 @@ function applyUrl(){
       set('rfStars',  q.get('stars'));
       set('rfRating', q.get('rating'));
       set('rfMax',    q.get('max'));
+      set('rfMin',    q.get('min'));
       set('rfSort',   q.get('sort') || 'price_asc');
       if(q.get('nocard')==='1') $('#rfNoCard').classList.add('on');
       if(q.get('bath')==='1')   $('#rfBathroom').checked = true;
@@ -2453,7 +2474,7 @@ function applyUrl(){
       setCountry('ru', true);
       return;
     }
-    ['region','type','rooms','guests','max','source','sort'].forEach(function(k){ if(q.get(k)!==null) set(k, q.get(k)); });
+    ['region','type','rooms','guests','min','max','source','sort'].forEach(function(k){ if(q.get(k)!==null) set(k, q.get(k)); });
     fillCities();                                  // список городов зависит от области
     if(q.get('city')) set('city', q.get('city'));
     if(q.get('name')) set('qname', q.get('name'));
@@ -2518,6 +2539,7 @@ http.createServer(async (req,res)=>{
         no_card:  u.searchParams.get('no_card')  || '',
         bathroom: u.searchParams.get('bathroom') || '',
         maxP:     +(u.searchParams.get('max')    || 0),
+        minP:     +(u.searchParams.get('min')    || 0),
         sort:     u.searchParams.get('sort')     || 'price_asc' }
     ));
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
