@@ -284,10 +284,13 @@ const RB_AMENITIES = [
 const RB_AMEN_BY_KEY = Object.fromEntries(RB_AMENITIES.map(a=>[a.key,a]));
 const RB_AMEN_CHECKS = RB_AMENITIES.map(a=>'<label class="amen-item"><input type="checkbox" class="rb-amen-cb" value="'+a.key+'"> '+a.label+'</label>').join('');
 
-async function fromKufar(reg, city, type, rooms, maxP, guests){
-  try{
+// Список от Kufar зависит только от типа жилья и города запроса, а комнаты, цена
+// и число гостей отсеиваются уже потом. Поэтому список кэшируем, а фильтры
+// применяем к сохранённому — смена цены или комнат больше не идёт к источнику.
+async function kufarRaw(reg, city, type){
+  const where = city || reg.main;
+  return cached('raw|kufar|'+type+'|'+where, async ()=>{
     const t = TYPES[type]||TYPES.flat;
-    const where = city || reg.main;
     const url='https://api.kufar.by/search-api/v2/search/rendered-paginated?query='+encodeURIComponent(t.kw+' на сутки '+where)+'&size=30&lang=ru';
     const k = await (await fetch(url,{headers:{'User-Agent':UA}})).json();
     const g=(a,n)=>(a.ad_parameters||[]).find(y=>y.p===n);
@@ -312,12 +315,19 @@ async function fromKufar(reg, city, type, rooms, maxP, guests){
         rating:0, reviews:0, descId:a.ad_id,
         phone:'', name:'', lat, lng, approx, link:a.ad_link||'' };
     }).filter(x=> x.price>0
-        && (city ? new RegExp(city,'i').test(x.area) : x.region===reg.oblast)
-        && (!rooms||x.rooms==rooms) && (!maxP||x.price<=maxP) && (!guests|| (+x.capacity||0)>=guests)
         // отсечь прокат техники и услуги, которые цепляет запрос
         && !/прокат|пароочистит|пылесос|karcher|керхер|электроинструмент|генератор|виброплит|отбойн|перфоратор|\bдрель|бетоно|шлифов|аппарат|моющий|химчистк|фотозон|аренда авто|прицеп/i.test(x.title)
         // для домов/усадеб — только жильё (есть вместимость)
         && ( type==='flat' || (+x.capacity||0)>0 ) );
+  });
+}
+
+async function fromKufar(reg, city, type, rooms, maxP, guests){
+  try{
+    const list = await kufarRaw(reg, city, type);
+    return list.filter(x=>
+         (city ? new RegExp(city,'i').test(x.area) : x.region===reg.oblast)
+      && (!rooms||x.rooms==rooms) && (!maxP||x.price<=maxP) && (!guests|| (+x.capacity||0)>=guests));
   }catch(e){ console.error('Kufar:', e.message); return []; }
 }
 
@@ -406,8 +416,9 @@ async function galleryFor(src, key){
   GALLERY.set(ck, out);
   return out;
 }
-async function fromRealt(reg, city, type, rooms, maxP, guests){
-  try{
+// У Realt список зависит только от области и типа жилья — всё остальное отсеивается после.
+async function realtRaw(reg, type){
+  return cached('raw|realt|'+type+'|'+reg.realt, async ()=>{
     const t = TYPES[type]||TYPES.flat;
     const base = realtBase(reg, t.section);
     // тянем 1-ю страницу; для Минска её (до 180) достаточно, пагинацию делаем на клиенте
@@ -426,10 +437,16 @@ async function fromRealt(reg, city, type, rooms, maxP, guests){
         phone:(a.contactPhones||[])[0]||'', name:a.contactName||'',
         lat:c[0], lng:c[1], approx:true,
         link:realtObjectLink(reg, t.section, a.code) };
-    })
-    .filter(x=> x.price>0
-        && (city ? new RegExp(city,'i').test(x.area) : true)
-        && (!rooms||x.rooms==rooms) && (!maxP||x.price<=maxP) && (!guests|| (+x.capacity||0)>=guests));
+    }).filter(x=> x.price>0);
+  });
+}
+
+async function fromRealt(reg, city, type, rooms, maxP, guests){
+  try{
+    const list = await realtRaw(reg, type);
+    return list.filter(x=>
+         (city ? new RegExp(city,'i').test(x.area) : true)
+      && (!rooms||x.rooms==rooms) && (!maxP||x.price<=maxP) && (!guests|| (+x.capacity||0)>=guests));
   }catch(e){ console.error('Realt:', e.message); return []; }
 }
 
@@ -442,7 +459,15 @@ function parseFlatbookGeo(html){
   if(!m) return [];
   try{ let a=JSON.parse(m[1]); if(typeof a==='string') a=JSON.parse(a); return Array.isArray(a)?a:[]; }catch(e){ return []; }
 }
+// Flatbook понимает комнаты и удобства на своей стороне, поэтому они входят в ключ.
+// Цена отсеивается после, значит её смена берётся из памяти.
 async function fromFlatbookCity(regKey, center, type, maxP, rooms, amenFb){
+  const list = await flatbookRaw(regKey, center, type, rooms, amenFb);
+  return list.filter(x=> !maxP || x.price<=maxP);
+}
+
+async function flatbookRaw(regKey, center, type, rooms, amenFb){
+ return cached('raw|fb|'+regKey+'|'+type+'|'+(rooms||'')+'|'+((amenFb||[]).join(',')), async ()=>{
   const sub = FLATBOOK_SUB[regKey];
   const host = sub ? ('https://'+sub+'.flatbook.by') : 'https://flatbook.by';
   const path = (type==='flat') ? '/' : '/kottedzhi/';   // усадьбы и коттеджи — один раздел
@@ -473,8 +498,9 @@ async function fromFlatbookCity(regKey, center, type, maxP, rooms, amenFb){
         lat:+f.latitude, lng:+f.longitude, approx:false,
         chips: [center].concat(metro?['м. '+metro]:[]),
         link: f.url || (host+'/'+f.alias+'/') };
-    }).filter(x=> x.price>0 && x.lat>50 && x.lng>22 && (!maxP||x.price<=maxP));
+    }).filter(x=> x.price>0 && x.lat>50 && x.lng>22);
   }catch(e){ console.error('Flatbook '+host+':', e.message); return []; }
+ });
 }
 async function fromFlatbook(regKey, city, type, maxP, rooms, amenFb){
   const keys = regKey==='any'
@@ -824,7 +850,7 @@ async function cityPage(slug){
   const c = CITY_PAGES[slug];
   const uu = new URL('/api/search?region=' + slug + '&city=&type=flat&rooms=&guests=&max=&source=both', 'http://localhost');
   let data = { items: [], total: 0 };
-  try{ data = await cached(cacheKey(uu), ()=> runSearchQuery(uu.searchParams)); }catch(e){}
+  try{ data = await runSearchQuery(uu.searchParams); }catch(e){}
 
   const items = (data.items || []).slice(0, 30);
   const prices = (data.items || []).map(x => x.price).filter(p => p > 0).sort((a,b)=>a-b);
@@ -1629,9 +1655,9 @@ h1 .accent{
     <label class="fld">
       <span>Комнат</span>
       <select id="rooms">
-        <option value="">любое</option>
+        <option value="" selected>любое</option>
         <option value="1">1</option>
-        <option value="2" selected>2</option>
+        <option value="2">2</option>
         <option value="3">3+</option>
       </select>
     </label>
@@ -2373,7 +2399,7 @@ favSave();
 // ── Фильтры в адресной строке ─────────────────────────────────────────────
 // Поиск можно скинуть ссылкой: /?region=brest&type=flat&max=50
 // В адрес пишем только то, что отличается от значений по умолчанию.
-const URL_DEFAULTS = { region:'minsk', city:'', type:'flat', rooms:'2', guests:'', max:'', source:'both', sort:'price_asc' };
+const URL_DEFAULTS = { region:'minsk', city:'', type:'flat', rooms:'', guests:'', max:'', source:'both', sort:'price_asc' };
 function syncUrl(){
   try{
     const p=new URLSearchParams();
@@ -2450,7 +2476,7 @@ process.on('unhandledRejection', e => console.log('Необработанный 
 http.createServer(async (req,res)=>{
   const u = new URL(req.url, 'http://localhost');
   if(u.pathname === '/api/search'){
-    const data = await cached(cacheKey(u), ()=> runSearchQuery(u.searchParams));
+    const data = await runSearchQuery(u.searchParams);
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
     res.end(JSON.stringify(data)); return;
   }
@@ -2617,14 +2643,14 @@ http.createServer(async (req,res)=>{
 // Поэтому сразу после старта сами прогоняем тот же поиск, что открывается
 // по умолчанию — результат ложится в кэш, и человек получает его мгновенно.
 const WARM_UP = [
-  '/api/search?region=minsk&city=&type=flat&rooms=2&guests=&max=&source=kufar',
-  '/api/search?region=minsk&city=&type=flat&rooms=2&guests=&max=&source=realt',
-  '/api/search?region=minsk&city=&type=flat&rooms=2&guests=&max=&source=flatbook'
+  '/api/search?region=minsk&city=&type=flat&rooms=&guests=&max=&source=kufar',
+  '/api/search?region=minsk&city=&type=flat&rooms=&guests=&max=&source=realt',
+  '/api/search?region=minsk&city=&type=flat&rooms=&guests=&max=&source=flatbook'
 ];
 function warmUp(){
   WARM_UP.forEach(function(path){
     const uu = new URL(path, 'http://localhost');
-    cached(cacheKey(uu), ()=> runSearchQuery(uu.searchParams))
+    runSearchQuery(uu.searchParams)
       .then(function(d){ console.log('Прогрев ' + uu.searchParams.get('source') + ': ' + d.total); })
       .catch(function(e){ console.log('Прогрев не удался:', e.message); });
   });
