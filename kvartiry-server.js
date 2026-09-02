@@ -1502,6 +1502,22 @@ h1 .accent{
 .tag.Flatbook{background:linear-gradient(120deg,#0a9d70,#12c78f)}
 .price-pin.Flatbook{background:#0a9d70}
 
+.onlyph{grid-column:1 / -1;margin-top:2px}
+.share{
+  position:absolute;top:10px;right:58px;z-index:3;
+  width:40px;height:40px;border-radius:50%;border:none;cursor:pointer;
+  background:rgba(20,24,33,.42);color:#fff;font-size:17px;line-height:1;
+  display:flex;align-items:center;justify-content:center;
+  backdrop-filter:blur(4px);transition:transform .15s, background .15s;
+}
+.share:hover{transform:scale(1.08);background:rgba(20,24,33,.6)}
+.toast{
+  position:fixed;left:50%;bottom:26px;transform:translate(-50%,20px);
+  background:var(--txt);color:var(--surface);font-size:14.5px;font-weight:600;
+  padding:12px 20px;border-radius:999px;box-shadow:var(--shadow-lg);
+  opacity:0;pointer-events:none;transition:opacity .2s, transform .2s;z-index:9999;
+}
+.toast.show{opacity:1;transform:translate(-50%,0)}
 .ftoggle{
   display:none;align-items:center;gap:10px;width:100%;
   font:inherit;font-size:15px;font-weight:700;color:var(--txt);
@@ -1565,8 +1581,8 @@ h1 .accent{
   <button id="fToggle" class="ftoggle" type="button" aria-expanded="true"><span>⚙️ Фильтры</span><span class="sum" id="fSum"></span></button>
   <form class="bar" id="bar" onsubmit="return false">
     <label class="fld" style="grid-column:1 / -1">
-      <span>🔎 Поиск по названию — если знаете название, но не город (по всей Беларуси)</span>
-      <input id="qname" type="text" placeholder="например: усадьба «Веста»">
+      <span>🔎 Поиск по названию</span>
+      <input id="qname" type="text" placeholder="усадьба «Веста» — ищем по всей Беларуси">
     </label>
     <label class="fld">
       <span>Область</span>
@@ -1659,6 +1675,7 @@ h1 .accent{
       <span>Удобства в номере</span>
       <div class="amen-box">${RB_AMEN_CHECKS}</div>
     </div>
+    <div class="onlyph"><label class="amen-item"><input type="checkbox" id="onlyPhoto"> Только с фото</label></div>
     <button id="go" class="go" type="button">Найти</button>
   </form>
 
@@ -1711,6 +1728,7 @@ h1 .accent{
         ${RF_SERVICE_CHECKS}
       </div>
     </div>
+    <div class="onlyph"><label class="amen-item"><input type="checkbox" id="rfOnlyPhoto"> Только с фото</label></div>
     <button id="goRF" class="go" type="button">Найти отели</button>
   </form>
 
@@ -1757,6 +1775,7 @@ h1 .accent{
   </div>
 </div>
 
+<div class="toast" id="toast"></div>
 <button id="up" class="up" type="button" aria-label="Наверх" title="Наверх">↑</button>
 
 <script>
@@ -1831,7 +1850,7 @@ async function runRF(){
     if(window.__T) window.__T('search', { c:'ru', auto: window.__firstRun?1:0,
       city:cityName||$('#rfCity').value, type:$('#rfType').value||'любой', total:d.total });
     window.__firstRun = 0;
-    window.__items=d.items||[]; window.__page=1;
+    window.__all=d.items||[]; applyPhotoFilter(); window.__page=1;
     if(!window.__items.length){ $('#grid').innerHTML='<div class="empty">Ничего не найдено. Смягчите фильтры.</div>'; if(window.__view==='map') plotMap(true); return; }
     sortItems();
     if(window.__view==='map') plotMap(true); else renderCards();
@@ -1854,7 +1873,7 @@ async function run(){
   const auto = window.__firstRun?1:0; window.__firstRun = 0;
   const token = ++window.__runToken;
   $('#stat').textContent='Ищу…'; $('#grid').innerHTML=''; $('#pager').innerHTML='';
-  window.__items=[]; window.__page=1;
+  window.__all=[]; window.__items=[]; window.__page=1;
 
   const N=nights();
   const tail = (name?(' по запросу «'+name+'»'):'') + (N?(', расчёт на '+N+' ноч.'):'');
@@ -1872,7 +1891,7 @@ async function run(){
       if(token!==window.__runToken) return;
       const parts=[]; if(d.kufar)parts.push('Kufar '+d.kufar); if(d.realt)parts.push('Realt '+d.realt); if(d.flatbook)parts.push('Flatbook '+d.flatbook);
       $('#stat').textContent='Найдено '+d.total+(parts.length?(' ('+parts.join(' + ')+')'):'')+tail;
-      window.__items=d.items||[];
+      window.__all=d.items||[]; applyPhotoFilter();
       if(!window.__items.length){ $('#grid').innerHTML='<div class="empty">Ничего не найдено. Смягчите фильтры.</div>'; if(window.__view==='map') plotMap(true); }
       else draw();
       if(window.__T) window.__T('search', { c:'by', auto:auto, region:$('#region').value,
@@ -1894,13 +1913,15 @@ async function run(){
     try{
       const d=await (await fetch('/api/search?'+p.toString())).json();
       if(token!==window.__runToken) return;
-      (d.items||[]).forEach(function(x){ if(!seen.has(x.link)){ seen.add(x.link); window.__items.push(x); } });
+      (d.items||[]).forEach(function(x){ if(!seen.has(x.link)){ seen.add(x.link); window.__all.push(x); } });
+      applyPhotoFilter();
       counts[src]=d.total||0;
     }catch(e){ failed++; }
     if(token!==window.__runToken) return;
     done++;
     const parts=sources.filter(function(x){ return counts[x]; }).map(function(x){ return SRC_NAME[x]+' '+counts[x]; });
-    const head='Найдено '+window.__items.length+(parts.length?(' ('+parts.join(' + ')+')'):'');
+    const hid=(window.__all||[]).length-(window.__items||[]).length;
+    const head='Найдено '+window.__items.length+(parts.length?(' ('+parts.join(' + ')+')'):'')+(hid>0?(' · без фото скрыто '+hid):'');
     $('#stat').textContent = (done<sources.length) ? (head+' · ищу ещё…') : (head+tail);
     if(window.__items.length) draw();
   }));
@@ -1915,7 +1936,7 @@ async function run(){
   }
   if(window.__T) window.__T('search', { c:'by', auto:auto, region:$('#region').value,
     city:$('#city').value.trim()||'—', type:$('#type').value, rooms:$('#rooms').value||'любое',
-    max:+$('#max').value||0, total:window.__items.length });
+    max:+$('#max').value||0, total:(window.__all||[]).length });
 }
 function renderCards(){
   const all = (window.__view==='fav') ? FAVS : (window.__items||[]);
@@ -1957,7 +1978,8 @@ function renderCards(){
         slider='<div class="slider">'+tag+'</div>';
       }
       const fav = '<button class="fav'+(isFav(x.link)?' on':'')+'" type="button" data-fav="'+idx+'" title="В избранное">\u2665</button>';
-      return '<div class="card">'+slider.replace('<div class="slider">', '<div class="slider">'+fav)
+      const shr = '<button class="share" type="button" data-share="'+idx+'" title="Поделиться">\u21AA</button>';
+      return '<div class="card">'+slider.replace('<div class="slider">', '<div class="slider">'+fav+shr)
         +'<div class="bd">'
         +'<div class="pr">'+x.price+' '+curOf(x)+' <span class="tot">/ '+(x.unit||(x.src==='H101'?'ночь':'сутки'))+'</span></div>'+total+stars
         +meta
@@ -1984,7 +2006,7 @@ async function loadGalleries(){
     let changed=false;
     need.forEach(x=>{ const key=x.src==='H101'?(x.hid+'@@'+x.link):x.link; const g=res[key]; if(g&&g.length>1){ x.photos=g; changed=true; } });
     window.__galBusy=false;
-    if(changed && window.__view==='list') renderCards();
+    if(changed){ applyPhotoFilter(); if(window.__view==='list') renderCards(); }
   }catch(e){ window.__galBusy=false; }
 }
 function renderPager(pages){
@@ -2208,6 +2230,65 @@ $('#fbSend').addEventListener('click', async function(){
     }, true);
   }catch(_){}
 })();
+// ── Короткое сообщение внизу экрана ───────────────────────────────────────
+let toastT = null;
+function toast(msg){
+  const el=$('#toast'); if(!el) return;
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(toastT);
+  toastT = setTimeout(function(){ el.classList.remove('show'); }, 2200);
+}
+
+// ── Поделиться вариантом ──────────────────────────────────────────────────
+// На телефоне открывается системное меню «Поделиться», на компьютере —
+// ссылка просто копируется в буфер.
+async function shareItem(idx){
+  const x = (window.__view==='fav' ? FAVS : (window.__items||[]))[idx];
+  if(!x) return;
+  const head = x.price + ' ' + curOf(x) + '/' + (x.unit || (x.src==='H101'?'ночь':'сутки'))
+             + (x.area ? (' · ' + x.area) : '');
+  const body = head + (x.title ? ('\\n' + x.title) : '') + '\\nНашёл через ' + location.host;
+  try{
+    if(navigator.share){
+      await navigator.share({ title: head, text: body, url: x.link });
+    } else if(navigator.clipboard){
+      await navigator.clipboard.writeText(body + '\\n' + x.link);
+      toast('Ссылка скопирована');
+    } else {
+      window.open(x.link, '_blank', 'noopener');
+    }
+    if(window.__T) window.__T('share', {});
+  }catch(e){}
+}
+document.addEventListener('click', function(ev){
+  const b = ev.target && ev.target.closest ? ev.target.closest('[data-share]') : null;
+  if(!b) return;
+  ev.preventDefault(); ev.stopPropagation();
+  shareItem(+b.getAttribute('data-share'));
+});
+
+// ── Фильтр «только с фото» ────────────────────────────────────────────────
+// Полный набор держим в __all, а показываем __items: так номера карточек
+// не сбиваются и слайдер с описанием продолжают попадать в нужный вариант.
+function photoOnly(){
+  const cb = window.__mode==='ru' ? $('#rfOnlyPhoto') : $('#onlyPhoto');
+  return !!(cb && cb.checked);
+}
+function applyPhotoFilter(){
+  const all = window.__all || [];
+  window.__items = photoOnly() ? all.filter(function(x){ return x.photos && x.photos.length; }) : all.slice();
+}
+function onPhotoToggle(){
+  applyPhotoFilter();
+  window.__page = 1;
+  syncUrl();
+  const hidden = (window.__all||[]).length - (window.__items||[]).length;
+  if(photoOnly() && hidden>0) toast('Скрыто без фото: ' + hidden);
+  if(window.__view==='map'){ plotMap(true); enrichRealt(); } else renderCards();
+}
+$('#onlyPhoto').addEventListener('change', onPhotoToggle);
+$('#rfOnlyPhoto').addEventListener('change', onPhotoToggle);
+
 // ── Избранное ─────────────────────────────────────────────────────────────
 // Храним прямо в браузере посетителя: сервер об этом ничего не знает.
 let FAVS = [];
@@ -2245,6 +2326,7 @@ function filtersSummary(){
   const parts=[ ($('#city').value || (reg?reg.textContent:'')), (typ?typ.textContent:'') ];
   if($('#rooms').value) parts.push($('#rooms').value+'-комн');
   if($('#max').value)   parts.push('до '+$('#max').value+' р.');
+  if($('#onlyPhoto').checked) parts.push('с фото');
   return parts.filter(Boolean).join(' · ');
 }
 function filtersCollapsed(v){
@@ -2295,6 +2377,7 @@ function syncUrl(){
       if($('#rfBathroom').checked) p.set('bath','1');
       const svc=[...document.querySelectorAll('#barRF .amen-cb:checked')].map(cb=>cb.value).join(',');
       if(svc) p.set('services', svc);
+      if($('#rfOnlyPhoto').checked) p.set('photo','1');
     } else {
       ['region','city','type','rooms','guests','max','source','sort'].forEach(function(k){
         const v=$('#'+k).value;
@@ -2305,6 +2388,7 @@ function syncUrl(){
       if(am) p.set('amen', am);
       if($('#from').value) p.set('from', $('#from').value);
       if($('#to').value)   p.set('to',   $('#to').value);
+      if($('#onlyPhoto').checked) p.set('photo','1');
     }
     const q=p.toString();
     history.replaceState(null, '', q ? ('/?'+q) : '/');
@@ -2325,6 +2409,7 @@ function applyUrl(){
       set('rfSort',   q.get('sort') || 'price_asc');
       if(q.get('nocard')==='1') $('#rfNoCard').classList.add('on');
       if(q.get('bath')==='1')   $('#rfBathroom').checked = true;
+      if(q.get('photo')==='1')  $('#rfOnlyPhoto').checked = true;
       const svc=(q.get('services')||'').split(',').filter(Boolean);
       document.querySelectorAll('#barRF .amen-cb').forEach(function(cb){ cb.checked = svc.indexOf(cb.value)>=0; });
       setCountry('ru', true);
@@ -2336,6 +2421,7 @@ function applyUrl(){
     if(q.get('name')) set('qname', q.get('name'));
     if(q.get('from')) set('from', q.get('from'));
     if(q.get('to'))   set('to',   q.get('to'));
+    if(q.get('photo')==='1') $('#onlyPhoto').checked = true;
     const am=(q.get('amen')||'').split(',').filter(Boolean);
     document.querySelectorAll('#bar .rb-amen-cb').forEach(function(cb){ cb.checked = am.indexOf(cb.value)>=0; });
   }catch(e){}
