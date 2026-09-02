@@ -1,4 +1,5 @@
-// Поиск жилья на сутки — Kufar + Realt. Квартиры / коттеджи / усадьбы.
+// Поиск жилья на сутки — Kufar + Realt + Flatbook по Беларуси и 101Hotels по России.
+// Квартиры / коттеджи / усадьбы.
 // Запуск: node kvartiry-server.js  ->  http://localhost:8080  (или двойной клик "Открыть поиск.bat")
 // На Render порт берётся из переменной окружения PORT.
 
@@ -1747,7 +1748,7 @@ h1 .accent{
   <div id="pager"></div>
 
   <nav class="cities" aria-label="Города">Квартиры на сутки по городам: <a href="/minsk">Минск</a><a href="/brest">Брест</a><a href="/gomel">Гомель</a><a href="/grodno">Гродно</a><a href="/vitebsk">Витебск</a><a href="/mogilev">Могилёв</a><a href="/minsk-obl">Минская область</a></nav>
-  <p class="hint" id="hint">Цены и наличие подтягиваются напрямую из объявлений Kufar и Realt в режиме реального времени. На карте цена показана прямо на метке: <b style="color:var(--kufar)">синие</b> — Kufar, <b style="color:var(--realt)">оранжевые</b> — Realt, <b style="color:#0a9d70">зелёные</b> — Flatbook (областные центры, квартиры и усадьбы). Точные координаты подтягиваются из объявления; пока адрес уточняется, метка стоит у центра города (значок ≈ в подсказке). Итоговая стоимость за весь период рассчитывается по датам заезда и выезда. Перед бронированием уточняйте детали у собственника.</p>
+  <p class="hint" id="hint">Цены и наличие подтягиваются напрямую из объявлений Kufar, Realt и Flatbook в режиме реального времени. На карте цена показана прямо на метке: <b style="color:var(--kufar)">синие</b> — Kufar, <b style="color:var(--realt)">оранжевые</b> — Realt, <b style="color:#0a9d70">зелёные</b> — Flatbook (областные центры, квартиры и усадьбы). Точные координаты подтягиваются из объявления; пока адрес уточняется, метка стоит у центра города (значок ≈ в подсказке). Итоговая стоимость за весь период рассчитывается по датам заезда и выезда. Перед бронированием уточняйте детали у собственника.</p>
 
   <div class="foot">
     <div class="foot-h">Нашли неточность или хотите что-то добавить?</div>
@@ -1784,7 +1785,7 @@ const CITIES = ${JSON.stringify(CITIES_MAP)};
 const PAGE_SIZE = 24;
 window.__page = 1;
 window.__view = 'list';
-window.__mode = 'by';   // 'by' = Беларусь (Kufar+Realt), 'ru' = Россия (101hotels)
+window.__mode = 'by';   // 'by' = Беларусь (Kufar+Realt+Flatbook), 'ru' = Россия (101hotels)
 
 function srcName(s){ return s==='H101' ? '101Hotels' : s; }
 function curOf(x){ return (x && x.cur) ? x.cur : 'BYN'; }
