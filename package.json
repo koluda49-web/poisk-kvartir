@@ -4,7 +4,9 @@
   "description": "Поиск жилья на сутки — Kufar + Realt",
   "main": "kvartiry-server.js",
   "scripts": {
-    "start": "node kvartiry-server.js"
+    "start": "node kvartiry-server.js",
+    "test": "node проверки/поиск-и-кэш.mjs",
+    "проверка-страницы": "node проверки/скрипт-страницы.mjs"
   },
   "engines": {
     "node": ">=18"
