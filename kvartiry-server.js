@@ -740,6 +740,17 @@ async function searchRF(cityKey, opts){
   return { total: items.length, items };
 }
 
+// ── Куда серверу разрешено ходить по ссылке от посетителя ────────────────
+// Раньше /api/desc брал любой адрес из запроса и честно его скачивал — то есть
+// сайт работал открытым прокси: чужой человек мог заставить наш сервер грузить
+// что угодно и от нашего имени. Теперь пускаем только realt.by.
+function isRealtUrl(v){
+  try{
+    const h = new URL(String(v)).hostname.toLowerCase();
+    return h === 'realt.by' || h.endsWith('.realt.by');
+  }catch(e){ return false; }
+}
+
 // ── Кэш результатов поиска ────────────────────────────────────────────────
 // Одинаковые запросы в течение 8 минут отдаём из памяти: и быстрее, и источники
 // не получают шквал обращений, если на сайт разом придёт много людей.
@@ -2440,7 +2451,7 @@ http.createServer(async (req,res)=>{
   const u = new URL(req.url, 'http://localhost');
   if(u.pathname === '/api/search'){
     const data = await cached(cacheKey(u), ()=> runSearchQuery(u.searchParams));
-    res.writeHead(200, {'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*'});
+    res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
     res.end(JSON.stringify(data)); return;
   }
   if(u.pathname === '/api/geo' && req.method === 'POST'){
@@ -2448,10 +2459,12 @@ http.createServer(async (req,res)=>{
     req.on('data', c=>{ body+=c; if(body.length>200000) req.destroy(); });
     req.on('end', async ()=>{
       let urls=[];
-      try{ urls=(JSON.parse(body).urls||[]).filter(x=>typeof x==='string' && /realt\.by/.test(x)).slice(0,60); }catch(e){}
+      // раньше проверка была «есть ли realt.by где-нибудь в строке» —
+      // под неё подходил и https://чужой-сайт/?realt.by
+      try{ urls=(JSON.parse(body).urls||[]).filter(isRealtUrl).slice(0,60); }catch(e){}
       const out={};
       await mapLimit(urls, 10, async (url)=>{ out[url]=await realtGeo(url); });
-      res.writeHead(200, {'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*'});
+      res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
       res.end(JSON.stringify({results:out}));
     });
     return;
@@ -2481,17 +2494,17 @@ http.createServer(async (req,res)=>{
         maxP:     +(u.searchParams.get('max')    || 0),
         sort:     u.searchParams.get('sort')     || 'price_asc' }
     ));
-    res.writeHead(200, {'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*'});
+    res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
     res.end(JSON.stringify(data)); return;
   }
   if(u.pathname === '/api/desc'){
     let text='';
     try{
       const src=u.searchParams.get('src'), id=u.searchParams.get('id'), url=u.searchParams.get('url');
-      if(src==='Kufar' && id){
+      if(src==='Kufar' && id && /^[0-9]{1,20}$/.test(id)){
         const dj = await (await fetch('https://api.kufar.by/search-api/v1/item/'+id+'/rendered?lang=ru',{headers:{'User-Agent':UA}})).json();
         text = (dj.result && dj.result.body) || '';
-      } else if(src==='Realt' && url){
+      } else if(src==='Realt' && isRealtUrl(url)){
         const h = await (await fetch(url,{headers:{'User-Agent':UA}})).text();
         const m = h.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
         if(m){ let best='';
@@ -2505,7 +2518,7 @@ http.createServer(async (req,res)=>{
       }
     }catch(e){ text=''; }
     text = String(text).replace(/<[^>]+>/g,' ').replace(/&nbsp;/g,' ').replace(/\s+/g,' ').trim();
-    res.writeHead(200, {'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*'});
+    res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
     res.end(JSON.stringify({text})); return;
   }
   // приём событий статистики со страницы
