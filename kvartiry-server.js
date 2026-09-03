@@ -963,13 +963,27 @@ function parseCitySlug(path){
 
 async function cityPage(slug, kind){
   const c = CITY_PAGES[slug];
-  const k = PAGE_KINDS[kind || ''];
+  const base = PAGE_KINDS[kind || ''];
+  // у области своё название раздела: там не только квартиры
+  const k = (!kind && c.what) ? Object.assign({}, base, { what: c.what }) : base;
   const uu = new URL('/api/search?region=' + slug + '&city=&type=' + k.type +
                      '&rooms=&guests=&max=' + (k.max || '') + '&source=both', 'http://localhost');
   let data = { items: [], total: 0 };
   try{ data = await runSearchQuery(uu.searchParams); }catch(e){}
 
-  const items = (data.items || []).slice(0, 30);
+  // Выдача отсортирована по цене, поэтому «первые 30» на /minsk и на
+  // /minsk-nedorogo оказывались одними и теми же карточками — для поисковика
+  // это две страницы с одинаковым содержимым, и он склеит их в одну.
+  // На основной странице города показываем срез по всему диапазону цен,
+  // на уточняющих — самое дешёвое.
+  const pool = data.items || [];
+  let items;
+  if(!kind && pool.length > 40){
+    const step = pool.length / 30;
+    items = Array.from({length: 30}, (_, i) => pool[Math.floor(i * step)]).filter(Boolean);
+  } else {
+    items = pool.slice(0, 30);
+  }
   const prices = (data.items || []).map(x => x.price).filter(p => p > 0).sort((a,b)=>a-b);
   const minP = prices.length ? prices[0] : 0;
   const midP = prices.length ? prices[Math.floor(prices.length/2)] : 0;
@@ -1997,6 +2011,8 @@ function setCountry(c, quiet){
   $('#cbRU').classList.toggle('on', ru);
   $('#bar').style.display   = ru ? 'none' : '';
   $('#barRF').style.display = ru ? '' : 'none';
+  // Пресеты меняют белорусские поля, в режиме отелей они бесполезны.
+  const pr = $('#presets'); if(pr) pr.style.display = ru ? 'none' : '';
   if(!window.__hintBY) window.__hintBY = $('#hint').innerHTML;
   $('#hint').innerHTML = ru ? HINT_RU : window.__hintBY;
   window.__page = 1;
@@ -2071,7 +2087,14 @@ async function run(){
 
   const auto = window.__firstRun?1:0; window.__firstRun = 0;
   const token = ++window.__runToken;
-  $('#stat').textContent='Ищу…'; $('#grid').innerHTML=''; $('#pager').innerHTML='';
+  // Если карточки уже нарисованы из предзагрузки, а это первый автоматический
+  // поиск — не стираем их. Иначе человек увидит, как готовый список пропадает
+  // и сменяется надписью «Ищу…»: ради этого предзагрузка и делалась.
+  const keepShown = window.__preloadShown && auto;
+  if(!keepShown){
+    $('#stat').textContent='Ищу…'; $('#grid').innerHTML=''; $('#pager').innerHTML='';
+  }
+  window.__preloadShown = false;
   window.__all=[]; window.__items=[]; window.__page=1;
 
   const N=nights();
@@ -2136,6 +2159,7 @@ async function run(){
   if(window.__T) window.__T('search', { c:'by', auto:auto, region:$('#region').value,
     city:$('#city').value.trim(), type:$('#type').value, rooms:$('#rooms').value||'любое',
     max:+$('#max').value||0, total:(window.__all||[]).length });
+  syncPresets();
 }
 function renderCards(){
   const all = (window.__view==='fav') ? FAVS : (window.__items||[]);
@@ -2273,9 +2297,9 @@ function plotMap(fit){
           showCoverageOnHover: false,
           spiderfyDistanceMultiplier: 1.6,
           iconCreateFunction: function(cl){
-            const n = cl.getChildCount();
-            return L.divIcon({ className:'', iconSize:[44,44], iconAnchor:[22,22],
-              html:'<div class="cl-pin'+(n>50?' big':'')+'">'+n+'</div>' });
+            const n = cl.getChildCount(), big = n > 50, sz = big ? 56 : 44;
+            return L.divIcon({ className:'', iconSize:[sz,sz], iconAnchor:[sz/2,sz/2],
+              html:'<div class="cl-pin'+(big?' big':'')+'">'+n+'</div>' });
           }
         })
       : L.layerGroup();
@@ -2583,12 +2607,16 @@ window.__runToken = 0;
 // Человек с ролика не будет разбираться с восемью полями. Один тап — готовый
 // набор. Повторный тап снимает набор и возвращает как было.
 function nextWeekend(){
-  const d = new Date(); const day = d.getDay();          // 0 — воскресенье
-  const toSat = (6 - day + 7) % 7 || 7;                  // ближайшая суббота
-  const sat = new Date(d.getTime() + toSat*86400000);
-  const sun = new Date(sat.getTime() + 86400000);
-  const fmt = x => x.toISOString().slice(0,10);
-  return [fmt(sat), fmt(sun)];
+  const d = new Date(), day = d.getDay();                // 0 — воскресенье, 6 — суббота
+  // Если выходные уже идут — берём сегодня и завтра, а не следующую неделю.
+  const shift = (day === 6 || day === 0) ? 0 : (6 - day);
+  const a = new Date(d.getFullYear(), d.getMonth(), d.getDate() + shift);
+  const b = new Date(a.getFullYear(), a.getMonth(), a.getDate() + 1);
+  // Дату собираем из местных частей: toISOString переводит в Гринвич, и ночью
+  // (с 00:00 до 03:00 по Минску) подставлял бы вчерашний день.
+  const fmt = x => x.getFullYear() + '-' +
+    String(x.getMonth()+1).padStart(2,'0') + '-' + String(x.getDate()).padStart(2,'0');
+  return [fmt(a), fmt(b)];
 }
 const PRESETS = {
   cheap:   function(on){ $('#max').value = on ? '60' : ''; },
@@ -2716,6 +2744,7 @@ syncPresets();
     if(p.flatbook) parts.push('Flatbook '+p.flatbook);
     $('#stat').textContent = 'Найдено '+p.total+(parts.length?(' ('+parts.join(' + ')+')'):'');
     renderCards();
+    window.__preloadShown = true;
   }catch(e){}
 })();
 window.__firstRun = 1;
@@ -2908,8 +2937,12 @@ http.createServer(async (req,res)=>{
       const d = await runSearchQuery(pu.searchParams);
       const preload = { total:d.total, kufar:d.kufar, realt:d.realt, flatbook:d.flatbook,
                         items:(d.items||[]).slice(0, 24) };
-      page = PAGE.replace('/*ПРЕДЗАГРУЗКА*/',
-        'window.__PRELOAD=' + JSON.stringify(preload).replace(/</g,'\\u003c') + ';');
+      const inject = 'window.__PRELOAD=' + JSON.stringify(preload).replace(/</g,'\\u003c') + ';';
+      // Подставляем функцией, а не строкой: в строке замены последовательности
+      // $' и $` означают «весь текст после/до совпадения». Название объявления
+      // пишут люди, и заголовок вида «Квартира 30$' центр» вставил бы в страницу
+      // её собственный хвост, закрыв тег script и сломав сайт целиком.
+      page = PAGE.replace('/*ПРЕДЗАГРУЗКА*/', () => inject);
     }catch(e){ /* не вышло — страница просто загрузится как раньше */ }
   }
   res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
