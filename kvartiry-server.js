@@ -857,6 +857,15 @@ function isRealtUrl(v){
   }catch(e){ return false; }
 }
 
+// Про склейку дублей между источниками.
+// Проверено на шести срезах (Минск, Брест, Гомель, Гродно, усадьбы, коттеджи —
+// около 900 объявлений): совпадений одного жилья между Kufar, Realt и Flatbook
+// НЕТ ни по адресу, ни по телефону. Источники держат разное жильё.
+// Склейка по «телефон + цена» была ошибкой: под неё попадали разные квартиры
+// одного хозяина по одинаковой цене — в Минске таких групп 59, и агентство
+// с двадцатью квартирами по 60 рублей схлопывалось бы в одну карточку.
+// Поэтому склейки нет: дубли убираются только по совпадению ссылки.
+
 // ── Кэш результатов поиска ────────────────────────────────────────────────
 // Одинаковые запросы в течение 8 минут отдаём из памяти: и быстрее, и источники
 // не получают шквал обращений, если на сайт разом придёт много людей.
@@ -914,6 +923,17 @@ function runSearchQuery(q){
 // Google не ждёт, пока страница дорисуется скриптом, поэтому для каждого
 // областного центра отдаём готовый HTML со списком вариантов.
 // Адреса: /minsk, /brest, /gomel, /grodno, /vitebsk, /mogilev, /minsk-obl
+// Уточнения к городским страницам: /minsk-nedorogo, /brest-usadby и так далее.
+// Данные для них уже лежат в памяти, поэтому страницы почти ничего не стоят,
+// а в поиске это десятки адресов вместо семи.
+const PAGE_KINDS = {
+  '':            { type:'flat',    max:0,  what:'Квартиры на сутки',        extra:'' },
+  'nedorogo':    { type:'flat',    max:70, what:'Недорогие квартиры на сутки',
+                   extra:' до 70 рублей' },
+  'usadby':      { type:'usadba',  max:0,  what:'Усадьбы на сутки',          extra:'' },
+  'kottedzhi':   { type:'cottage', max:0,  what:'Коттеджи и дома на сутки',  extra:'' },
+};
+
 const CITY_PAGES = {
   'minsk':     { city:'Минск',    where:'в Минске',            what:'Квартиры на сутки' },
   'brest':     { city:'Брест',    where:'в Бресте',            what:'Квартиры на сутки' },
@@ -928,9 +948,24 @@ const esc = t => String(t==null?'':t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':
 const SRC_TITLE = { Kufar:'Kufar', Realt:'Realt', Flatbook:'Flatbook', H101:'101Hotels' };
 const srcTitle = v => SRC_TITLE[v] || v || 'источнике';
 
-async function cityPage(slug){
+// разбираем адрес вида 'brest-usadby' на город и уточнение
+function parseCitySlug(path){
+  if(CITY_PAGES[path]) return { city: path, kind: '' };
+  for(const k in PAGE_KINDS){
+    if(!k) continue;
+    if(path.endsWith('-' + k)){
+      const city = path.slice(0, -(k.length + 1));
+      if(CITY_PAGES[city]) return { city: city, kind: k };
+    }
+  }
+  return null;
+}
+
+async function cityPage(slug, kind){
   const c = CITY_PAGES[slug];
-  const uu = new URL('/api/search?region=' + slug + '&city=&type=flat&rooms=&guests=&max=&source=both', 'http://localhost');
+  const k = PAGE_KINDS[kind || ''];
+  const uu = new URL('/api/search?region=' + slug + '&city=&type=' + k.type +
+                     '&rooms=&guests=&max=' + (k.max || '') + '&source=both', 'http://localhost');
   let data = { items: [], total: 0 };
   try{ data = await runSearchQuery(uu.searchParams); }catch(e){}
 
@@ -939,26 +974,28 @@ async function cityPage(slug){
   const minP = prices.length ? prices[0] : 0;
   const midP = prices.length ? prices[Math.floor(prices.length/2)] : 0;
 
-  const title = c.what + ' ' + c.where + ' — снять посуточно недорого';
-  const desc  = c.what + ' ' + c.where + ': ' + (data.total || 0) + ' вариантов от частников с Kufar, Realt и Flatbook в одном списке'
+  const title = k.what + ' ' + c.where + k.extra + ' — снять посуточно';
+  const desc  = k.what + ' ' + c.where + k.extra + ': ' + (data.total || 0) + ' вариантов от частников с Kufar, Realt и Flatbook в одном списке'
     + (minP ? (', цены от ' + minP + ' BYN за сутки') : '') + '. Фото, цены, телефоны хозяев и карта.';
 
   const cards = items.map(function(x){
     const img = (x.photos && x.photos[0])
-      ? '<img src="' + esc(x.photos[0]) + '" loading="lazy" alt="' + esc(c.what + ' ' + c.where + ' — ' + (x.title||'')) + '">'
+      ? '<img src="' + esc(x.photos[0]) + '" loading="lazy" alt="' + esc(k.what + ' ' + c.where + ' — ' + (x.title||'')) + '">'
       : '<div class="noimg">фото у источника</div>';
     const meta = [x.area, (x.rooms ? x.rooms + '-комн' : ''), x.capacity ? ('до ' + x.capacity + ' гостей') : '']
       .filter(Boolean).map(function(m){ return '<span>' + esc(m) + '</span>'; }).join('');
     return '<article class="c"><a href="' + esc(x.link) + '" target="_blank" rel="noopener nofollow">' + img + '</a>'
       + '<div class="b"><div class="p">' + x.price + ' BYN <small>/ сутки</small></div>'
       + '<div class="m">' + meta + '</div>'
-      + '<h3>' + esc(x.title || (c.what + ' ' + c.where)) + '</h3>'
+      + '<h3>' + esc(x.title || (k.what + ' ' + c.where)) + '</h3>'
       + '<a class="go" href="' + esc(x.link) + '" target="_blank" rel="noopener nofollow">Открыть на ' + esc(srcTitle(x.src)) + '</a>'
       + '</div></article>';
   }).join('');
 
-  const others = Object.keys(CITY_PAGES).filter(function(k){ return k !== slug; })
-    .map(function(k){ return '<a href="/' + k + '">' + esc(CITY_PAGES[k].city) + '</a>'; }).join('');
+  const others = Object.keys(CITY_PAGES).filter(function(x){ return x !== slug || kind; })
+    .map(function(x){ return '<a href="/' + x + '">' + esc(CITY_PAGES[x].city) + '</a>'; }).join('')
+    + Object.keys(PAGE_KINDS).filter(function(x){ return x && x !== (kind || ''); })
+      .map(function(x){ return '<a href="/' + slug + '-' + x + '">' + esc(PAGE_KINDS[x].what) + ' ' + esc(c.where) + '</a>'; }).join('');
 
   const ld = {
     '@context':'https://schema.org', '@type':'ItemList',
@@ -974,12 +1011,12 @@ async function cityPage(slug){
     + '<meta name="description" content="' + esc(desc) + '">'
     + '<meta name="robots" content="index,follow">'
     + '<meta name="theme-color" content="#ff5a1f">'
-    + '<link rel="canonical" href="' + SITE_URL + '/' + slug + '">'
+    + '<link rel="canonical" href="' + SITE_URL + '/' + slug + (kind ? ('-' + kind) : '') + '">'
     + '<link rel="manifest" href="/manifest.webmanifest">'
     + '<meta property="og:type" content="website">'
     + '<meta property="og:title" content="' + esc(title) + '">'
     + '<meta property="og:description" content="' + esc(desc) + '">'
-    + '<meta property="og:url" content="' + SITE_URL + '/' + slug + '">'
+    + '<meta property="og:url" content="' + SITE_URL + '/' + slug + (kind ? ('-' + kind) : '') + '">'
     + '<script type="application/ld+json">' + JSON.stringify(ld) + '</script>'
     + '<style>'
     + ':root{color-scheme:light dark}'
@@ -1008,12 +1045,12 @@ async function cityPage(slug){
     +   '.c .m span{background:#191d27;border-color:#252b38;color:#aab2c2}'
     +   '.others a{background:#14171f;border-color:#252b38;color:#f2f4f8}}'
     + '</style></head><body><div class="w">'
-    + '<h1>' + esc(c.what) + ' ' + esc(c.where) + '</h1>'
+    + '<h1>' + esc(k.what) + ' ' + esc(c.where) + esc(k.extra) + '</h1>'
     + '<p class="lead">Собрали объявления частников с <b>Kufar</b>, <b>Realt</b> и <b>Flatbook</b> в один список — '
     +   'не нужно открывать три сайта. Сейчас доступно <b>' + (data.total || 0) + '</b> вариантов'
     +   (minP ? (', самый дешёвый — <b>' + minP + ' BYN</b> за сутки, обычная цена около <b>' + midP + ' BYN</b>') : '')
     +   '. Цены и наличие подтягиваются из объявлений в реальном времени.</p>'
-    + '<a class="cta" href="/?region=' + slug + '">Открыть поиск с фильтрами и картой →</a>'
+    + '<a class="cta" href="/?region=' + slug + '&type=' + k.type + (k.max ? ('&max=' + k.max) : '') + '">Открыть поиск с фильтрами и картой →</a>'
     + (cards ? ('<div class="grid">' + cards + '</div>') : '<p>Сейчас вариантов нет — загляните позже.</p>')
     + '<div class="others">' + others + '</div>'
     + '<footer><p>Мы не сдаём жильё сами и не берём комиссию: показываем объявления с Kufar, Realt и Flatbook '
@@ -1052,6 +1089,8 @@ const PAGE = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="apple-mobile-web-app-title" content="Жильё на сутки">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <script type="application/ld+json">
 {"@context":"https://schema.org","@type":"WebSite","name":"Поиск жилья на сутки","url":"${SITE_URL}/","inLanguage":"ru-BY","description":"${META_DESC}"}
 </script>
@@ -1638,6 +1677,26 @@ h1 .accent{
   opacity:0;pointer-events:none;transition:opacity .2s, transform .2s;z-index:9999;
 }
 .toast.show{opacity:1;transform:translate(-50%,0)}
+/* Быстрые наборы фильтров — чтобы человеку с ролика не пришлось возиться с полями */
+.presets{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 10px;margin:0 0 6px;-webkit-overflow-scrolling:touch}
+.presets::-webkit-scrollbar{display:none}
+.preset{
+  flex:0 0 auto;font:inherit;font-size:14px;font-weight:600;white-space:nowrap;
+  color:var(--txt-2);background:var(--surface);border:1px solid var(--line);
+  border-radius:999px;padding:9px 16px;cursor:pointer;transition:.15s;
+}
+.preset:hover{border-color:var(--line-strong);color:var(--txt)}
+.preset.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);
+  box-shadow:0 4px 14px -4px color-mix(in srgb,var(--accent) 70%,transparent)}
+/* Кружки с числом вместо кучи наложенных меток */
+.cl-pin{
+  display:flex;align-items:center;justify-content:center;
+  width:44px;height:44px;border-radius:50%;
+  background:linear-gradient(135deg,var(--accent),var(--accent-2));
+  color:#fff;font-weight:800;font-size:14px;
+  border:3px solid #fff;box-shadow:0 4px 14px rgba(20,24,33,.35);
+}
+.cl-pin.big{width:56px;height:56px;font-size:16px}
 .ftoggle{
   display:none;align-items:center;gap:10px;width:100%;
   font:inherit;font-size:15px;font-weight:700;color:var(--txt);
@@ -1861,6 +1920,15 @@ h1 .accent{
     <button id="goRF" class="go" type="button">Найти отели</button>
   </form>
 
+  <div class="presets" id="presets">
+    <button class="preset" type="button" data-preset="cheap">до 60 руб</button>
+    <button class="preset" type="button" data-preset="weekend">на выходные</button>
+    <button class="preset" type="button" data-preset="company">компания 6+</button>
+    <button class="preset" type="button" data-preset="usadba">усадьбы</button>
+    <button class="preset" type="button" data-preset="one">1 комната</button>
+    <button class="preset" type="button" data-preset="photo">только с фото</button>
+  </div>
+
   <div class="toolbar">
     <div id="stat"></div>
     <span id="geo" style="color:var(--txt-3);font-size:12.5px"></span>
@@ -1908,6 +1976,7 @@ h1 .accent{
 <button id="up" class="up" type="button" aria-label="Наверх" title="Наверх">↑</button>
 
 <script>
+/*ПРЕДЗАГРУЗКА*/
 const $=s=>document.querySelector(s);
 const CITIES = ${JSON.stringify(CITIES_MAP)};
 const PAGE_SIZE = 24;
@@ -2196,14 +2265,29 @@ function plotMap(fit){
   if(!window.__map){
     window.__map=L.map('map',{scrollWheelZoom:true}).setView([53.70,27.95],6);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(window.__map);
-    window.__mlayer=L.layerGroup().addTo(window.__map);
+    // Метки в центре города наваливаются друг на друга сотнями и карта
+    // становится нечитаемой. Близкие собираем в кружок с числом.
+    window.__mlayer = (typeof L.markerClusterGroup === 'function')
+      ? L.markerClusterGroup({
+          maxClusterRadius: 55,
+          showCoverageOnHover: false,
+          spiderfyDistanceMultiplier: 1.6,
+          iconCreateFunction: function(cl){
+            const n = cl.getChildCount();
+            return L.divIcon({ className:'', iconSize:[44,44], iconAnchor:[22,22],
+              html:'<div class="cl-pin'+(n>50?' big':'')+'">'+n+'</div>' });
+          }
+        })
+      : L.layerGroup();
+    window.__map.addLayer(window.__mlayer);
   }
   window.__mlayer.clearLayers();
   const items=(window.__items||[]).filter(x=>x.lat&&x.lng);
   const pts=[];
   items.forEach(function(x){
     const icon=L.divIcon({className:'',iconSize:[1,1],iconAnchor:[0,0],html:'<div class="price-pin '+x.src+'">'+x.price+'</div>'});
-    const mk=L.marker([x.lat,x.lng],{icon:icon,riseOnHover:true}).addTo(window.__mlayer);
+    const mk=L.marker([x.lat,x.lng],{icon:icon,riseOnHover:true});
+    window.__mlayer.addLayer(mk);
     const tip = x.chips
       ? (x.chips.join(' · ')+' · '+x.price+' '+curOf(x))
       : ((x.area?x.area+' · ':'')+x.rooms+'-комн · '+x.price+' BYN'+(x.approx?' (≈)':''));
@@ -2494,6 +2578,53 @@ if('serviceWorker' in navigator){
 }
 
 window.__runToken = 0;
+
+// ── Быстрые наборы фильтров ───────────────────────────────────────────────
+// Человек с ролика не будет разбираться с восемью полями. Один тап — готовый
+// набор. Повторный тап снимает набор и возвращает как было.
+function nextWeekend(){
+  const d = new Date(); const day = d.getDay();          // 0 — воскресенье
+  const toSat = (6 - day + 7) % 7 || 7;                  // ближайшая суббота
+  const sat = new Date(d.getTime() + toSat*86400000);
+  const sun = new Date(sat.getTime() + 86400000);
+  const fmt = x => x.toISOString().slice(0,10);
+  return [fmt(sat), fmt(sun)];
+}
+const PRESETS = {
+  cheap:   function(on){ $('#max').value = on ? '60' : ''; },
+  company: function(on){ $('#guests').value = on ? '6' : ''; },
+  usadba:  function(on){ $('#type').value = on ? 'usadba' : 'flat'; },
+  one:     function(on){ $('#rooms').value = on ? '1' : ''; },
+  photo:   function(on){ $('#onlyPhoto').checked = on; },
+  weekend: function(on){
+    if(on){ const w = nextWeekend(); $('#from').value = w[0]; $('#to').value = w[1]; }
+    else  { $('#from').value = ''; $('#to').value = ''; }
+  },
+};
+document.querySelectorAll('#presets .preset').forEach(function(b){
+  b.addEventListener('click', function(){
+    const key = b.getAttribute('data-preset');
+    const on = !b.classList.contains('on');
+    b.classList.toggle('on', on);
+    PRESETS[key](on);
+    if(key === 'photo'){ onPhotoToggle(); return; }
+    run();
+  });
+});
+// подсветить наборы, которые уже включены (например, при заходе по ссылке)
+function syncPresets(){
+  const state = {
+    cheap:   $('#max').value === '60',
+    company: $('#guests').value === '6',
+    usadba:  $('#type').value === 'usadba',
+    one:     $('#rooms').value === '1',
+    photo:   $('#onlyPhoto').checked,
+    weekend: !!($('#from').value && $('#to').value),
+  };
+  document.querySelectorAll('#presets .preset').forEach(function(b){
+    b.classList.toggle('on', !!state[b.getAttribute('data-preset')]);
+  });
+}
 favSave();
 
 // ── Фильтры в адресной строке ─────────────────────────────────────────────
@@ -2567,6 +2698,26 @@ function applyUrl(){
   }catch(e){}
 }
 applyUrl();
+syncPresets();
+
+// Готовый список, вложенный сервером: рисуем его сразу, чтобы первый экран
+// не был пустым. Он показывается только для вида по умолчанию; как только
+// человек трогает фильтр, обычный запрос всё заменит живыми данными.
+(function(){
+  try{
+    if(!window.__PRELOAD || location.search) return;
+    window.__all = window.__PRELOAD.items || [];
+    window.__items = window.__all.slice();
+    window.__page = 1;
+    const p = window.__PRELOAD;
+    const parts = [];
+    if(p.kufar) parts.push('Kufar '+p.kufar);
+    if(p.realt) parts.push('Realt '+p.realt);
+    if(p.flatbook) parts.push('Flatbook '+p.flatbook);
+    $('#stat').textContent = 'Найдено '+p.total+(parts.length?(' ('+parts.join(' + ')+')'):'');
+    renderCards();
+  }catch(e){}
+})();
 window.__firstRun = 1;
 window.addEventListener('load',run);
 </script></body></html>`;
@@ -2685,15 +2836,16 @@ http.createServer(async (req,res)=>{
     res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
     res.end(statsPage()); return;
   }
-  // городские страницы: /minsk, /brest, …
-  if(CITY_PAGES[u.pathname.slice(1)]){
+  // страницы под поиск: /minsk, /brest, /minsk-nedorogo, /brest-usadby …
+  const cityHit = parseCitySlug(u.pathname.slice(1));
+  if(cityHit){
     try{
-      const html = await cityPage(u.pathname.slice(1));
+      const html = await cityPage(cityHit.city, cityHit.kind);
       res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'public, max-age=300'});
       res.end(html);
     }catch(e){
       console.log('Городская страница не собралась:', e.message);
-      res.writeHead(302, {'Location':'/?region='+u.pathname.slice(1)}); res.end();
+      res.writeHead(302, {'Location':'/?region='+cityHit.city}); res.end();
     }
     return;
   }
@@ -2738,11 +2890,30 @@ http.createServer(async (req,res)=>{
     const urls = ['<url><loc>'+SITE_URL+'/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>']
       .concat(Object.keys(CITY_PAGES).map(function(k){
         return '<url><loc>'+SITE_URL+'/'+k+'</loc><changefreq>daily</changefreq><priority>0.8</priority></url>';
-      }));
+      }))
+      .concat([].concat(...Object.keys(CITY_PAGES).map(function(city){
+        return Object.keys(PAGE_KINDS).filter(Boolean).map(function(kind){
+          return '<url><loc>'+SITE_URL+'/'+city+'-'+kind+'</loc><changefreq>daily</changefreq><priority>0.6</priority></url>';
+        });
+      })));
     res.end('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'+urls.join('')+'</urlset>'); return;
   }
+  // Главную отдаём уже с квартирами: список лежит в памяти после прогрева,
+  // и человеку не приходится ждать запроса, а поисковик видит содержимое.
+  // Вкладываем только первую страницу выдачи — этого хватает на первый экран.
+  let page = PAGE;
+  if(u.pathname === '/' && ![...u.searchParams.keys()].length){
+    try{
+      const pu = new URL('/api/search?region=minsk&city=&type=flat&rooms=&guests=&max=&source=both', 'http://localhost');
+      const d = await runSearchQuery(pu.searchParams);
+      const preload = { total:d.total, kufar:d.kufar, realt:d.realt, flatbook:d.flatbook,
+                        items:(d.items||[]).slice(0, 24) };
+      page = PAGE.replace('/*ПРЕДЗАГРУЗКА*/',
+        'window.__PRELOAD=' + JSON.stringify(preload).replace(/</g,'\\u003c') + ';');
+    }catch(e){ /* не вышло — страница просто загрузится как раньше */ }
+  }
   res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
-  res.end(PAGE);
+  res.end(page);
 }).listen(PORT, ()=> console.log('Открой http://localhost:'+PORT));
 
 // ── Прогрев ───────────────────────────────────────────────────────────────
