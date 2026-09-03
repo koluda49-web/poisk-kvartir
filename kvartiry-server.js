@@ -39,6 +39,45 @@ function statsAdd(ev){
 }
 
 // откуда пришёл человек — приводим к понятному названию
+// Роботы соцсетей заходят строить превью ссылки, когда её куда-то вставили.
+// Внешне это выглядит как переход живого человека, хотя человека не было.
+// Считать их вместе с людьми — значит обманывать себя.
+const BOTS = [
+  [/facebookexternalhit|facebookcatalog|meta-externalagent/i, 'Facebook — робот превью'],
+  [/instagramexternalhit/i,                'Instagram — робот превью'],
+  [/TelegramBot/i,                         'Telegram — робот превью'],
+  [/WhatsApp/i,                            'WhatsApp — робот превью'],
+  [/Twitterbot/i,                          'Twitter — робот превью'],
+  [/vkShare|VKRobot/i,                     'ВКонтакте — робот превью'],
+  [/Slackbot|Discordbot|SkypeUriPreview/i, 'мессенджер — робот превью'],
+  [/Googlebot|Google-InspectionTool/i,     'Googlebot'],
+  [/YandexBot|YandexRenderResourcesBot/i,  'робот Яндекса'],
+  [/bingbot|AhrefsBot|SemrushBot|MJ12bot|DotBot|PetalBot|DataForSeoBot|GPTBot|ClaudeBot/i, 'поисковый робот'],
+  [/HeadlessChrome|python-requests|curl\/|Go-http-client|node-fetch|Java\//i, 'автоматика'],
+];
+function botOf(ua){
+  for(let i=0;i<BOTS.length;i++) if(BOTS[i][0].test(ua)) return BOTS[i][1];
+  return '';
+}
+
+// Встроенный браузер приложения: человек не набирал адрес, а ткнул в ссылку
+// прямо в ленте или в переписке. Это самый честный признак живого перехода.
+function appOf(ua){
+  if(/FBAN|FBAV|FB_IAB/i.test(ua))                    return 'из приложения Facebook';
+  if(/Instagram/i.test(ua))                           return 'из приложения Instagram';
+  if(/TikTok|BytedanceWebview|musical_ly|Bytedance/i.test(ua)) return 'из приложения TikTok';
+  if(/Telegram/i.test(ua))                            return 'из Telegram';
+  if(/\bVK\b|VKAndroidApp/i.test(ua))                 return 'из ВКонтакте';
+  return '';
+}
+
+// Точный адрес источника: 'l.facebook.com' вместо просто 'Facebook'.
+// Без него нельзя понять, откуда именно пришёл человек — из ленты, из личных
+// сообщений или это вообще робот соцсети зашёл строить превью ссылки.
+function refRaw(r){
+  try{ return new URL(String(r)).hostname.replace(/^www\./,'').slice(0,60); }
+  catch(e){ return ''; }
+}
 function refHost(r){
   try{
     if(!r) return 'прямой заход';
@@ -56,7 +95,7 @@ function refHost(r){
 }
 
 // из тела запроса берём только заранее разрешённые поля
-const T_FIELDS = ['n','w','ttfb','load','sec','scroll','total','auto','c','region','city','type','rooms','max','host'];
+const T_FIELDS = ['n','w','ttfb','load','sec','scroll','total','auto','c','region','city','type','rooms','max','host','from'];
 function statsFields(o){
   const out = {};
   for(const k of T_FIELDS){
@@ -70,6 +109,23 @@ function statsFields(o){
 // ── страница /stats ────────────────────────────────────────────────────────
 const DAY_MS = 86400000;
 
+// Служебные коды в отчёте читать невозможно: «— · flat» ничего не говорит.
+const TYPE_RU = { flat:'Квартира', cottage:'Коттедж / дом', usadba:'Усадьба' };
+// Названия областей берём в момент вызова: сам список объявлен ниже по файлу,
+// и обратиться к нему на этапе загрузки нельзя.
+function regionRu(key){
+  return (typeof REGIONS !== 'undefined' && REGIONS[key]) ? REGIONS[key].oblast : (key || '');
+}
+function searchLabel(p){
+  if(!p) return '';
+  if(p.c === 'ru') return 'Россия · ' + (p.city || '') + (p.type ? (' · ' + ((typeof RF_TYPES !== 'undefined' && RF_TYPES[p.type]) || p.type)) : '');
+  const city = (p.city && p.city !== '—') ? p.city : regionRu(p.region);
+  const type = TYPE_RU[p.type] || p.type || '';
+  const rooms = (p.rooms && p.rooms !== 'любое') ? (' · ' + p.rooms + '-комн') : '';
+  const price = p.max ? (' · до ' + p.max + ' р.') : '';
+  return [city, type].filter(Boolean).join(' · ') + rooms + price;
+}
+
 function statsPage(){
   const now = Date.now();
   const esc = function(t){ return String(t).replace(/[&<>]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]; }); };
@@ -77,7 +133,11 @@ function statsPage(){
   const uniq  = function(a){ return new Set(a.map(function(x){ return x.v; })).size; };
   const only  = function(a, e){ return a.filter(function(x){ return x.e === e; }); };
 
-  const dayA = since(DAY_MS), weekA = since(7*DAY_MS);
+  // Везде, где считаем посетителей, роботов исключаем — иначе цифры врут.
+  const human = function(a){ return a.filter(function(x){ return !x.bot; }); };
+  const dayA = human(since(DAY_MS)), weekA = human(since(7*DAY_MS));
+  const botsWeek = since(7*DAY_MS).filter(function(x){ return x.bot; });
+  const humanAll = human(STATS);
   const first = STATS.length ? new Date(STATS[0].t) : null;
 
   function top(arr, fn, limit){
@@ -119,7 +179,7 @@ function statsPage(){
   const days = [];
   for(let i = 13; i >= 0; i--){
     const from = now - (i+1)*DAY_MS, to = now - i*DAY_MS;
-    const a = STATS.filter(function(x){ return x.t > from && x.t <= to; });
+    const a = human(STATS.filter(function(x){ return x.t > from && x.t <= to; }));
     days.push([ new Date(to - DAY_MS/2).toLocaleDateString('ru-RU', {day:'2-digit', month:'2-digit'}),
                 only(a,'view').length, uniq(only(a,'view')) ]);
   }
@@ -136,9 +196,15 @@ function statsPage(){
   const scrl = ends.map(function(x){ return x.p && x.p.scroll; }).filter(function(v){ return typeof v === 'number'; });
 
   const last = STATS.slice(-40).reverse().map(function(x){
+    const src = (x.bot ? ('🤖 ' + x.bot) : (x.r || ''))
+              + (x.rh && !x.bot ? (' (' + x.rh + ')') : '')
+              + (x.app ? (' · ' + x.app) : '');
+    const info = (x.e === 'search') ? searchLabel(x.p) : JSON.stringify(x.p || {});
     return '<tr><td>' + new Date(x.t).toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) +
-      '</td><td>' + esc(x.e) + '</td><td>' + esc(x.r || '') + '</td><td>' + esc(x.m || '') +
-      '</td><td class="raw">' + esc(JSON.stringify(x.p || {})) + '</td></tr>';
+      '</td><td>' + esc(x.e) + '</td><td>' + esc(src) + '</td><td>' + esc(x.m || '') +
+      '</td><td class="raw">' + esc(info)
+      + (x.ref ? ('<br>ссылка: ' + esc(x.ref)) : '')
+      + (x.ua ? ('<br>' + esc(x.ua)) : '') + '</td></tr>';
   }).join('');
 
   return '<!doctype html><html lang="ru"><head><meta charset="utf-8">' +
@@ -171,7 +237,7 @@ function statsPage(){
     '<div class="tiles">' +
       tile('Заходов сегодня', only(dayA,'view').length, uniq(only(dayA,'view')) + ' чел.') +
       tile('Заходов за 7 дней', only(weekA,'view').length, uniq(only(weekA,'view')) + ' чел.') +
-      tile('Всего заходов', only(STATS,'view').length, uniq(only(STATS,'view')) + ' чел.') +
+      tile('Всего заходов', only(humanAll,'view').length, uniq(only(humanAll,'view')) + ' чел.') +
       tile('Открыли объявление', weekA.filter(function(x){ return x.e==='open'||x.e==='call'; }).length, 'за 7 дней') +
     '</div>' +
 
@@ -183,7 +249,19 @@ function statsPage(){
     '</div>' +
 
     '<h2>Откуда приходят (7 дней)</h2><div class="card">' +
-      bars(top(only(weekA,'view'), function(x){ return x.r; }, 12)) + '</div>' +
+      bars(top(only(weekA,'view'), function(x){ return x.r + (x.app ? (' · ' + x.app) : ''); }, 12)) +
+      '<p class="none">Считаются только живые заходы. Роботы соцсетей — отдельным блоком ниже.</p></div>' +
+
+    '<h2>Метки в ссылках (7 дней)</h2><div class="card">' +
+      bars(top(only(weekA,'view').filter(function(x){ return x.p && x.p.from; }),
+               function(x){ return x.p.from; }, 12)) +
+      '<p class="none">Добавь к ссылке метку — и будет видно, какой ролик привёл людей: ' +
+      SITE_URL + '/?from=tiktok-post1</p></div>' +
+
+    '<h2>Роботы и предпросмотры (7 дней)</h2><div class="card">' +
+      bars(top(only(botsWeek,'view'), function(x){ return x.bot; }, 12)) +
+      '<p class="none">Это не люди. Так соцсети и мессенджеры строят картинку-превью, ' +
+      'когда ссылку куда-то вставили, а поисковики — обходят сайт.</p></div>' +
 
     '<h2>Скорость первой загрузки (7 дней)</h2><div class="card">' +
       '<div class="tiles">' +
@@ -199,7 +277,7 @@ function statsPage(){
 
     '<h2>Что искали (7 дней)</h2><div class="card">' +
       bars(top(only(weekA,'search').filter(function(x){ return x.p && x.p.auto === 0; }),
-               function(x){ return (x.p.c === 'ru' ? 'Россия · ' : '') + (x.p.city || x.p.region || '—') + ' · ' + (x.p.type || ''); }, 12)) +
+               function(x){ return searchLabel(x.p); }, 12)) +
     '</div>' +
 
     '<h2>Устройства и вовлечённость (7 дней)</h2><div class="card"><div class="tiles">' +
@@ -1947,7 +2025,7 @@ async function run(){
       if(!window.__items.length){ $('#grid').innerHTML='<div class="empty">Ничего не найдено. Смягчите фильтры.</div>'; if(window.__view==='map') plotMap(true); }
       else draw();
       if(window.__T) window.__T('search', { c:'by', auto:auto, region:$('#region').value,
-        city:$('#city').value.trim()||'—', type:$('#type').value, rooms:$('#rooms').value||'любое',
+        city:$('#city').value.trim(), type:$('#type').value, rooms:$('#rooms').value||'любое',
         max:+$('#max').value||0, total:d.total });
     }catch(e){ if(token===window.__runToken) $('#stat').textContent='Ошибка: '+e.message; }
     return;
@@ -1987,7 +2065,7 @@ async function run(){
     if(window.__view==='map') plotMap(true);
   }
   if(window.__T) window.__T('search', { c:'by', auto:auto, region:$('#region').value,
-    city:$('#city').value.trim()||'—', type:$('#type').value, rooms:$('#rooms').value||'любое',
+    city:$('#city').value.trim(), type:$('#type').value, rooms:$('#rooms').value||'любое',
     max:+$('#max').value||0, total:(window.__all||[]).length });
 }
 function renderCards(){
@@ -2255,8 +2333,11 @@ $('#fbSend').addEventListener('click', async function(){
         var n = (performance.getEntriesByType('navigation')||[])[0];
         var load = n ? Math.round(n.loadEventEnd || n.duration || 0) : 0;
         if(!load) load = Math.round(performance.now());
-        window.__T('view', { r: document.referrer||'', n: isNew, w: innerWidth,
-                             ttfb: n ? Math.round(n.responseStart) : 0, load: load });
+        // метка ссылки: /?from=tiktok-post1 — сразу видно, какой ролик привёл
+      var q = new URLSearchParams(location.search);
+      var mark = (q.get('from') || q.get('utm_source') || '').slice(0, 40);
+      window.__T('view', { r: document.referrer||'', n: isNew, w: innerWidth,
+                           ttfb: n ? Math.round(n.responseStart) : 0, load: load, from: mark });
       }, 0);
     });
     var maxS = 0, t0 = Date.now(), sent = false;
@@ -2583,6 +2664,11 @@ http.createServer(async (req,res)=>{
           v: String(d.v||'').slice(0,32),
           s: String(d.s||'').slice(0,32),
           r: refHost(d.r),
+          rh: refRaw(d.r),
+          ref: String(d.r||'').slice(0, 200),
+          bot: botOf(ua),
+          app: appOf(ua),
+          ua: ua.slice(0, 120),
           m: /Mobile|Android|iPhone|iPad/i.test(ua) ? 'моб.' : 'комп.',
           p: statsFields(d)
         });
