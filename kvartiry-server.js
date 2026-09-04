@@ -567,12 +567,17 @@ async function flatbookRaw(regKey, center, type, rooms, amenFb){
       const ph=String(f.phone||'').replace(/\D/g,'');
       const phone = ph.length===9 ? ('375'+ph) : ph;
       const metro = (f.metro_description&&f.metro_description[0]&&f.metro_description[0].metro_name)||'';
-      const addr = ((f.streetName||'')+' '+(f.streetNumber||'')).trim();
-      const note = f.seoTitle ? (' · '+String(f.seoTitle).slice(0,70)) : '';
+      // У Flatbook два раздела с РАЗНЫМИ именами полей. Квартиры отдают
+      // streetName/streetNumber/seoTitle, а усадьбы и коттеджи — address/name.
+      // Пока читали только первый набор, все 92 усадьбы показывались как «Минск»
+      // без названия и адреса.
+      const addr = (((f.streetName||'')+' '+(f.streetNumber||'')).trim())
+                 || String(f.address||'').trim();
+      const label = String(f.seoTitle || f.name || '').trim().slice(0,70);
       const img0 = f.generatedImagePath ? String(f.generatedImagePath).replace('/yandex_card_image/','/catalog_image/') : '';
       return { src:'Flatbook', cur:'BYN', unit:'сутки',
         price:+f.price_day||0, rooms:0, area:center, capacity:'',
-        title: (addr||center) + note,
+        title: [addr, label].filter(Boolean).join(' · ') || center,
         photos: img0 ? [img0] : [],
         rating:0, reviews:0, descId:null, phone, name:'',
         lat:+f.latitude, lng:+f.longitude, approx:false,
@@ -667,7 +672,12 @@ async function search(regKey, city, type, rooms, maxP, guests, source, amen, min
   const keys = regKey==='any' ? Object.keys(REGIONS) : [ REGIONS[regKey] ? regKey : 'brest' ];
   const useK = source==='both' || source==='kufar';
   const useR = (source==='both' || source==='realt') && !hasAmen;   // у Realt нет данных удобств в списке → при фильтре удобств не участвует
-  const useF = source==='both' || source==='flatbook';
+  // Flatbook вместимость не передаёт вообще — ни в одном объявлении. Раньше при
+  // запросе «на 6+ гостей» все его варианты проходили насквозь, и человек, просивший
+  // дом на компанию, получал в том числе жильё на двоих. Фильтр обязан фильтровать,
+  // поэтому при заданном числе гостей Flatbook не участвует — так же, как Realt
+  // не участвует при выборе удобств.
+  const useF = (source==='both' || source==='flatbook') && !guests;
   const tasks = [];
   keys.forEach(key=>{
     const reg = REGIONS[key];

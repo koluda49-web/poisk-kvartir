@@ -68,7 +68,25 @@ check('разные квартиры одного хозяина не склее
 check('вариантов достаточно (' + items.length + ')', items.length > 300,
       'выдача заметно похудела — не потерялись ли объявления?');
 
-// ── 3. страницы под поиск ──────────────────────────────────────────────────
+// ── 3. фильтр по гостям обязан фильтровать ─────────────────────────────────
+// У Flatbook вместимость не приходит вообще, и раньше при запросе «на 6+ гостей»
+// все 92 их объявления проходили насквозь: человек просил дом на компанию,
+// а получал варианты, часть которых на двоих.
+console.log('\n=== фильтр по гостям ===');
+const g6 = await json('/api/search?region=minsk-obl&city=&type=usadba&rooms=&guests=6&max=&source=both');
+const bad = (g6.items || []).filter(x => !(+x.capacity >= 6));
+check('в выдаче «6+ гостей» нет вариантов без вместимости (' + bad.length + ')', bad.length === 0,
+      'прошло ' + bad.length + ' из ' + (g6.items || []).length + ' — фильтр не работает');
+
+// ── 4. усадьбы и коттеджи Flatbook должны иметь название ───────────────────
+console.log('\n=== названия усадеб и коттеджей ===');
+const fb = await json('/api/search?region=minsk-obl&city=&type=usadba&rooms=&guests=&max=&source=flatbook');
+const noName = (fb.items || []).filter(x => !x.title || x.title === 'Минск' || x.title.length < 6);
+check('у усадеб есть названия и адреса (' + ((fb.items || []).length - noName.length) + ' из ' + (fb.items || []).length + ')',
+      noName.length < (fb.items || []).length * 0.2,
+      'без названия: ' + noName.length + ' — разбор берёт не те поля');
+
+// ── 5. страницы под поиск ──────────────────────────────────────────────────
 console.log('\n=== страницы под поисковики ===');
 const pages = ['/minsk', '/brest', '/minsk-nedorogo', '/brest-usadby', '/minsk-kottedzhi'];
 for (const p of pages) {
