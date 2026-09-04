@@ -2164,6 +2164,7 @@ h1 .accent{
 .plc .ph img{width:100%;height:100%;object-fit:cover;display:block}
 .mp-pl .mp-pic-box:empty{display:none}
 .mp-pl .mp-pic{width:100%;height:130px;object-fit:cover;border-radius:10px;margin-bottom:8px;display:block}
+.mp-pl .mp-tx:empty{display:none}
 .mp-pl .mp-tx{font-size:12.5px;line-height:1.45;color:var(--txt-2);margin:6px 0 8px;
   max-height:132px;overflow:auto}
 .mp-pl .mp-coord{display:flex;align-items:center;gap:8px;width:100%;margin:0 0 8px;
@@ -3349,7 +3350,7 @@ async function plotPlaces(){
       { maxWidth:300, minWidth:240 });
     // Описание тянем только когда окошко открыли: на карте бывает под тысячу
     // точек, грузить их описания заранее — тысяча лишних запросов.
-    mk.on('popupopen', function(){ loadMapText(p.id, i, !p.pic); });
+    mk.on('popupopen', function(){ loadMapText(p.id, i); });
     window.__mlayer.addLayer(mk);
     pts.push([p.lat, p.lng]);
   });
@@ -3397,27 +3398,22 @@ function selectText(el){
 
 // Описание для окошка на карте. Ответы держим в том же хранилище, что и
 // карточки списка, поэтому повторное открытие точки ничего не запрашивает.
-const PL_PIC = {};
-async function loadMapText(id, i, needPic){
+async function loadMapText(id, i){
   const box = document.getElementById('mtx' + i);
   if(!box) return;
-  const showPic = function(){
-    if(!needPic) return;
-    const url = PL_PIC[id]; const holder = document.getElementById('mpic' + i);
-    if(url && holder && !holder.firstChild){
-      holder.innerHTML = '<img class="mp-pic" src="' + esc2(url) + '" alt="">';
-    }
-  };
-  if(PL_TEXT[id] !== undefined){
-    box.textContent = PL_TEXT[id] || 'Описание пока не готово.'; showPic(); return;
-  }
   try{
-    const d = await (await fetch('/api/place?id=' + id)).json();
-    PL_TEXT[id] = d.text || '';
-    PL_PIC[id] = (d.pics || [])[0] || '';
+    // В PL_TEXT лежит весь ответ сервера — тот же, что и для карточек списка,
+    // поэтому повторное открытие точки ничего не запрашивает заново.
+    if(!PL_TEXT[id]) PL_TEXT[id] = await (await fetch('/api/place?id=' + id)).json();
+    const d = PL_TEXT[id] || {};
     const b2 = document.getElementById('mtx' + i);
-    if(b2) b2.textContent = PL_TEXT[id] || 'Описание пока не готово.';
-    showPic();
+    if(b2) b2.textContent = d.text || d.years || '';
+    // Снимок в облегчённом списке для карты не передаётся — берём из подробностей.
+    const holder = document.getElementById('mpic' + i);
+    const pic = (d.pics || [])[0];
+    if(pic && holder && !holder.firstChild){
+      holder.innerHTML = '<img class="mp-pic" src="' + esc2(pic) + '" alt="">';
+    }
   }catch(e){
     const b2 = document.getElementById('mtx' + i);
     if(b2) b2.textContent = '';
