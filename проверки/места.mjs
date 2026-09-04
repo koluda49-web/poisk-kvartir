@@ -96,5 +96,22 @@ check('подбирается жильё рядом (' + (stay.total || 0) + ')'
 check('у вариантов посчитано расстояние',
       (stay.items || []).every(x => typeof x.km === 'number'), 'нет расстояния до места');
 
+// ── 5. карта и переход к жилью ─────────────────────────────────────────────
+console.log('\n=== карта и переход к жилью ===');
+const light = await json('/api/places?light=1');
+check('на карту уходят все точки (' + (light.items || []).length + ')',
+      (light.items || []).length === (light.total || 0),
+      'на карте только часть: ' + (light.items || []).length + ' из ' + (light.total || 0));
+const lightSize = JSON.stringify(light).length;
+check('облегчённый ответ не раздут (' + Math.round(lightSize / 1024) + ' КБ)',
+      lightSize < 200 * 1024, 'слишком тяжело для телефона');
+check('в облегчённом ответе нет ссылок на снимки',
+      (light.items || []).every(x => !x.pic), 'снимки зря утяжеляют карту');
+check('область для перехода к жилью приходит (' + (stay.region || '') + ')',
+      !!stay.region, 'кнопке «показать все варианты» некуда вести');
+const stayFar = await json('/api/places/stay?lat=53.4514&lng=26.4731');
+check('область приходит, даже когда рядом пусто (' + (stayFar.region || '') + ')',
+      !!stayFar.region, 'в пустом ответе нет области');
+
 console.log('\nИтог: успешно ' + passed + ', провалено ' + failed);
 process.exitCode = failed ? 1 : 0;

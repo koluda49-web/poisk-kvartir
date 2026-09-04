@@ -2162,6 +2162,18 @@ h1 .accent{
   overflow:hidden;display:flex;flex-direction:column;box-shadow:var(--shadow-sm)}
 .plc .ph{position:relative;aspect-ratio:16/10;background:var(--surface-3)}
 .plc .ph img{width:100%;height:100%;object-fit:cover;display:block}
+.mp-pl .mp-pic-box:empty{display:none}
+.mp-pl .mp-pic{width:100%;height:130px;object-fit:cover;border-radius:10px;margin-bottom:8px;display:block}
+.mp-pl .mp-tx{font-size:12.5px;line-height:1.45;color:var(--txt-2);margin:6px 0 8px;
+  max-height:132px;overflow:auto}
+.mp-pl .mp-coord{display:flex;align-items:center;gap:8px;width:100%;margin:0 0 8px;
+  padding:7px 10px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2);
+  font:inherit;font-size:12.5px;color:var(--txt-2);cursor:pointer;text-align:left}
+.mp-pl .mp-coord span{margin-left:auto;color:var(--accent);font-size:11.5px}
+.mp-pl .mp-coord:hover{border-color:var(--accent)}
+.allstay{display:block;width:100%;margin-top:10px;padding:11px 14px;border:0;border-radius:11px;
+  background:var(--accent);color:#fff;font:inherit;font-weight:700;font-size:14px;cursor:pointer}
+.allstay:hover{filter:brightness(1.06)}
 .fld.off{opacity:.45}
 .fld.off select{cursor:not-allowed}
 .plc .nopic{width:100%;height:100%;display:flex;align-items:center;justify-content:center;
@@ -2454,7 +2466,8 @@ h1 .accent{
         <option value="25">25 км</option>
         <option value="50" selected>50 км</option>
         <option value="100">100 км</option>
-        <option value="0">по всей стране</option>
+        <option value="200">200 км</option>
+        <option value="0">вся Беларусь</option>
       </select>
     </label>
     <label class="fld span-2">
@@ -3168,6 +3181,17 @@ function plCityCoords(){
   return c ? { lat: c[1], lng: c[2] } : null;
 }
 
+// Условия отбора мест — одни и те же для списка и для карты.
+function plParams(){
+  const c = plCityCoords(), r = $('#plRadius').value, g = $('#plGroup').value;
+  const q = $('#plQ').value.trim();
+  const p = new URLSearchParams();
+  if(g) p.set('group', g);
+  if(q) p.set('q', q);
+  if(c && +r && !q){ p.set('lat', c.lat); p.set('lng', c.lng); p.set('r', r); }
+  return p;
+}
+
 async function runPlaces(){
   const c = plCityCoords(), r = $('#plRadius').value, g = $('#plGroup').value;
   const q = $('#plQ').value.trim();
@@ -3176,10 +3200,7 @@ async function runPlaces(){
   $('#plCity').closest('.fld').classList.toggle('off', !!q);
   $('#plRadius').closest('.fld').classList.toggle('off', !!q);
   const around = window.__plCenter ? ('рядом с ' + window.__plCenter.label) : ('рядом с городом ' + $('#plCity').value);
-  const p = new URLSearchParams();
-  if(g) p.set('group', g);
-  if(q) p.set('q', q);
-  if(c && +r && !q){ p.set('lat', c.lat); p.set('lng', c.lng); p.set('r', r); }
+  const p = plParams();
   $('#stat').textContent = 'Ищу места…';
   $('#grid').innerHTML = ''; $('#pager').innerHTML = '';
   try{
@@ -3266,31 +3287,69 @@ async function stayNear(i){
   box.innerHTML = '<div class="near">Ищу жильё рядом…</div>';
   try{
     const d = await (await fetch('/api/places/stay?lat=' + p.lat + '&lng=' + p.lng + '&r=30')).json();
-    if(!d.total){ box.innerHTML = '<div class="near">Рядом ничего не нашлось. Попробуйте посмотреть жильё в ближайшем городе.</div>'; return; }
+    // Пусто в тридцати километрах — самое время предложить область целиком:
+    // человеку всё равно нужно где-то ночевать.
+    if(!d.total){
+      box.innerHTML = '<div class="near">В 30 км отсюда сдаваемого жилья сейчас нет.'
+        + (d.region ? ('<button class="allstay" type="button" data-r="' + d.region
+             + '" onclick="allStay(this)">Посмотреть жильё в этой области →</button>') : '')
+        + '</div>';
+      return;
+    }
     const cards = (d.items || []).slice(0, 6).map(function(x){
       const img = (x.photos && x.photos[0]) ? '<img src="' + x.photos[0] + '" loading="lazy" alt="">' : '';
       return '<a href="' + x.link + '" target="_blank" rel="noopener">' + img
         + '<div class="p">' + x.price + ' BYN</div><div class="s">' + x.km + ' км · ' + srcName(x.src) + '</div></a>';
     }).join('');
-    box.innerHTML = '<div class="near"><b>Жильё рядом — ' + d.total + ' вариантов</b><div class="near-list">' + cards + '</div></div>';
+    const all = d.region
+      ? ('<button class="allstay" type="button" data-r="' + d.region + '" onclick="allStay(this)">'
+         + 'Показать все варианты в области →</button>')
+      : '';
+    box.innerHTML = '<div class="near"><b>Жильё рядом — ' + d.total + ' вариантов</b><div class="near-list">'
+      + cards + '</div>' + all + '</div>';
     if(window.__T) window.__T('stay_near', {});
   }catch(e){ box.innerHTML = ''; }
 }
 
-function plotPlaces(){
+async function plotPlaces(){
   if(typeof L === 'undefined') return;
   if(!window.__map){ plotMap(false); }
+  // В списке лежат первые триста точек, а на карте должны быть все.
+  const p2 = plParams(); p2.set('light', '1');
+  const key = p2.toString();
+  let all = window.__places || [];
+  if(window.__plMapKey === key && window.__plMap){ all = window.__plMap; }
+  else {
+    try{
+      const d = await (await fetch('/api/places?' + key)).json();
+      all = d.items || all;
+      window.__plMap = all; window.__plMapKey = key;
+    }catch(e){}
+  }
   window.__mlayer.clearLayers();
   const pts = [];
-  (window.__places || []).forEach(function(p, i){
+  all.forEach(function(p, i){
+    // шесть знаков после запятой — точность около десяти сантиметров,
+    // больше навигаторам не нужно
+    const coords = p.lat.toFixed(6) + ', ' + p.lng.toFixed(6);
     const icon = L.divIcon({ className:'', iconSize:[30,30], iconAnchor:[15,15], html:'<div class="pl-pin">🏰</div>' });
     const mk = L.marker([p.lat, p.lng], { icon: icon });
     mk.bindTooltip(p.name, { direction:'top', offset:[0,-14] });
-    mk.bindPopup('<div class="mp"><div class="mp-meta">' + esc2(p.cat) + '</div>'
+    mk.bindPopup('<div class="mp mp-pl">'
+      + '<div class="mp-pic-box" id="mpic' + i + '">'
+      + (p.pic ? ('<img class="mp-pic" src="' + esc2(p.pic) + '" alt="">') : '') + '</div>'
+      + '<div class="mp-meta">' + esc2(p.cat) + '</div>'
       + '<div class="mp-price" style="font-size:16px">' + esc2(p.name) + '</div>'
       + '<div class="mp-meta">' + esc2(p.addr) + '</div>'
-      + '<a class="mp-open" href="https://yandex.by/maps/?rtext=~' + p.lat + ',' + p.lng + '&rtt=auto" target="_blank" rel="noopener">Проложить маршрут →</a></div>',
-      { maxWidth:260, minWidth:200 });
+      + '<div class="mp-tx" id="mtx' + i + '">Загружаю описание…</div>'
+      + '<button class="mp-coord" type="button" data-c="' + coords + '" onclick="copyCoords(this)">'
+      + '📍 ' + coords + '<span>копировать</span></button>'
+      + '<a class="mp-open" href="https://yandex.by/maps/?rtext=~' + p.lat + ',' + p.lng + '&rtt=auto" target="_blank" rel="noopener">Проложить маршрут →</a>'
+      + ' <a class="mp-open" href="https://kudin.by/?point=' + p.id + '" target="_blank" rel="noopener">Подробнее →</a></div>',
+      { maxWidth:300, minWidth:240 });
+    // Описание тянем только когда окошко открыли: на карте бывает под тысячу
+    // точек, грузить их описания заранее — тысяча лишних запросов.
+    mk.on('popupopen', function(){ loadMapText(p.id, i, !p.pic); });
     window.__mlayer.addLayer(mk);
     pts.push([p.lat, p.lng]);
   });
@@ -3298,6 +3357,71 @@ function plotPlaces(){
     window.__map.invalidateSize();
     if(pts.length) window.__map.fitBounds(pts, { padding:[45,45], maxZoom:13 });
   }, 60);
+}
+
+// Переносим человека из места в поиск жилья по той же области. Не ссылкой
+// с перезагрузкой: страница уже загружена, достаточно переключить вкладку.
+function allStay(btn){
+  const reg = btn.getAttribute('data-r') || '';
+  if($('#region').querySelector('option[value="' + reg + '"]')) $('#region').value = reg;
+  fillCities();
+  $('#city').value = '';
+  $('#type').value = 'flat';
+  syncPresets();
+  setCountry('by');
+  syncUrl();
+  if(window.__T) window.__T('all_stay', { region: reg });
+  const g = $('#stat') || $('#grid');
+  if(g) g.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+
+// Копируем координаты в буфер. Если браузер не разрешил (так бывает на
+// старых телефонах) — выделяем текст, чтобы человек скопировал сам.
+function copyCoords(btn){
+  const text = btn.getAttribute('data-c') || '';
+  const done = function(){
+    const was = btn.innerHTML;
+    btn.innerHTML = '✓ скопировано';
+    setTimeout(function(){ btn.innerHTML = was; }, 1600);
+  };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done, function(){ selectText(btn); });
+  } else { selectText(btn); }
+}
+function selectText(el){
+  try{
+    const r = document.createRange(); r.selectNodeContents(el);
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  }catch(e){}
+}
+
+// Описание для окошка на карте. Ответы держим в том же хранилище, что и
+// карточки списка, поэтому повторное открытие точки ничего не запрашивает.
+const PL_PIC = {};
+async function loadMapText(id, i, needPic){
+  const box = document.getElementById('mtx' + i);
+  if(!box) return;
+  const showPic = function(){
+    if(!needPic) return;
+    const url = PL_PIC[id]; const holder = document.getElementById('mpic' + i);
+    if(url && holder && !holder.firstChild){
+      holder.innerHTML = '<img class="mp-pic" src="' + esc2(url) + '" alt="">';
+    }
+  };
+  if(PL_TEXT[id] !== undefined){
+    box.textContent = PL_TEXT[id] || 'Описание пока не готово.'; showPic(); return;
+  }
+  try{
+    const d = await (await fetch('/api/place?id=' + id)).json();
+    PL_TEXT[id] = d.text || '';
+    PL_PIC[id] = (d.pics || [])[0] || '';
+    const b2 = document.getElementById('mtx' + i);
+    if(b2) b2.textContent = PL_TEXT[id] || 'Описание пока не готово.';
+    showPic();
+  }catch(e){
+    const b2 = document.getElementById('mtx' + i);
+    if(b2) b2.textContent = '';
+  }
 }
 
 // ── Быстрые наборы фильтров ───────────────────────────────────────────────
@@ -3686,6 +3810,14 @@ http.createServer(async (req,res)=>{
     } else if(!q){
       list = list.slice().sort((a, b) => b.rating - a.rating);
     }
+    // Для карты нужен весь список, но без ссылок на снимки: они занимают
+    // три четверти веса ответа, а на карте не показываются до открытия точки.
+    if(u.searchParams.get('light')){
+      const light = list.slice(0, 1200).map(p => ({ id:p.id, name:p.name, lat:p.lat, lng:p.lng,
+                                                    cat:p.cat, addr:p.addr, km:p.km }));
+      res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
+      res.end(JSON.stringify({ total: list.length, items: light })); return;
+    }
     const groups = {};
     (await placesRaw()).forEach(p => { if(p.group) groups[p.group] = (groups[p.group]||0) + 1; });
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
@@ -3704,10 +3836,11 @@ http.createServer(async (req,res)=>{
   if(u.pathname === '/api/places/stay'){
     const lat = +u.searchParams.get('lat'), lng = +u.searchParams.get('lng');
     const r = +(u.searchParams.get('r') || 30);
-    let items = [];
+    let items = [], region = '';
     if(lat && lng){
       // ищем по ближайшей области, затем отбираем по расстоянию
       const reg = nearestRegion(lat, lng);
+      region = reg;
       const q = new URLSearchParams({ region:reg, city:'', type:(u.searchParams.get('type')||'flat'),
                                       rooms:'', guests:'', max:'', source:'both' });
       try{
@@ -3718,7 +3851,7 @@ http.createServer(async (req,res)=>{
       }catch(e){}
     }
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
-    res.end(JSON.stringify({ total: items.length, items: items.slice(0, 12) })); return;
+    res.end(JSON.stringify({ total: items.length, region, items: items.slice(0, 12) })); return;
   }
   if(u.pathname === '/robots.txt'){
     res.writeHead(200, {'Content-Type':'text/plain; charset=utf-8'});
