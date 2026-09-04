@@ -242,7 +242,7 @@ function statsPage(){
     '.card{background:#fff;border:1px solid #e2e5ea;border-radius:14px;padding:14px 16px}' +
     'table{width:100%;border-collapse:collapse;font-size:14px}' +
     '.bars td{padding:3px 0}.bars .k{width:42%;color:#4a5160}.bars .n{width:52px;text-align:right;font-weight:700}' +
-    '.bars .b i{display:block;height:10px;border-radius:6px;background:#ff5a1f}' +
+    '.bars .b i{display:block;height:10px;border-radius:6px;background:#9a3412}' +
     '.funnel div{margin:6px 0}.funnel b{font-size:18px}' +
     '.log td{border-top:1px solid #eef0f4;padding:5px 6px;vertical-align:top}' +
     '.log .raw{color:#8b93a3;font-size:12px;word-break:break-all}' +
@@ -1535,7 +1535,7 @@ async function cityPage(slug, kind){
     + '<title>' + esc(title) + '</title>'
     + '<meta name="description" content="' + esc(desc) + '">'
     + '<meta name="robots" content="index,follow">'
-    + '<meta name="theme-color" content="#ff5a1f">'
+    + '<meta name="theme-color" content="#9a3412">'
     + '<link rel="canonical" href="' + SITE_URL + '/' + slug + (kind ? ('-' + kind) : '') + '">'
     + '<link rel="manifest" href="/manifest.webmanifest">'
     + '<meta property="og:type" content="website">'
@@ -1549,7 +1549,7 @@ async function cityPage(slug, kind){
     + '.w{max-width:1080px;margin:0 auto;padding:24px 16px 60px}'
     + 'h1{font-size:clamp(26px,5vw,38px);line-height:1.15;margin:0 0 10px;letter-spacing:-.02em}'
     + '.lead{color:#4a5160;margin:0 0 18px;max-width:70ch}'
-    + '.cta{display:inline-block;background:linear-gradient(120deg,#ff5a1f,#ff7d47);color:#fff;text-decoration:none;'
+    + '.cta{display:inline-block;background:#9a3412;color:#fff;text-decoration:none;'
     +   'font-weight:700;padding:14px 26px;border-radius:12px;margin-bottom:26px;box-shadow:0 8px 22px -6px rgba(255,90,31,.6)}'
     + '.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}'
     + '.c{background:#fff;border:1px solid #e2e5ea;border-radius:16px;overflow:hidden;display:flex;flex-direction:column}'
@@ -1560,15 +1560,15 @@ async function cityPage(slug, kind){
     + '.c .m{display:flex;flex-wrap:wrap;gap:6px}'
     + '.c .m span{font-size:12.5px;background:#f7f8fa;border:1px solid #eef0f4;border-radius:999px;padding:3px 9px;color:#4a5160}'
     + '.c h3{font-size:14.5px;font-weight:600;margin:2px 0 0;color:#141821}'
-    + '.c .go{margin-top:auto;padding-top:8px;color:#ff5a1f;font-weight:700;text-decoration:none;font-size:14px}'
+    + '.c .go{margin-top:auto;padding-top:8px;color:#9a3412;font-weight:700;text-decoration:none;font-size:14px}'
     + '.others{margin:34px 0 0;display:flex;flex-wrap:wrap;gap:10px}'
     + '.others a{background:#fff;border:1px solid #e2e5ea;border-radius:999px;padding:8px 16px;text-decoration:none;color:#141821;font-size:14px}'
     + 'footer{margin-top:34px;color:#8b93a3;font-size:13.5px;max-width:75ch}'
-    + 'footer a{color:#ff5a1f}'
-    + '@media (prefers-color-scheme:dark){body{background:#0a0c12;color:#f2f4f8}.lead{color:#aab2c2}'
-    +   '.c{background:#14171f;border-color:#252b38}.c h3{color:#f2f4f8}.noimg{background:#1f2430}'
-    +   '.c .m span{background:#191d27;border-color:#252b38;color:#aab2c2}'
-    +   '.others a{background:#14171f;border-color:#252b38;color:#f2f4f8}}'
+    + 'footer a{color:#9a3412}'
+    + '@media (prefers-color-scheme:dark){body{background:#14110e;color:#f6f2ed}.lead{color:#c2b7ab}'
+    +   '.c{background:#1d1916;border-color:#332c25}.c h3{color:#f6f2ed}.noimg{background:#2b251f}'
+    +   '.c .m span{background:#241f1a;border-color:#332c25;color:#c2b7ab}'
+    +   '.others a{background:#1d1916;border-color:#332c25;color:#f6f2ed}}'
     + '</style></head><body><div class="w">'
     + '<h1>' + esc(k.what) + ' ' + esc(c.where) + esc(k.extra) + '</h1>'
     + '<p class="lead">Собрали объявления частников с <b>Kufar</b>, <b>Realt</b> и <b>Flatbook</b> в один список — '
@@ -1597,7 +1597,7 @@ const PAGE = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="keywords" content="снять квартиру на сутки, жильё на сутки Беларусь, квартира посуточно Минск, коттедж на сутки, усадьба на выходные, аренда посуточно Брест Гомель Гродно Витебск Могилёв, отели России посуточно, kufar, realt, flatbook, 101hotels, что посмотреть в Беларуси, достопримечательности Беларуси, замки Беларуси, куда съездить на выходные, карта достопримечательностей">
 <meta name="robots" content="index,follow">
 <meta name="author" content="poisk-kvartir">
-<meta name="theme-color" content="#ff5a1f">
+<meta name="theme-color" content="#9a3412">
 <link rel="canonical" href="${SITE_URL}/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Поиск жилья на сутки">
@@ -1622,60 +1622,60 @@ const PAGE = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
 </script>
 <style>
 :root{
-  --bg:#f4f5f7;
-  --bg-grad-1:#eef0f4;
-  --bg-grad-2:#f6f7f9;
+  --bg:#faf7f3;
+  --bg-grad-1:#f8f4ef;
+  --bg-grad-2:#fdfbf8;
   --surface:#ffffff;
-  --surface-2:#f7f8fa;
-  --surface-3:#eef0f4;
-  --line:#e2e5ea;
-  --line-strong:#d3d7de;
-  --txt:#141821;
-  --txt-2:#4a5160;
-  --txt-3:#8b93a3;
-  --accent:#ff5a1f;
-  --accent-2:#ff7d47;
+  --surface-2:#f8f4ef;
+  --surface-3:#f0eae1;
+  --line:#e9e2d8;
+  --line-strong:#d9cec0;
+  --txt:#1c1917;
+  --txt-2:#57534e;
+  --txt-3:#9c948c;
+  --accent:#9a3412;
+  --accent-2:#b8471c;
   --accent-ink:#ffffff;
-  --accent-soft:rgba(255,90,31,.12);
-  --gold:#f5a623;
-  --kufar:#2f6bff;
-  --kufar-soft:rgba(47,107,255,.14);
-  --realt:#ff7a18;
-  --realt-soft:rgba(255,122,24,.14);
-  --shadow-sm:0 1px 2px rgba(20,24,33,.05),0 2px 8px rgba(20,24,33,.05);
-  --shadow-md:0 6px 24px rgba(20,24,33,.09),0 2px 8px rgba(20,24,33,.05);
-  --shadow-lg:0 18px 50px rgba(20,24,33,.14);
-  --radius:20px;
-  --radius-sm:12px;
-  --radius-xs:10px;
-  --focus:rgba(255,90,31,.35);
+  --accent-soft:rgba(154,52,18,.10);
+  --gold:#b45309;
+  --kufar:#2f5fa8;
+  --kufar-soft:rgba(47,95,168,.12);
+  --realt:#c2740c;
+  --realt-soft:rgba(194,116,12,.14);
+  --shadow-sm:0 1px 2px rgba(41,32,24,.04);
+  --shadow-md:0 4px 16px rgba(41,32,24,.07),0 1px 3px rgba(41,32,24,.04);
+  --shadow-lg:0 12px 34px rgba(41,32,24,.11);
+  --radius:14px;
+  --radius-sm:10px;
+  --radius-xs:8px;
+  --focus:rgba(154,52,18,.30);
 }
 @media (prefers-color-scheme: dark){
   :root{
-    --bg:#0a0c12;
-    --bg-grad-1:#0d1018;
-    --bg-grad-2:#07080d;
-    --surface:#14171f;
-    --surface-2:#191d27;
-    --surface-3:#1f2430;
-    --line:#252b38;
-    --line-strong:#323a4a;
-    --txt:#f2f4f8;
-    --txt-2:#aab2c2;
-    --txt-3:#6b7386;
-    --accent:#ff6a34;
-    --accent-2:#ff8a58;
-    --accent-ink:#0a0c12;
-    --accent-soft:rgba(255,106,52,.16);
-    --gold:#ffc247;
-    --kufar:#5b8bff;
-    --kufar-soft:rgba(91,139,255,.18);
-    --realt:#ff8a3d;
-    --realt-soft:rgba(255,138,61,.18);
-    --shadow-sm:0 1px 2px rgba(0,0,0,.4);
-    --shadow-md:0 10px 30px rgba(0,0,0,.5);
-    --shadow-lg:0 24px 60px rgba(0,0,0,.6);
-    --focus:rgba(255,106,52,.45);
+    --bg:#14110e;
+    --bg-grad-1:#171310;
+    --bg-grad-2:#100e0b;
+    --surface:#1d1916;
+    --surface-2:#241f1a;
+    --surface-3:#2b251f;
+    --line:#332c25;
+    --line-strong:#463d33;
+    --txt:#f6f2ed;
+    --txt-2:#c2b7ab;
+    --txt-3:#8b8177;
+    --accent:#e2703a;
+    --accent-2:#ee8a56;
+    --accent-ink:#14110e;
+    --accent-soft:rgba(226,112,58,.16);
+    --gold:#d9a441;
+    --kufar:#6f9be0;
+    --kufar-soft:rgba(111,155,224,.18);
+    --realt:#e0a03d;
+    --realt-soft:rgba(224,160,61,.18);
+    --shadow-sm:0 1px 2px rgba(0,0,0,.35);
+    --shadow-md:0 6px 20px rgba(0,0,0,.45);
+    --shadow-lg:0 18px 44px rgba(0,0,0,.55);
+    --focus:rgba(226,112,58,.42);
   }
 }
 
@@ -1686,10 +1686,10 @@ body{
   font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   color:var(--txt);
   background:var(--bg);
-  background-image:
-    radial-gradient(1200px 700px at 85% -10%, var(--accent-soft), transparent 60%),
-    radial-gradient(900px 600px at 5% 0%, var(--kufar-soft), transparent 55%),
-    linear-gradient(180deg,var(--bg-grad-1),var(--bg-grad-2));
+  /* Раньше здесь были два цветных пятна — оранжевое и синее. Именно они
+     давали ощущение «оранжевое на сером»: страница выглядела подкрашенной.
+     Оставляем ровный тёплый лист с еле заметным потемнением сверху. */
+  background-image:linear-gradient(180deg,var(--bg-grad-1) 0,var(--bg-grad-2) 420px);
   background-attachment:fixed;
   -webkit-font-smoothing:antialiased;
   line-height:1.5;
@@ -1704,33 +1704,42 @@ body{
 
 /* ---------- Heading ---------- */
 h1{
-  font-size:clamp(30px,6vw,54px);
+  font-size:clamp(28px,5.2vw,46px);
   line-height:1.04;
   font-weight:800;
   letter-spacing:-.03em;
   margin:6px 0 8px;
 }
-h1 .accent{
-  background:linear-gradient(120deg,var(--accent),var(--accent-2));
-  -webkit-background-clip:text;
-  background-clip:text;
-  color:transparent;
-}
+h1 .accent{ color:var(--accent); }
 .lead{
   color:var(--txt-2);
   font-size:clamp(15px,2.4vw,19px);
   max-width:60ch;
   margin:0 0 clamp(22px,4vw,34px);
 }
+/* Шапка: знак слева, источники справа. До сих пор сайт нечем было узнать —
+   страница начиналась сразу с большого заголовка. */
+.top{
+  display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;
+  padding-bottom:clamp(16px,3vw,26px);margin-bottom:clamp(14px,2.6vw,24px);
+  border-bottom:1px solid var(--line);
+}
+.brand{display:inline-flex;align-items:center;gap:11px;text-decoration:none;color:var(--txt)}
+/* Ширина считается вместе с отступами (box-sizing:border-box выше по файлу),
+   поэтому размер задаём с их учётом — иначе рисунок схлопывается в точку. */
+.brand svg{width:38px;height:38px;padding:9px;border-radius:10px;background:var(--accent);fill:var(--accent-ink);flex:none}
+.brand span{display:flex;flex-direction:column;line-height:1.15;font-weight:800;font-size:16.5px;letter-spacing:-.02em}
+.brand b{font-weight:500;font-size:12px;color:var(--txt-3);letter-spacing:0}
 .kicker{
   display:inline-flex;align-items:center;gap:8px;
-  font-size:12.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
-  color:var(--accent);
-  background:var(--accent-soft);
-  border:1px solid color-mix(in srgb,var(--accent) 22%,transparent);
-  padding:6px 13px;border-radius:999px;
+  font-size:11.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--txt-3);
+  background:var(--surface-2);
+  border:1px solid var(--line);
+  padding:6px 12px;border-radius:999px;
 }
-.kicker .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
+.kicker .dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+@media (max-width:560px){ .kicker{font-size:10.5px;padding:5px 10px} }
 
 /* ---------- Filter bar ---------- */
 .bar{
@@ -1791,20 +1800,23 @@ h1 .accent{
   grid-column:1 / -1;
   font:inherit;font-size:16.5px;font-weight:700;letter-spacing:-.01em;
   color:var(--accent-ink);
-  background:linear-gradient(120deg,var(--accent),var(--accent-2));
+  background:var(--accent);
   border:none;
   border-radius:var(--radius-sm);
-  padding:15px 22px;
-  min-height:54px;
+  padding:14px 30px;
+  min-height:50px;
   cursor:pointer;
-  box-shadow:0 8px 22px -6px color-mix(in srgb,var(--accent) 70%,transparent);
+  box-shadow:none;
   transition:transform .12s, box-shadow .15s, filter .15s;
   display:inline-flex;align-items:center;justify-content:center;gap:9px;
 }
 .go::before{content:"⌕";font-size:20px;line-height:1;margin-top:-1px}
-.go:hover{filter:brightness(1.04);box-shadow:0 12px 28px -6px color-mix(in srgb,var(--accent) 75%,transparent)}
+.go:hover{background:var(--accent-2)}
 .go:active{transform:translateY(1px)}
-.go:focus-visible{outline:none;box-shadow:0 0 0 4px var(--focus),0 8px 22px -6px color-mix(in srgb,var(--accent) 70%,transparent)}
+.go:focus-visible{outline:none;box-shadow:0 0 0 4px var(--focus)}
+/* На телефоне кнопка во всю ширину — так удобнее пальцем. На компьютере
+   полоса в 1100 пикселей выглядела как рекламный баннер. */
+@media (min-width:640px){ .go{justify-self:start;min-width:230px} }
 
 /* ---------- Toolbar: status + view switch ---------- */
 .toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:space-between;margin:2px 2px 4px}
@@ -1820,7 +1832,7 @@ h1 .accent{
   padding:7px 15px;border-radius:999px;display:inline-flex;align-items:center;gap:6px;
   transition:background .15s,color .15s;
 }
-.seg button.on{background:var(--accent);color:var(--accent-ink);box-shadow:0 4px 12px -4px color-mix(in srgb,var(--accent) 70%,transparent)}
+.seg button.on{background:var(--accent);color:var(--accent-ink)}
 .hint{
   color:var(--txt-3);
   font-size:13px;
@@ -1854,7 +1866,7 @@ h1 .accent{
   border:2px solid #fff;box-shadow:0 3px 9px rgba(0,0,0,.35);cursor:pointer;
 }
 .price-pin.Kufar{background:#2f6bff}
-.price-pin.Realt{background:#ff7a18}
+.price-pin.Realt{background:#c2740c}
 .price-pin::after{content:"";position:absolute;left:50%;top:100%;transform:translateX(-50%);border:5px solid transparent;border-top-color:#fff}
 .price-pin:hover{filter:brightness(1.06);z-index:1000}
 .leaflet-popup-content{margin:12px 14px;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
@@ -1862,7 +1874,7 @@ h1 .accent{
 .mp-price small{font-weight:500;color:#888;font-size:12px}
 .mp-meta{font-size:12.5px;color:#555;margin:2px 0 8px}
 .mp-call{display:block;font-size:13px;font-weight:700;color:#141821;margin:2px 0}
-.mp-open{display:inline-block;margin-top:6px;font-weight:800;color:#ff5a1f;text-decoration:none}
+.mp-open{display:inline-block;margin-top:6px;font-weight:800;color:#9a3412;text-decoration:none}
 .mp-approx{color:#9098a6;font-size:11px;margin-top:5px}
 
 /* ---------- Card ---------- */
@@ -2155,7 +2167,7 @@ h1 .accent{
   padding:9px 17px;border-radius:999px;
   transition:background .15s,color .15s;
 }
-.country button.on{background:var(--accent);color:var(--accent-ink);box-shadow:0 4px 12px -4px color-mix(in srgb,var(--accent) 70%,transparent)}
+.country button.on{background:var(--accent);color:var(--accent-ink)}
 
 /* ---------- Chips row (РФ: оплата, удобства) ---------- */
 .chiprow{grid-column:1 / -1;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
@@ -2329,7 +2341,13 @@ h1 .accent{
 }
 </style></head><body>
 <div class="wrap">
-  <span class="kicker"><span class="dot"></span>Kufar · Realt · Flatbook · 101Hotels</span>
+  <header class="top">
+    <a class="brand" href="/" aria-label="Поиск жилья на сутки">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.4 12 4l9 7.4V20a1 1 0 0 1-1 1h-5.2v-5.6H9.2V21H4a1 1 0 0 1-1-1z"/></svg>
+      <span>Поиск жилья<b>на сутки, в одном месте</b></span>
+    </a>
+    <span class="kicker"><span class="dot"></span>Kufar · Realt · Flatbook · 101Hotels</span>
+  </header>
   <h1>Жильё на сутки, <span class="accent">без лишних вкладок</span></h1>
   <p class="lead">Квартиры, коттеджи и усадьбы на сутки из Kufar, Realt и Flatbook по Беларуси — плюс отели и жильё России с 101Hotels. Всё в одной ленте и на карте: настройте фильтры и найдите вариант под свою дату и бюджет.</p>
 
@@ -3838,7 +3856,7 @@ http.createServer(async (req,res)=>{
       scope: '/',
       display: 'standalone',
       background_color: '#f4f5f7',
-      theme_color: '#ff5a1f',
+      theme_color: '#9a3412',
       lang: 'ru',
       icons: [
         { src:'/icon-192.png', sizes:'192x192', type:'image/png', purpose:'any' },
