@@ -876,6 +876,85 @@ function isRealtUrl(v){
 // с двадцатью квартирами по 60 рублей схлопывалось бы в одну карточку.
 // Поэтому склейки нет: дубли убираются только по совпадению ссылки.
 
+// ── Места: что посмотреть ─────────────────────────────────────────────────
+// Точки берём из нашего же справочника kudin.by. Полные описания остаются
+// там: у себя показываем выжимку и ссылку на первоисточник, чтобы два сайта
+// не конкурировали в поиске одинаковым текстом.
+const KUDIN = 'https://kudin.by';
+const PLACES_TTL = 6 * 60 * 60 * 1000;   // список памятников меняется раз в месяцы
+const DETAIL_TTL = 24 * 60 * 60 * 1000;
+
+// расстояние между двумя точками на земле, километры
+// какой области принадлежит точка — по ближайшему областному центру
+const REGION_CENTERS = [
+  ['minsk',      53.9023, 27.5619], ['minsk-obl', 53.9023, 27.5619],
+  ['brest',      52.0976, 23.7341], ['grodno',    53.6884, 23.8258],
+  ['vitebsk',    55.1904, 30.2049], ['gomel',     52.4345, 30.9754],
+  ['mogilev',    53.9007, 30.3313],
+];
+function nearestRegion(lat, lng){
+  let best = 'minsk', bd = Infinity;
+  for(const [key, a, o] of REGION_CENTERS){
+    if(key === 'minsk-obl') continue;
+    const d = distKm(lat, lng, a, o);
+    if(d < bd){ bd = d; best = key; }
+  }
+  // вокруг Минска жильё чаще лежит в области, а не в городе
+  if(best === 'minsk' && bd > 18) return 'minsk-obl';
+  return best;
+}
+
+function distKm(a1, o1, a2, o2){
+  const t = Math.PI / 180;
+  const x = (a2 - a1) * t, y = (o2 - o1) * t;
+  const h = Math.sin(x/2)**2 + Math.cos(a1*t) * Math.cos(a2*t) * Math.sin(y/2)**2;
+  return 6371 * 2 * Math.asin(Math.sqrt(h));
+}
+
+async function placesRaw(){
+  return cached('raw|places', async ()=>{
+    const [pts, filters] = await Promise.all([
+      fetch(KUDIN + '/api/v1/points/',  {headers:{'User-Agent':UA}}).then(r=>r.json()),
+      fetch(KUDIN + '/api/v1/filters/', {headers:{'User-Agent':UA}}).then(r=>r.json()),
+    ]);
+    // разворачиваем дерево категорий в плоский словарь «номер → название»
+    const cat = {}, group = {};
+    (Array.isArray(filters)?filters:[]).forEach(g=>{
+      (g.values||[]).forEach(v=>{
+        cat[v.id] = v.name;
+        (v.items||[]).forEach(i=>{ cat[i.id] = i.name; group[i.id] = v.name; });
+      });
+    });
+    const list = (Array.isArray(pts)?pts:[]).map(p=>{
+      const c = String(p.coords||'').split(',').map(Number);
+      const fid = p.filter ? +Object.values(p.filter)[0] : 0;
+      return { id:p.id, code:p.code, name:(p.name||'').trim(),
+               lat:c[0], lng:c[1], addr:(p.adress||'').trim(), rating:+p.rating||0,
+               pic: p.picture ? (KUDIN + p.picture) : '',
+               cat: cat[fid] || '', group: group[fid] || cat[fid] || '' };
+    });
+    // берём только то, что можно показать: с названием, фотографией и координатами
+    return list.filter(p => p.name && p.pic && p.lat && p.lng);
+  }, PLACES_TTL);
+}
+
+// короткое описание одной точки; полный текст остаётся на kudin.by
+async function placeDetail(id){
+  return cached('raw|place|' + id, async ()=>{
+    const j = await (await fetch(KUDIN + '/api/v1/detail/?id=' + encodeURIComponent(id),
+                                 {headers:{'User-Agent':UA}})).json();
+    const it = (j && j.item) || {};
+    const text = String(it.description || '')
+      .replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ').trim();
+    return { id: +id, name: it.name || '', years: it.years || '', addr: it.addr || '',
+             text: text.length > 420 ? (text.slice(0, 420).replace(/[\s,;:—-]+\S*$/, '') + '…') : text,
+             full: text.length > 420,
+             pics: (it.prevpics || []).slice(0, 6).map(x => KUDIN + x),
+             more: KUDIN + '/?point=' + id };
+  }, DETAIL_TTL);
+}
+
 // ── Кэш результатов поиска ────────────────────────────────────────────────
 // Одинаковые запросы в течение 8 минут отдаём из памяти: и быстрее, и источники
 // не получают шквал обращений, если на сайт разом придёт много людей.
@@ -889,9 +968,10 @@ function cacheKey(u){
     .sort((a,b)=> a[0] < b[0] ? -1 : 1)
     .map(kv => kv[0] + '=' + kv[1]).join('&');
 }
-async function cached(key, fn){
+async function cached(key, fn, ttl){
+  const life = ttl || CACHE_TTL;
   const hit = SEARCH_CACHE.get(key);
-  if(hit && Date.now() - hit.at <= CACHE_TTL) return hit.data;
+  if(hit && Date.now() - hit.at <= life) return hit.data;
   if(hit) SEARCH_CACHE.delete(key);
   if(INFLIGHT.has(key)) return INFLIGHT.get(key);
   const p = (async ()=>{
@@ -1702,6 +1782,41 @@ h1 .accent{
 }
 .toast.show{opacity:1;transform:translate(-50%,0)}
 /* Быстрые наборы фильтров — чтобы человеку с ролика не пришлось возиться с полями */
+/* Места: карточки достопримечательностей */
+.pl-grid{display:grid;grid-template-columns:1fr;gap:14px}
+@media(min-width:640px){.pl-grid{grid-template-columns:1fr 1fr}}
+@media(min-width:1000px){.pl-grid{grid-template-columns:repeat(3,1fr)}}
+.plc{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+  overflow:hidden;display:flex;flex-direction:column;box-shadow:var(--shadow-sm)}
+.plc .ph{position:relative;aspect-ratio:16/10;background:var(--surface-3)}
+.plc .ph img{width:100%;height:100%;object-fit:cover;display:block}
+.plc .km{position:absolute;left:10px;top:10px;background:rgba(20,24,33,.72);color:#fff;
+  font-size:12.5px;font-weight:700;border-radius:999px;padding:4px 11px;backdrop-filter:blur(4px)}
+.plc .bd{padding:13px 15px 15px;display:flex;flex-direction:column;gap:7px;flex:1}
+.plc .ct{font-size:11.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--txt-3)}
+.plc h3{margin:0;font-size:17px;line-height:1.28}
+.plc .ad{font-size:13.5px;color:var(--txt-2)}
+.plc .tx{font-size:14px;color:var(--txt-2);line-height:1.5}
+.plc .row{margin-top:auto;padding-top:8px;display:flex;gap:8px;flex-wrap:wrap}
+.plc .row a,.plc .row button{font:inherit;font-size:13.5px;font-weight:700;cursor:pointer;
+  border-radius:999px;padding:8px 14px;text-decoration:none;border:1px solid var(--line);
+  background:var(--surface-2);color:var(--txt-2)}
+.plc .row .go2{background:linear-gradient(120deg,var(--accent),var(--accent-2));color:#fff;border:none}
+.plc .row .stay2{background:var(--accent-soft);color:var(--accent);border-color:transparent}
+.seenear{width:100%;margin-top:8px;font:inherit;font-size:13.5px;font-weight:700;cursor:pointer;
+  background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius-xs);
+  padding:9px 12px;color:var(--txt-2)}
+.seenear:hover{border-color:var(--accent);color:var(--accent)}
+.pl-pin{display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;
+  background:#6d4bd6;color:#fff;font-size:15px;border:3px solid #fff;box-shadow:0 3px 10px rgba(20,24,33,.35)}
+.near{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius-sm);
+  padding:12px 14px;margin-top:10px}
+.near b{display:block;margin-bottom:8px;font-size:14px}
+.near-list{display:flex;gap:10px;overflow-x:auto}
+.near-list a{flex:0 0 150px;text-decoration:none;color:inherit}
+.near-list img{width:100%;height:92px;object-fit:cover;border-radius:10px;display:block}
+.near-list .p{font-weight:800;font-size:15px;margin-top:5px}
+.near-list .s{font-size:12px;color:var(--txt-3)}
 .presets{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 10px;margin:0 0 6px;-webkit-overflow-scrolling:touch}
 .presets::-webkit-scrollbar{display:none}
 .preset{
@@ -1779,6 +1894,7 @@ h1 .accent{
   <div class="country">
     <button id="cbBY" class="on" type="button" onclick="setCountry('by')">🇧🇾 Беларусь · посуточно</button>
     <button id="cbRU" type="button" onclick="setCountry('ru')">🇷🇺 Россия · отели</button>
+    <button id="cbPL" type="button" onclick="setCountry('places')">🏰 Что посетить</button>
   </div>
 
   <button id="fToggle" class="ftoggle" type="button" aria-expanded="true"><span>⚙️ Фильтры</span><span class="sum" id="fSum"></span></button>
@@ -1944,6 +2060,26 @@ h1 .accent{
     <button id="goRF" class="go" type="button">Найти отели</button>
   </form>
 
+  <form class="bar" id="barPL" style="display:none" onsubmit="return false">
+    <label class="fld">
+      <span>Рядом с городом</span>
+      <select id="plCity"></select>
+    </label>
+    <label class="fld">
+      <span>В радиусе</span>
+      <select id="plRadius">
+        <option value="25">25 км</option>
+        <option value="50" selected>50 км</option>
+        <option value="100">100 км</option>
+        <option value="0">по всей стране</option>
+      </select>
+    </label>
+    <label class="fld span-2">
+      <span>Что смотреть</span>
+      <select id="plGroup"><option value="">всё подряд</option></select>
+    </label>
+  </form>
+
   <div class="presets" id="presets">
     <button class="preset" type="button" data-preset="cheap">до 60 руб</button>
     <button class="preset" type="button" data-preset="weekend">на выходные</button>
@@ -2015,19 +2151,25 @@ const HINT_RU = 'Отели и жильё России с 101hotels.com в ре�
 
 // переключение Беларусь / Россия
 function setCountry(c, quiet){
-  window.__mode = (c==='ru') ? 'ru' : 'by';
-  const ru = window.__mode==='ru';
-  $('#cbBY').classList.toggle('on', !ru);
+  window.__mode = (c==='ru' || c==='places') ? c : 'by';
+  const ru = window.__mode==='ru', pl = window.__mode==='places';
+  $('#cbBY').classList.toggle('on', !ru && !pl);
   $('#cbRU').classList.toggle('on', ru);
-  $('#bar').style.display   = ru ? 'none' : '';
+  $('#cbPL').classList.toggle('on', pl);
+  $('#bar').style.display   = (!ru && !pl) ? '' : 'none';
   $('#barRF').style.display = ru ? '' : 'none';
-  // Пресеты меняют белорусские поля, в режиме отелей они бесполезны.
-  const pr = $('#presets'); if(pr) pr.style.display = ru ? 'none' : '';
+  $('#barPL').style.display = pl ? '' : 'none';
+  $('#grid').className = pl ? 'pl-grid' : '';
+  // Пресеты и свёрнутые фильтры относятся к жилью Беларуси — в других
+  // режимах они только мешают: меняют невидимые поля и путают сводкой.
+  const pr = $('#presets'); if(pr) pr.style.display = (ru || pl) ? 'none' : '';
+  const ft = $('#fToggle'); if(ft) ft.style.display = (ru || pl) ? 'none' : '';
   if(!window.__hintBY) window.__hintBY = $('#hint').innerHTML;
   $('#hint').innerHTML = ru ? HINT_RU : window.__hintBY;
   window.__page = 1;
   if(!quiet) run();
 }
+
 
 function fillCities(){
   const reg=$('#region').value, sel=$('#city'), cur=sel.value;
@@ -2085,6 +2227,7 @@ async function runRF(){
 // Kufar обычно отвечает первым, поэтому человек видит квартиры, не дожидаясь остальных.
 const SRC_NAME = { kufar:'Kufar', realt:'Realt', flatbook:'Flatbook' };
 async function run(){
+  if(window.__mode==='places') return runPlaces();
   if(window.__mode==='ru') return runRF();
   const name=$('#qname')?$('#qname').value.trim():'';
   const base=new URLSearchParams({
@@ -2218,6 +2361,7 @@ function renderCards(){
         +meta
         +'<div class="ttl">'+(x.title||'').replace(/</g,'&lt;')+'</div>'+desc
         +'<div class="act">'+call+'<a href="'+x.link+'" target="_blank" rel="noopener">Открыть</a></div>'
+        +((x.lat&&x.lng)?('<button class="seenear" type="button" onclick="placesNear('+idx+')">🏰 Что посмотреть рядом</button>'):'')
         +'</div></div>';
     }).join('');
   renderPager(pages);
@@ -2272,6 +2416,7 @@ function setView(v){
   $('#pager').style.display = cards ? '' : 'none';
   $('#map').style.display   = v==='map' ? '' : 'none';
   window.__page = 1;
+  if(window.__mode==='places'){ if(v==='map') plotPlaces(); else renderPlaces(); return; }
   if(v==='map'){ plotMap(true); enrichRealt(); } else renderCards();
 }
 // карта Leaflet: цена на метке, тултип при наведении, карточка в попапе
@@ -2613,6 +2758,155 @@ if('serviceWorker' in navigator){
 
 window.__runToken = 0;
 
+// ── Что посетить ──────────────────────────────────────────────────────────
+// Точки берём из своего же справочника kudin.by. Здесь показываем выжимку,
+// полное описание — по ссылке на первоисточник.
+const PL_CITIES = [
+  ['Минск', 53.9023, 27.5619], ['Брест', 52.0976, 23.7341], ['Гродно', 53.6884, 23.8258],
+  ['Витебск', 55.1904, 30.2049], ['Гомель', 52.4345, 30.9754], ['Могилёв', 53.9007, 30.3313],
+  ['Мир', 53.4514, 26.4720], ['Несвиж', 53.2226, 26.6739], ['Браслав', 55.6400, 27.0400],
+];
+window.__places = [];
+
+// переход «от жилья к местам»: показываем, что посмотреть вокруг этой квартиры
+function placesNear(idx){
+  const x = (window.__view==='fav' ? FAVS : (window.__items||[]))[idx];
+  if(!x || !x.lat || !x.lng) return;
+  window.__plCenter = { lat:x.lat, lng:x.lng, label:(x.area || 'этого жилья') };
+  $('#plRadius').value = '25';
+  setCountry('places');
+  if(window.__T) window.__T('places_near', {});
+}
+
+function plCityCoords(){
+  if(window.__plCenter) return window.__plCenter;
+  const v = $('#plCity').value;
+  const c = PL_CITIES.find(function(x){ return x[0] === v; });
+  return c ? { lat: c[1], lng: c[2] } : null;
+}
+
+async function runPlaces(){
+  const c = plCityCoords(), r = $('#plRadius').value, g = $('#plGroup').value;
+  const around = window.__plCenter ? ('рядом с ' + window.__plCenter.label) : ('рядом с городом ' + $('#plCity').value);
+  const p = new URLSearchParams();
+  if(g) p.set('group', g);
+  if(c && +r){ p.set('lat', c.lat); p.set('lng', c.lng); p.set('r', r); }
+  $('#stat').textContent = 'Ищу места…';
+  $('#grid').innerHTML = ''; $('#pager').innerHTML = '';
+  try{
+    const d = await (await fetch('/api/places?' + p.toString())).json();
+    window.__places = d.items || [];
+    // список категорий подставляем один раз
+    const sel = $('#plGroup');
+    if(sel.options.length <= 1 && d.groups){
+      Object.entries(d.groups).sort(function(a,b){ return b[1]-a[1]; }).forEach(function(kv){
+        const o = document.createElement('option'); o.value = kv[0];
+        o.textContent = kv[0] + ' (' + kv[1] + ')'; sel.appendChild(o);
+      });
+      if(g) sel.value = g;
+    }
+    const where = (c && +r) ? (' ' + around + ', до ' + r + ' км') : ' по всей Беларуси';
+    $('#stat').textContent = 'Найдено мест: ' + d.total + where;
+    renderPlaces();
+    if(window.__view === 'map') plotPlaces();
+    syncUrl();
+    if(window.__T) window.__T('places', { city: $('#plCity').value, total: d.total });
+  }catch(e){ $('#stat').textContent = 'Ошибка: ' + e.message; }
+}
+
+function renderPlaces(){
+  const list = window.__places || [];
+  if(!list.length){ $('#grid').innerHTML = '<div class="empty">Здесь ничего не нашлось. Попробуйте больший радиус.</div>'; return; }
+  $('#grid').className = 'pl-grid';
+  $('#grid').innerHTML = list.slice(0, 60).map(function(p, i){
+    const km = (p.km !== undefined) ? ('<div class="km">' + p.km + ' км</div>') : '';
+    // Яндекс.Карты строят маршрут от текущего положения; на телефоне откроется приложение
+    const route = 'https://yandex.by/maps/?rtext=~' + p.lat + ',' + p.lng + '&rtt=auto';
+    return '<article class="plc" id="pl' + i + '">'
+      + '<div class="ph">' + km + '<img src="' + p.pic + '" loading="lazy" alt="' + esc2(p.name) + '"></div>'
+      + '<div class="bd"><div class="ct">' + esc2(p.cat || p.group) + '</div>'
+      + '<h3>' + esc2(p.name) + '</h3>'
+      + '<div class="ad">' + esc2(p.addr) + '</div>'
+      + '<div class="tx" id="tx' + i + '"></div>'
+      + '<div class="row">'
+      +   '<a class="go2" href="' + route + '" target="_blank" rel="noopener">Проложить маршрут</a>'
+      +   '<button class="stay2" type="button" onclick="stayNear(' + i + ')">Жильё рядом</button>'
+      +   '<a href="https://kudin.by/?point=' + p.id + '" target="_blank" rel="noopener">Подробнее</a>'
+      + '</div><div id="near' + i + '"></div></div></article>';
+  }).join('');
+  // Описания тянем по одному запросу на точку, поэтому не грузим всё сразу:
+  // подтягиваем, когда карточка появляется на экране.
+  if(window.__plObs) window.__plObs.disconnect();
+  if('IntersectionObserver' in window){
+    window.__plObs = new IntersectionObserver(function(rows){
+      rows.forEach(function(r){
+        if(!r.isIntersecting) return;
+        const i = +r.target.id.replace('pl','');
+        const p = (window.__places||[])[i];
+        if(p) loadPlaceText(p.id, i);
+        window.__plObs.unobserve(r.target);
+      });
+    }, { rootMargin: '300px' });
+    document.querySelectorAll('.plc').forEach(function(el){ window.__plObs.observe(el); });
+  } else {
+    list.slice(0, 12).forEach(function(p, i){ loadPlaceText(p.id, i); });
+  }
+}
+function esc2(t){ return String(t == null ? '' : t).replace(/[&<>"]/g, function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+const PL_TEXT = {};
+async function loadPlaceText(id, i){
+  const box = document.getElementById('tx' + i); if(!box) return;
+  try{
+    if(!PL_TEXT[id]) PL_TEXT[id] = await (await fetch('/api/place?id=' + id)).json();
+    const d = PL_TEXT[id];
+    box.textContent = d.text || '';
+  }catch(e){}
+}
+
+async function stayNear(i){
+  const p = (window.__places || [])[i]; if(!p) return;
+  const box = document.getElementById('near' + i); if(!box) return;
+  if(box.dataset.open === '1'){ box.innerHTML = ''; box.dataset.open = '0'; return; }
+  box.dataset.open = '1';
+  box.innerHTML = '<div class="near">Ищу жильё рядом…</div>';
+  try{
+    const d = await (await fetch('/api/places/stay?lat=' + p.lat + '&lng=' + p.lng + '&r=30')).json();
+    if(!d.total){ box.innerHTML = '<div class="near">Рядом ничего не нашлось. Попробуйте посмотреть жильё в ближайшем городе.</div>'; return; }
+    const cards = (d.items || []).slice(0, 6).map(function(x){
+      const img = (x.photos && x.photos[0]) ? '<img src="' + x.photos[0] + '" loading="lazy" alt="">' : '';
+      return '<a href="' + x.link + '" target="_blank" rel="noopener">' + img
+        + '<div class="p">' + x.price + ' BYN</div><div class="s">' + x.km + ' км · ' + srcName(x.src) + '</div></a>';
+    }).join('');
+    box.innerHTML = '<div class="near"><b>Жильё рядом — ' + d.total + ' вариантов</b><div class="near-list">' + cards + '</div></div>';
+    if(window.__T) window.__T('stay_near', {});
+  }catch(e){ box.innerHTML = ''; }
+}
+
+function plotPlaces(){
+  if(typeof L === 'undefined') return;
+  if(!window.__map){ plotMap(false); }
+  window.__mlayer.clearLayers();
+  const pts = [];
+  (window.__places || []).forEach(function(p, i){
+    const icon = L.divIcon({ className:'', iconSize:[30,30], iconAnchor:[15,15], html:'<div class="pl-pin">🏰</div>' });
+    const mk = L.marker([p.lat, p.lng], { icon: icon });
+    mk.bindTooltip(p.name, { direction:'top', offset:[0,-14] });
+    mk.bindPopup('<div class="mp"><div class="mp-meta">' + esc2(p.cat) + '</div>'
+      + '<div class="mp-price" style="font-size:16px">' + esc2(p.name) + '</div>'
+      + '<div class="mp-meta">' + esc2(p.addr) + '</div>'
+      + '<a class="mp-open" href="https://yandex.by/maps/?rtext=~' + p.lat + ',' + p.lng + '&rtt=auto" target="_blank" rel="noopener">Проложить маршрут →</a></div>',
+      { maxWidth:260, minWidth:200 });
+    window.__mlayer.addLayer(mk);
+    pts.push([p.lat, p.lng]);
+  });
+  setTimeout(function(){
+    window.__map.invalidateSize();
+    if(pts.length) window.__map.fitBounds(pts, { padding:[45,45], maxZoom:13 });
+  }, 60);
+}
+
 // ── Быстрые наборы фильтров ───────────────────────────────────────────────
 // Человек с ролика не будет разбираться с восемью полями. Один тап — готовый
 // набор. Повторный тап снимает набор и возвращает как было.
@@ -2672,7 +2966,12 @@ const URL_DEFAULTS = { region:'minsk', city:'', type:'flat', rooms:'', guests:''
 function syncUrl(){
   try{
     const p=new URLSearchParams();
-    if(window.__mode==='ru'){
+    if(window.__mode==='places'){
+      p.set('country','places');
+      if($('#plCity').value)   p.set('city',   $('#plCity').value);
+      if($('#plRadius').value!=='50') p.set('r', $('#plRadius').value);
+      if($('#plGroup').value)  p.set('group',  $('#plGroup').value);
+    } else if(window.__mode==='ru'){
       p.set('country','ru');
       p.set('city', $('#rfCity').value);
       if($('#rfType').value)   p.set('type',   $('#rfType').value);
@@ -2708,6 +3007,13 @@ function applyUrl(){
     const q=new URLSearchParams(location.search);
     if(![...q.keys()].length) return;
     const set=function(id,v){ const el=$('#'+id); if(el && v!==null && v!==undefined) el.value=v; };
+    if(q.get('country')==='places'){
+      if(q.get('city'))  $('#plCity').value  = q.get('city');
+      if(q.get('r'))     $('#plRadius').value = q.get('r');
+      window.__plGroup = q.get('group') || '';
+      setCountry('places', true);
+      return;
+    }
     if(q.get('country')==='ru'){
       set('rfCity',   q.get('city'));
       set('rfType',   q.get('type'));
@@ -2735,6 +3041,19 @@ function applyUrl(){
     document.querySelectorAll('#bar .rb-amen-cb').forEach(function(cb){ cb.checked = am.indexOf(cb.value)>=0; });
   }catch(e){}
 }
+// Список городов и обработчики вкладки «Что посетить».
+// Ставим здесь, а не рядом с setCountry: там PL_CITIES ещё не объявлен,
+// и обращение к нему на этапе загрузки роняло весь скрипт страницы.
+(function(){
+  const sel = $('#plCity');
+  PL_CITIES.forEach(function(c){
+    const o = document.createElement('option'); o.value = c[0]; o.textContent = c[0]; sel.appendChild(o);
+  });
+  $('#plCity').addEventListener('change', function(){ window.__plCenter = null; runPlaces(); });
+  $('#plRadius').addEventListener('change', runPlaces);
+  $('#plGroup').addEventListener('change', runPlaces);
+})();
+
 applyUrl();
 syncPresets();
 
@@ -2919,6 +3238,54 @@ http.createServer(async (req,res)=>{
     res.end("self.addEventListener('install', function(){ self.skipWaiting(); });\n" +
             "self.addEventListener('activate', function(e){ e.waitUntil(self.clients.claim()); });\n" +
             "self.addEventListener('fetch', function(e){ e.respondWith(fetch(e.request)); });\n"); return;
+  }
+  // список мест: целиком, по категории или вокруг точки
+  if(u.pathname === '/api/places'){
+    let list = await placesRaw();
+    const g = (u.searchParams.get('group')||'').trim();
+    if(g) list = list.filter(p => p.group === g);
+    const lat = +u.searchParams.get('lat'), lng = +u.searchParams.get('lng');
+    const r = +(u.searchParams.get('r') || 50);
+    if(lat && lng){
+      list = list.map(p => Object.assign({}, p, { km: Math.round(distKm(lat, lng, p.lat, p.lng) * 10) / 10 }))
+                 .filter(p => p.km <= r)
+                 .sort((a, b) => a.km - b.km);
+    } else {
+      list = list.slice().sort((a, b) => b.rating - a.rating);
+    }
+    const groups = {};
+    (await placesRaw()).forEach(p => { if(p.group) groups[p.group] = (groups[p.group]||0) + 1; });
+    res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
+    res.end(JSON.stringify({ total: list.length, groups, items: list.slice(0, 300) })); return;
+  }
+  // описание одной точки
+  if(u.pathname === '/api/place'){
+    const id = (u.searchParams.get('id')||'').replace(/[^0-9]/g, '');
+    if(!id){ res.writeHead(400); res.end('{}'); return; }
+    let d = { text:'', more: KUDIN + '/?point=' + id };
+    try{ d = await placeDetail(id); }catch(e){}
+    res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
+    res.end(JSON.stringify(d)); return;
+  }
+  // жильё рядом с местом
+  if(u.pathname === '/api/places/stay'){
+    const lat = +u.searchParams.get('lat'), lng = +u.searchParams.get('lng');
+    const r = +(u.searchParams.get('r') || 30);
+    let items = [];
+    if(lat && lng){
+      // ищем по ближайшей области, затем отбираем по расстоянию
+      const reg = nearestRegion(lat, lng);
+      const q = new URLSearchParams({ region:reg, city:'', type:(u.searchParams.get('type')||'flat'),
+                                      rooms:'', guests:'', max:'', source:'both' });
+      try{
+        const d = await runSearchQuery(q);
+        items = (d.items||[]).filter(x => x.lat && x.lng && !x.approx)
+          .map(x => Object.assign({}, x, { km: Math.round(distKm(lat, lng, x.lat, x.lng) * 10) / 10 }))
+          .filter(x => x.km <= r).sort((a, b) => a.price - b.price);
+      }catch(e){}
+    }
+    res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
+    res.end(JSON.stringify({ total: items.length, items: items.slice(0, 12) })); return;
   }
   if(u.pathname === '/robots.txt'){
     res.writeHead(200, {'Content-Type':'text/plain; charset=utf-8'});
