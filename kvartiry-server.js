@@ -116,6 +116,26 @@ const TYPE_RU = { flat:'Квартира', cottage:'Коттедж / дом', us
 function regionRu(key){
   return (typeof REGIONS !== 'undefined' && REGIONS[key]) ? REGIONS[key].oblast : (key || '');
 }
+// Названия событий по-русски: журнал читаем глазами, а не грепом.
+const EV_RU = {
+  view:          'зашёл на сайт',
+  end:           'ушёл с сайта',
+  search:        'поиск жилья',
+  places:        'смотрел места',
+  places_near:   'места рядом с жильём',
+  stay_near:     'жильё рядом с местом',
+  all_stay:      'перешёл к жилью области',
+  open:          'открыл объявление',
+  call:          'нажал на телефон',
+  share:         'поделился ссылкой',
+  fav:           'добавил в избранное',
+  favlist:       'открыл избранное',
+  map:           'открыл карту',
+  subscribe:     'ждёт уведомлений о жилье',
+  place_suggest: 'хочет предложить точку',
+};
+function evRu(e){ return EV_RU[e] || e; }
+
 function searchLabel(p){
   if(!p) return '';
   if(p.c === 'ru') return 'Россия · ' + (p.city || '') + (p.type ? (' · ' + ((typeof RF_TYPES !== 'undefined' && RF_TYPES[p.type]) || p.type)) : '');
@@ -201,7 +221,7 @@ function statsPage(){
               + (x.app ? (' · ' + x.app) : '');
     const info = (x.e === 'search') ? searchLabel(x.p) : JSON.stringify(x.p || {});
     return '<tr><td>' + new Date(x.t).toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) +
-      '</td><td>' + esc(x.e) + '</td><td>' + esc(src) + '</td><td>' + esc(x.m || '') +
+      '</td><td>' + esc(evRu(x.e)) + '</td><td>' + esc(src) + '</td><td>' + esc(x.m || '') +
       '</td><td class="raw">' + esc(info)
       + (x.ref ? ('<br>ссылка: ' + esc(x.ref)) : '')
       + (x.ua ? ('<br>' + esc(x.ua)) : '') + '</td></tr>';
@@ -286,6 +306,13 @@ function statsPage(){
       tile('Среднее время', avg(secs) + ' с', 'на сайте') +
       tile('Долистали до', avg(scrl) + '%', 'страницы') +
     '</div></div>' +
+
+    '<h2>Чего ждут посетители (7 дней)</h2><div class="card"><div class="tiles">' +
+      tile('Уведомления о жилье', weekA.filter(function(x){ return x.e === 'subscribe'; }).length,
+           'нажали «Хочу такое»') +
+      tile('Свои точки на карте', weekA.filter(function(x){ return x.e === 'place_suggest'; }).length,
+           'нажали «Предложить точку»') +
+    '</div><p class="note">Обе кнопки пока заглушки. Цифры показывают, что делать раньше.</p></div>' +
 
     '<h2>Последние события</h2><div class="card"><table class="log">' +
       '<tr><td><b>когда</b></td><td><b>что</b></td><td><b>откуда</b></td><td><b>устр.</b></td><td><b>подробности</b></td></tr>' +
@@ -2522,12 +2549,21 @@ h1 .accent{
 
   <div class="foot">
     <div class="foot-h">Нашли неточность или хотите что-то добавить?</div>
-    <div class="sub-box">
+    <div class="sub-box" id="subBox">
     <div class="soon">Скоро</div>
     <h3>Следить за новыми вариантами</h3>
     <p>Появится жильё по вашим фильтрам — пришлём уведомление, чтобы не мониторить вручную.</p>
     <button id="subBtn" class="sub-btn" type="button">Хочу такое</button>
     <div class="sub-ok" id="subOk"></div>
+  </div>
+
+    <div class="sub-box" id="plBox" style="display:none">
+    <div class="soon">Скоро</div>
+    <h3>Знаете место, которого здесь нет?</h3>
+    <p>Пришлёте название и координаты — проверим и добавим на карту. Особенно ждём то,
+       что не найдёшь в путеводителях: заброшки, валуны, старые мосты, смотровые точки.</p>
+    <button id="plBtn" class="sub-btn" type="button">Предложить точку</button>
+    <div class="sub-ok" id="plOk"></div>
   </div>
 
   <button id="fbOpen" class="fb-open" type="button">💬 Оставить пожелание или дополнение</button>
@@ -2577,6 +2613,10 @@ function setCountry(c, quiet){
   // Пресеты и свёрнутые фильтры относятся к жилью Беларуси — в других
   // режимах они только мешают: меняют невидимые поля и путают сводкой.
   const pr = $('#presets'); if(pr) pr.style.display = (ru || pl) ? 'none' : '';
+  // Уведомления о новом жилье во вкладке мест ни к чему, а предложить точку
+  // логично только там, где эти точки и показаны.
+  const sb = $('#subBox'); if(sb) sb.style.display = pl ? 'none' : '';
+  const pb = $('#plBox');  if(pb) pb.style.display = pl ? '' : 'none';
   const ft = $('#fToggle'); if(ft) ft.style.display = (ru || pl) ? 'none' : '';
   if(!window.__hintBY) window.__hintBY = $('#hint').innerHTML;
   $('#hint').innerHTML = pl ? HINT_PL : (ru ? HINT_RU : window.__hintBY);
@@ -3162,6 +3202,15 @@ $('#fToggle').addEventListener('click', function(){
 if(isNarrow()) filtersCollapsed(true);
 
 // ── Заглушка подписки ─────────────────────────────────────────────────────
+$('#plBtn').addEventListener('click', function(){
+  this.disabled = true;
+  this.textContent = 'Записали';
+  $('#plOk').innerHTML = 'Спасибо! Форма ещё в разработке — считаем, скольким она нужна. '
+    + 'А пока напишите точку через <b>«Оставить пожелание или дополнение»</b> внизу страницы: '
+    + 'это письмо дойдёт до нас сразу.';
+  if(window.__T) window.__T('place_suggest', {});
+});
+
 $('#subBtn').addEventListener('click', function(){
   this.disabled = true;
   this.textContent = 'Записали';

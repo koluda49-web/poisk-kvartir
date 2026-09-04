@@ -88,6 +88,31 @@ check('по ссылке сразу открываются места', direct.m
       'жилья: ' + direct.flats + ', мест: ' + direct.places);
 check('сводка про места, а не про квартиры', /Найдено мест/.test(direct.stat || ''), direct.stat);
 
+// ── заглушки под лентой ───────────────────────────
+// «Следить за новыми вариантами» относится к жилью, «Предложить точку» —
+// к местам. Перепутать их местами легко, а заметить трудно.
+console.log('\n=== заглушки под лентой ===');
+const boxes = async () => JSON.parse(await js(`JSON.stringify({
+  sub: !!(document.querySelector('#subBox') && document.querySelector('#subBox').offsetParent),
+  pl:  !!(document.querySelector('#plBox')  && document.querySelector('#plBox').offsetParent)})`));
+
+await send('Page.navigate', { url: SITE + '/' });
+for (let i = 0; i < 90; i++) { if (await js("!!document.querySelector('#subBox')")) break; await sleep(300); }
+await sleep(2000);
+const onFlats = await boxes();
+check('во вкладке жилья видна только заглушка уведомлений', onFlats.sub && !onFlats.pl,
+      'уведомления: ' + onFlats.sub + ', предложить точку: ' + onFlats.pl);
+
+await js("document.querySelector('#cbPL').click(); 1");
+await sleep(5000);
+const onPlaces = await boxes();
+check('во вкладке мест видна только заглушка «предложить точку»', onPlaces.pl && !onPlaces.sub,
+      'уведомления: ' + onPlaces.sub + ', предложить точку: ' + onPlaces.pl);
+
+const after = await js("(function(){ document.querySelector('#plBtn').click();"
+  + " return document.querySelector('#plBtn').textContent; })()");
+check('кнопка отвечает на нажатие', /Записали/.test(after || ''), 'на кнопке: ' + after);
+
 console.log('\nИтог: успешно ' + passed + ', провалено ' + failed);
 ws.close(); chrome.kill();
 process.exit(failed ? 1 : 0);
