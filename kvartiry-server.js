@@ -507,7 +507,10 @@ async function galleryFor(src, key){
     if(src==='Flatbook'){
       const h = await (await fetch(key,{headers:{'User-Agent':UA,'Accept-Language':'ru'}})).text();
       const set=new Set();
-      for(const m of h.matchAll(/https:\/\/flatbook\.by\/media\/cache\/resolve\/flat_page_gallery\/images\/flat\/[0-9\/]+\/original\/[a-z0-9_]+\.(?:jpg|jpeg|png|webp)/gi)) set.add(m[0]);
+      // Имена файлов бывают и такие: 0-02-05-0559b976…_49.jpg — с дефисами.
+      // Прежний разбор их не допускал, и у таких объявлений слайдер молча
+      // пропадал. Домен тоже допускаем с приставкой: встречается test.flatbook.by.
+      for(const m of h.matchAll(/https:\/\/[a-z0-9.-]*flatbook\.by\/media\/cache\/resolve\/flat_page_gallery\/images\/flat\/[0-9\/]+\/original\/[a-z0-9_.-]+\.(?:jpg|jpeg|png|webp)/gi)) set.add(m[0].replace('//test.', '//'));
       out=[...set].slice(0,20);
     } else if(src==='H101'){
       const at=key.indexOf('@@'); const hid=key.slice(0,at), pageUrl=key.slice(at+2);
@@ -609,7 +612,10 @@ async function flatbookRaw(regKey, center, type, rooms, amenFb){
         rating:0, reviews:0, descId:null, phone, name:'',
         lat:+f.latitude, lng:+f.longitude, approx:false,
         chips: [center].concat(metro?['м. '+metro]:[]),
-        link: f.url || (host+'/'+f.alias+'/') };
+        // Часть объявлений отдаётся со ссылкой на тестовый сайт flatbook.
+        // Те же страницы есть на основном домене, поэтому просто убираем
+        // приставку: человека нельзя отправлять на тестовый стенд.
+        link: String(f.url || (host+'/'+f.alias+'/')).replace('//test.', '//') };
     }).filter(x=> x.price>0 && x.lat>50 && x.lng>22);
   }catch(e){ console.error('Flatbook '+host+':', e.message); return []; }
  });

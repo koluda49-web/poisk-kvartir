@@ -97,6 +97,29 @@ check('Брест и Минск дают разные списки',
       !same(links(brest.data), links(minsk.data)),
       'списки совпали — значит кэш перепутал области');
 
+// ── Flatbook: ссылки и галереи ────────────────────────────
+// В карточке Flatbook приходит один снимок, остальные страница дотягивает
+// через /api/gallery. Если разбор перестал их находить, слайдер молча
+// исчезает — на глаз это заметно только если знать, что он был.
+console.log('\n=== Flatbook: ссылки и галереи ===');
+const fb = (await get(base('flatbook'))).data.items || [];
+check('Flatbook вообще отвечает (' + fb.length + ')', fb.length > 50);
+
+// Часть объявлений приходит со ссылкой на тестовый сайт flatbook.
+// Человека туда отправлять нельзя, да и снимки оттуда не подхватываются.
+const testDomain = fb.filter(x => /(^|\/\/)test\./.test(x.link || ''));
+check('нет ссылок на тестовый сайт', testDomain.length === 0,
+      'ведут на тестовый домен: ' + testDomain.length + ', например ' + ((testDomain[0] || {}).link || ''));
+
+const sample = fb.slice(0, 12).map(x => ({ src: 'Flatbook', key: x.link }));
+const gal = await (await fetch(BASE + '/api/gallery', { method: 'POST',
+  headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reqs: sample }) })).json();
+const counts = sample.map(r => ((gal.results || {})[r.key] || []).length);
+const empty = counts.filter(n => n < 2).length;
+check('у объявлений находится галерея (' + (sample.length - empty) + ' из ' + sample.length + ')',
+      empty === 0,
+      'без галереи: ' + empty + ' — слайдер у них не появится');
+
 console.log('\nИтог: успешно ' + passed + ', провалено ' + failed);
 // Выходим через exitCode, а не process.exit: резкий выход не даёт node закрыть
 // сетевое соединение и на Windows роняет его с ошибкой libuv.
