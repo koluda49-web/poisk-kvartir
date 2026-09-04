@@ -880,6 +880,103 @@ function isRealtUrl(v){
 // Точки берём из нашего же справочника kudin.by. Полные описания остаются
 // там: у себя показываем выжимку и ссылку на первоисточник, чтобы два сайта
 // не конкурировали в поиске одинаковым текстом.
+// Фотографии, на которых есть люди: такие карточки не показываем.
+// Список собран просмотром всех 161 снимка, которые попадают в выдачу
+// вокруг Минска, Бреста и Гродно. Точки не удалены — просто скрыты,
+// вернуть можно, убрав номер отсюда.
+const PLACES_WITH_PEOPLE = new Set([4959, 4958, 4487, 4347, 4358, 4438, 4727, 4871, 261, 4261, 4806, 3738, 4807, 4260, 278, 4794, 5156, 4742, 4166, 4210, 4214, 8247, 4974, 4931, 4215, 4216, 297, 294, 4624, 4620, 4621, 293, 4627]);
+
+// Точки из наших маршрутов, которых нет в справочнике kudin.by.
+// Описания — наши собственные, из файлов маршрутов. Фотографии взяты
+// с Викисклада, только со свободными лицензиями и с указанием автора:
+// этого требуют условия CC BY и CC BY-SA.
+const EXTRA_PLACES = [
+ {
+  "id": 900001,
+  "name": "Свято-Успенский Жировичский монастырь",
+  "lat": 53.03,
+  "lng": 25.342,
+  "addr": "XVII–XVIII вв.",
+  "cat": "Монастырь",
+  "group": "Из маршрутов",
+  "pic": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b6/%D0%92._%D0%96%D1%8B%D1%80%D0%BE%D0%B2%D1%96%D1%87%D1%8B_-_%D0%90%D0%BD%D1%81%D0%B0%D0%BC%D0%B1%D0%B0%D0%BB%D1%8C_%D0%A1%D1%8C%D0%B2%D1%8F%D1%82%D0%B0-%D0%A3%D1%81%D1%8C%D0%BF%D0%B5%D0%BD%D1%81%D0%BA%D0%B0%D0%B3%D0%B0_%D0%BC%D0%B0%D0%BD%D0%B0%D1%81%D1%82%D1%8B%D1%80%D0%B0_PICT3028.jpg/960px-%D0%92._%D0%96%D1%8B%D1%80%D0%BE%D0%B2%D1%96%D1%87%D1%8B_-_%D0%90%D0%BD%D1%81%D0%B0%D0%BC%D0%B1%D0%B0%D0%BB%D1%8C_%D0%A1%D1%8C%D0%B2%D1%8F%D1%82%D0%B0-%D0%A3%D1%81%D1%8C%D0%BF%D0%B5%D0%BD%D1%81%D0%BA%D0%B0%D0%B3%D0%B0_%D0%BC%D0%B0%D0%BD%D0%B0%D1%81%D1%82%D1%8B%D1%80%D0%B0_PICT3028.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+  "text": "Один из главных православных центров Беларуси, крупнейший архитектурный ансамбль XVII–XVIII вв. Здесь хранится чудотворная Жировичская икона Божией Матери. В зените славы монастырь называли «новой Ченстоховой» Речи Посполитой. Комплекс включает Успенский собор, Явленскую и Крестовоздвиженскую церкви, здание семинарии. Крюк ~12 км с трассы М1 у Слонима.",
+  "author": "Argon by",
+  "lic": "CC BY-SA 3.0",
+  "src": "https://commons.wikimedia.org/wiki/File:%D0%92._%D0%96%D1%8B%D1%80%D0%BE%D0%B2%D1%96%D1%87%D1%8B_-_%D0%90%D0%BD%D1%81%D0%B0%D0%BC%D0%B1%D0%B0%D0%BB%D1%8C_%D0%A1%D1%8C%D0%B2%D1%8F%D1%82%D0%B0-%D0%A3%D1%81%D1%8C%D0%BF%D0%B5%D0%BD%D1%81%D0%BA%D0%B0%D0%B3%D0%B0_%D0%BC%D0%B0%D0%BD%D0%B0%D1%81%D1%82%D1%8B%D1%80%D0%B0_PICT3028.jpg"
+ },
+ {
+  "id": 900002,
+  "name": "Памятник Тысячелетия Бреста",
+  "lat": 52.092795,
+  "lng": 23.692994,
+  "addr": "ул. Советская",
+  "cat": "памятник",
+  "group": "Из маршрутов",
+  "pic": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/83/Lieninski_rajon%2C_Brest%2C_Belarus_-_panoramio_%287%29.jpg/960px-Lieninski_rajon%2C_Brest%2C_Belarus_-_panoramio_%287%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+  "text": "Многофигурная композиция 2009 года: наверху ангел-хранитель, ниже — князь Владимир Василькович, Витовт, Николай Радзивилл Чёрный, летописец, безымянные мать и солдат. Главная точка встречи на пешеходной улице.",
+  "author": "alinco_fan",
+  "lic": "CC BY 3.0",
+  "src": "https://commons.wikimedia.org/wiki/File:Lieninski_rajon,_Brest,_Belarus_-_panoramio_(7).jpg"
+ },
+ {
+  "id": 900003,
+  "name": "Брестский музей железнодорожной техники",
+  "lat": 52.085655,
+  "lng": 23.672189,
+  "addr": "пр. Машерова, 2",
+  "cat": "музей",
+  "group": "Из маршрутов",
+  "pic": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/43/%D0%A1%D1%83250-30%2C_%D0%91%D0%B5%D0%BB%D0%B0%D1%80%D1%83%D1%81%D1%8C%2C_%D0%91%D1%80%D0%B5%D1%81%D1%82%D1%81%D0%BA%D0%B0%D1%8F_%D0%BE%D0%B1%D0%BB%D0%B0%D1%81%D1%82%D1%8C%2C_%D0%91%D1%80%D0%B5%D1%81%D1%82%D1%81%D0%BA%D0%B8%D0%B9_%D0%BC%D1%83%D0%B7%D0%B5%D0%B9_%D0%B6%D0%B5%D0%BB%D0%B5%D0%B7%D0%BD%D0%BE%D0%B4%D0%BE%D1%80%D0%BE%D0%B6%D0%BD%D0%BE%D0%B9_%D1%82%D0%B5%D1%85%D0%BD%D0%B8%D0%BA%D0%B8_%28Trainpix_204915%29.jpg/960px-thumbnail.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+  "text": "Открытая площадка с паровозами, вагонами и путевой техникой — более полусотни единиц. В некоторые кабины пускают.",
+  "author": "BLOG",
+  "lic": "CC BY-SA 4.0",
+  "src": "https://commons.wikimedia.org/wiki/File:%D0%A1%D1%83250-30,_%D0%91%D0%B5%D0%BB%D0%B0%D1%80%D1%83%D1%81%D1%8C,_%D0%91%D1%80%D0%B5%D1%81%D1%82%D1%81%D0%BA%D0%B0%D1%8F_%D0%BE%D0%B1%D0%BB%D0%B0%D1%81%D1%82%D1%8C,_%D0%91%D1%80%D0%B5%D1%81%D1%82%D1%81%D0%BA%D0%B8%D0%B9_%D0%BC%D1%83%D0%B7%D0%B5%D0%B9_%D0%B6%D0%B5%D0%BB%D0%B5%D0%B7%D0%BD%D0%BE%D0%B4%D0%BE%D1%80%D0%BE%D0%B6%D0%BD%D0%BE%D0%B9_%D1%82%D0%B5%D1%85%D0%BD%D0%B8%D0%BA%D0%B8_(Trainpix_204915).jpg"
+ },
+ {
+  "id": 900004,
+  "name": "Памятник Жану Эммануэлю Жилиберу",
+  "lat": 53.685987,
+  "lng": 23.835413,
+  "addr": "парк Жилибера",
+  "cat": "памятник",
+  "group": "Из маршрутов",
+  "pic": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/68/%D0%9F%D0%BE%D0%BC%D0%BD%D1%96%D0%BA_%D0%96%D1%8B%D0%BB%D1%8C%D0%B1%D0%B5%D1%80%D1%83.jpg/960px-%D0%9F%D0%BE%D0%BC%D0%BD%D1%96%D0%BA_%D0%96%D1%8B%D0%BB%D1%8C%D0%B1%D0%B5%D1%80%D1%83.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+  "text": "Французский ботаник и медик, основавший в Гродно в 1775 году врачебную академию и ботанический сад. Парк, названный его именем, вырос из того самого сада — старейшего в стране.",
+  "author": "удзельнік Павел Петро",
+  "lic": "Public domain",
+  "src": "https://commons.wikimedia.org/wiki/File:%D0%9F%D0%BE%D0%BC%D0%BD%D1%96%D0%BA_%D0%96%D1%8B%D0%BB%D1%8C%D0%B1%D0%B5%D1%80%D1%83.jpg"
+ },
+ {
+  "id": 900005,
+  "name": "Костёл Обретения Святого Креста и монастырь бернардинцев",
+  "lat": 53.674795,
+  "lng": 23.83023,
+  "addr": "ул. Парижской Коммуны, 1",
+  "cat": "костёл",
+  "group": "Из маршрутов",
+  "pic": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/97/Vilniaus_Kalvariju_baznycia.jpg/960px-Vilniaus_Kalvariju_baznycia.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+  "text": "Один из старейших действующих костёлов города, строился с конца XVI века. Здесь тоже есть орган и проходят концерты — если органный костёл, который вы вспоминаете, стоит не на площади, а ближе к Неману, то это он.",
+  "author": "Renata3",
+  "lic": "CC BY-SA 3.0",
+  "src": "https://commons.wikimedia.org/wiki/File:Vilniaus_Kalvariju_baznycia.jpg"
+ },
+ {
+  "id": 900006,
+  "name": "Свято-Покровский кафедральный собор",
+  "lat": 53.684498,
+  "lng": 23.841407,
+  "addr": "ул. Ожешко, 23",
+  "cat": "собор",
+  "group": "Из маршрутов",
+  "pic": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/10/%D0%A1%D0%B2%D1%8F%D1%82%D0%BE-%D0%9F%D0%BE%D0%BA%D1%80%D0%BE%D0%B2%D1%81%D0%BA%D0%B8%D0%B9_%D0%9A%D0%B0%D1%84%D0%B5%D0%B4%D1%80%D0%B0%D0%BB%D1%8C%D0%BD%D1%8B%D0%B9_%D0%A1%D0%BE%D0%B1%D0%BE%D1%80.JPG/960px-%D0%A1%D0%B2%D1%8F%D1%82%D0%BE-%D0%9F%D0%BE%D0%BA%D1%80%D0%BE%D0%B2%D1%81%D0%BA%D0%B8%D0%B9_%D0%9A%D0%B0%D1%84%D0%B5%D0%B4%D1%80%D0%B0%D0%BB%D1%8C%D0%BD%D1%8B%D0%B9_%D0%A1%D0%BE%D0%B1%D0%BE%D1%80.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+  "text": "Главный православный собор города, построен в 1904–1907 годах как гарнизонный храм в память о погибших в русско-японской войне. Ретроспективно-русский стиль, шатровая колокольня.",
+  "author": "Antares1991",
+  "lic": "CC BY-SA 3.0",
+  "src": "https://commons.wikimedia.org/wiki/File:%D0%A1%D0%B2%D1%8F%D1%82%D0%BE-%D0%9F%D0%BE%D0%BA%D1%80%D0%BE%D0%B2%D1%81%D0%BA%D0%B8%D0%B9_%D0%9A%D0%B0%D1%84%D0%B5%D0%B4%D1%80%D0%B0%D0%BB%D1%8C%D0%BD%D1%8B%D0%B9_%D0%A1%D0%BE%D0%B1%D0%BE%D1%80.JPG"
+ }
+];
+
 const KUDIN = 'https://kudin.by';
 const PLACES_TTL = 6 * 60 * 60 * 1000;   // список памятников меняется раз в месяцы
 const DETAIL_TTL = 24 * 60 * 60 * 1000;
@@ -933,13 +1030,19 @@ async function placesRaw(){
                pic: p.picture ? (KUDIN + p.picture) : '',
                cat: cat[fid] || '', group: group[fid] || cat[fid] || '' };
     });
-    // берём только то, что можно показать: с названием, фотографией и координатами
-    return list.filter(p => p.name && p.pic && p.lat && p.lng);
+    // берём только то, что можно показать: с названием, фотографией и координатами,
+    // и без людей в кадре
+    const clean = list.filter(p => p.name && p.pic && p.lat && p.lng && !PLACES_WITH_PEOPLE.has(p.id));
+    return clean.concat(EXTRA_PLACES);
   }, PLACES_TTL);
 }
 
 // короткое описание одной точки; полный текст остаётся на kudin.by
 async function placeDetail(id){
+  // у собственных точек описание своё, ходить за ним некуда
+  const own = EXTRA_PLACES.find(p => String(p.id) === String(id));
+  if(own) return { id: own.id, name: own.name, years: '', addr: own.addr,
+                   text: own.text, full: false, pics: [own.pic], more: own.src || '' };
   return cached('raw|place|' + id, async ()=>{
     const j = await (await fetch(KUDIN + '/api/v1/detail/?id=' + encodeURIComponent(id),
                                  {headers:{'User-Agent':UA}})).json();
@@ -1797,6 +1900,8 @@ h1 .accent{
 .plc h3{margin:0;font-size:17px;line-height:1.28}
 .plc .ad{font-size:13.5px;color:var(--txt-2)}
 .plc .tx{font-size:14px;color:var(--txt-2);line-height:1.5}
+.plc .cred{font-size:11.5px;color:var(--txt-3)}
+.plc .cred a{color:var(--txt-3)}
 .plc .row{margin-top:auto;padding-top:8px;display:flex;gap:8px;flex-wrap:wrap}
 .plc .row a,.plc .row button{font:inherit;font-size:13.5px;font-weight:700;cursor:pointer;
   border-radius:999px;padding:8px 14px;text-decoration:none;border:1px solid var(--line);
@@ -2828,6 +2933,8 @@ function renderPlaces(){
       + '<h3>' + esc2(p.name) + '</h3>'
       + '<div class="ad">' + esc2(p.addr) + '</div>'
       + '<div class="tx" id="tx' + i + '"></div>'
+      + (p.author ? ('<div class="cred">фото: ' + esc2(p.author) + (p.lic ? (', ' + esc2(p.lic)) : '')
+          + (p.src ? (' · <a href="' + esc2(p.src) + '" target="_blank" rel="noopener">Викисклад</a>') : '') + '</div>') : '')
       + '<div class="row">'
       +   '<a class="go2" href="' + route + '" target="_blank" rel="noopener">Проложить маршрут</a>'
       +   '<button class="stay2" type="button" onclick="stayNear(' + i + ')">Жильё рядом</button>'
