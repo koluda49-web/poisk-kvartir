@@ -1389,10 +1389,17 @@ function cacheKey(u){
     .sort((a,b)=> a[0] < b[0] ? -1 : 1)
     .map(kv => kv[0] + '=' + kv[1]).join('&');
 }
+// Пустой ответ живёт в памяти меньше минуты, а не полный срок. Источник
+// мог просто не ответить один раз — держать после этого «источника нет»
+// восемь минут значит показывать всем пустую выдачу на ровном месте.
+const EMPTY_TTL = 45 * 1000;
+const isEmpty = d => Array.isArray(d) ? d.length === 0
+                   : (d && Array.isArray(d.items) ? d.items.length === 0 : false);
+
 async function cached(key, fn, ttl){
   const life = ttl || CACHE_TTL;
   const hit = SEARCH_CACHE.get(key);
-  if(hit && Date.now() - hit.at <= life) return hit.data;
+  if(hit && Date.now() - hit.at <= (isEmpty(hit.data) ? Math.min(EMPTY_TTL, life) : life)) return hit.data;
   if(hit) SEARCH_CACHE.delete(key);
   if(INFLIGHT.has(key)) return INFLIGHT.get(key);
   const p = (async ()=>{
