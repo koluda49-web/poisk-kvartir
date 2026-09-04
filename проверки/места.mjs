@@ -32,8 +32,11 @@ const noName = items.filter(x => !x.name || x.name.length < 3);
 const noPic  = items.filter(x => !x.pic);
 const noGeo  = items.filter(x => !(x.lat && x.lng));
 check('у всех есть название', noName.length === 0, 'без названия: ' + noName.length);
-check('у всех есть фотография', noPic.length === 0, 'без фото: ' + noPic.length);
 check('у всех есть координаты', noGeo.length === 0, 'без координат: ' + noGeo.length);
+// точку без фотографии показываем — но если фото пропали у большинства,
+// значит отвалилась картинка с kudin.by, а не «мы просто ещё не сняли»
+check('фотографии на месте (' + (items.length - noPic.length) + ' из ' + items.length + ')',
+      noPic.length < items.length * 0.15, 'без фото: ' + noPic.length);
 
 const withCat = items.filter(x => x.cat).length;
 check('категории проставлены (' + withCat + ' из ' + items.length + ')',
@@ -51,6 +54,31 @@ for (const [city, lat, lng, least] of [['Минск', 53.9023, 27.5619, 40], ['�
   const sorted = (near.items || []).every((x, i, a) => i === 0 || a[i - 1].km <= x.km);
   check(city + ': отсортировано от ближних к дальним', sorted);
 }
+
+// ── 2б. поиск по названию ──────────────────────────────────────────────────
+console.log('\n=== поиск по названию ===');
+const mir = await json('/api/places?q=' + encodeURIComponent('мир'));
+check('«мир» что-то находит (' + (mir.total || 0) + ')', (mir.total || 0) > 0);
+check('в выдаче только подходящее',
+      (mir.items || []).every(x => /мир/i.test(x.name + ' ' + x.addr + ' ' + x.cat)),
+      'попало лишнее');
+// поиск идёт по всей стране, а не только вокруг выбранного города
+const mirFar = await json('/api/places?q=' + encodeURIComponent('мир') + '&lat=52.0976&lng=23.7341&r=50');
+check('радиус не режет поиск', (mirFar.total || 0) === (mir.total || 0),
+      'нашлось ' + (mirFar.total||0) + ' вместо ' + (mir.total||0));
+const zamok = await json('/api/places?q=' + encodeURIComponent('замок'));
+check('название важнее адреса: «замок» → первым замок',
+      /замок/i.test(((zamok.items || [])[0] || {}).name || ''),
+      'первым идёт ' + (((zamok.items || [])[0] || {}).name || 'ничего'));
+const mirFirst = ((mir.items || [])[0] || {}).name || '';
+check('«мир» → сначала Мирский замок, потом «Первой мировой»', /^мирский/i.test(mirFirst),
+      'первым идёт ' + mirFirst);
+
+const yo = await json('/api/places?q=' + encodeURIComponent('костел'));
+check('«е» и «ё» ищутся одинаково (' + (yo.total || 0) + ')', (yo.total || 0) > 0,
+      'по «костел» не находится «костёл»');
+const none = await json('/api/places?q=' + encodeURIComponent('щщщщ'));
+check('на бессмыслицу отвечает пустотой', (none.total || 0) === 0);
 
 // ── 3. описание точки ──────────────────────────────────────────────────────
 console.log('\n=== описание точки ===');
