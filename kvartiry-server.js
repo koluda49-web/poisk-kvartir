@@ -498,10 +498,15 @@ async function mapLimit(items, limit, fn){
 }
 
 // Галереи фото для Flatbook и 101hotels (в списочных данных фото одно) — тянем со страниц объектов, кэшируем.
-const GALLERY = new Map();   // "src|key" -> [urls]
+const GALLERY = new Map();   // "src|key" -> { at, list }
+// Найденную галерею держим до перезапуска: у объявления снимки не меняются.
+// А вот пустой ответ — только минуту: скорее всего страница просто не
+// ответила вовремя, и следующему посетителю стоит попробовать снова.
+const GALLERY_EMPTY_TTL = 60 * 1000;
 async function galleryFor(src, key){
   const ck = src+'|'+key;
-  if(GALLERY.has(ck)) return GALLERY.get(ck);
+  const was = GALLERY.get(ck);
+  if(was && (was.list.length || Date.now() - was.at < GALLERY_EMPTY_TTL)) return was.list;
   let out=[];
   try{
     if(src==='Flatbook'){
@@ -522,7 +527,7 @@ async function galleryFor(src, key){
     }
   }catch(e){ out=[]; }
   if(GALLERY.size>6000) GALLERY.clear();
-  GALLERY.set(ck, out);
+  GALLERY.set(ck, { at: Date.now(), list: out });
   return out;
 }
 // У Realt список зависит только от области и типа жилья — всё остальное отсеивается после.
@@ -2861,10 +2866,13 @@ async function loadGalleries(){
   if(window.__galBusy) return;
   const start=(window.__page-1)*PAGE_SIZE;
   const pageItems=(window.__items||[]).slice(start, start+PAGE_SIZE);
-  const need=pageItems.filter(x=>(x.src==='Flatbook'||x.src==='H101') && (!x.photos||x.photos.length<2) && !x.__galTried && x.link);
+  // Одна попытка на карточку — мало: страница объявления может не ответить
+  // вовремя, и тогда слайдер пропадает у этого посетителя навсегда.
+  // Даём вторую попытку через несколько секунд.
+  const need=pageItems.filter(x=>(x.src==='Flatbook'||x.src==='H101') && (!x.photos||x.photos.length<2) && (x.__galTry||0)<2 && x.link);
   if(!need.length) return;
   window.__galBusy=true;
-  need.forEach(x=>x.__galTried=true);
+  need.forEach(x=>x.__galTry=(x.__galTry||0)+1);
   const reqs=need.map(x=>({ src:x.src, key: x.src==='H101' ? (x.hid+'@@'+x.link) : x.link }));
   try{
     const r=await (await fetch('/api/gallery',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reqs:reqs})})).json();
@@ -2873,7 +2881,9 @@ async function loadGalleries(){
     need.forEach(x=>{ const key=x.src==='H101'?(x.hid+'@@'+x.link):x.link; const g=res[key]; if(g&&g.length>1){ x.photos=g; changed=true; } });
     window.__galBusy=false;
     if(changed){ applyPhotoFilter(); if(window.__view==='list') renderCards(); }
-  }catch(e){ window.__galBusy=false; }
+    const again = need.filter(x=>(!x.photos||x.photos.length<2) && x.__galTry<2);
+    if(again.length) setTimeout(loadGalleries, 4000);
+  }catch(e){ window.__galBusy=false; need.forEach(x=>x.__galTry=Math.max(0,(x.__galTry||1)-1)); }
 }
 function renderPager(pages){
   const el=$('#pager');
