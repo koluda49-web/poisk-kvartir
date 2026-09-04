@@ -1620,6 +1620,8 @@ const PAGE = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="Жильё на сутки — Kufar, Realt, Flatbook (Беларусь) и 101Hotels (Россия)">
 <meta name="twitter:description" content="${META_DESC}">
+<link rel="preload" as="image" href="/%D1%84%D0%BE%D1%82%D0%BE-%D1%82%D0%BE%D1%87%D0%B5%D0%BA/hero.jpg" media="(min-width:701px)">
+<link rel="preload" as="image" href="/%D1%84%D0%BE%D1%82%D0%BE-%D1%82%D0%BE%D1%87%D0%B5%D0%BA/hero-mob.jpg" media="(max-width:700px)">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8F%A0%3C/text%3E%3C/svg%3E">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icon-192.png">
@@ -1731,6 +1733,38 @@ h1 .accent{ color:var(--accent); }
 }
 /* Шапка: знак слева, источники справа. До сих пор сайт нечем было узнать —
    страница начиналась сразу с большого заголовка. */
+/* Фотополоса за шапкой и заголовком. Заливка задана и цветом, и снимком:
+   если снимок не загрузится, полоса всё равно тёмная и текст на ней читается. */
+.wrap{position:relative}
+.wrap::before{
+  content:"";position:absolute;left:0;right:0;top:0;z-index:-1;
+  height:clamp(430px,52vw,560px);
+  background-color:#2a201a;
+  background-image:linear-gradient(180deg,rgba(28,22,18,.66) 0,rgba(28,22,18,.72) 45%,var(--bg-grad-1) 97%),
+                   url("/фото-точек/hero.jpg");
+  background-size:auto, cover;
+  background-position:center, center 38%;
+  background-repeat:no-repeat, no-repeat;
+}
+/* На узком экране широкая полоса обрезается до куска стены — там свой кадр */
+@media (max-width:700px){
+  .wrap::before{
+    height:clamp(380px,96vw,460px);
+    background-image:linear-gradient(180deg,rgba(28,22,18,.62) 0,rgba(28,22,18,.72) 50%,var(--bg-grad-1) 97%),
+                     url("/фото-точек/hero-mob.jpg");
+    background-position:center, center 30%;
+  }
+}
+/* На полосе текст светлый — на своём обычном цвете он бы пропал */
+.hero-ink, .hero-ink h1{color:#fff}
+.hero-ink .lead{color:rgba(255,255,255,.86)}
+.hero-ink .brand{color:#fff}
+.hero-ink .brand b{color:rgba(255,255,255,.72)}
+.hero-ink h1 .accent{color:#ffb289}
+.hero-ink .top{border-bottom-color:rgba(255,255,255,.22)}
+.hero-ink .kicker{color:rgba(255,255,255,.88);background:rgba(255,255,255,.10);border-color:rgba(255,255,255,.24)}
+.hero-ink .kicker .dot{background:#ffb289}
+
 .top{
   display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;
   padding-bottom:clamp(16px,3vw,26px);margin-bottom:clamp(14px,2.6vw,24px);
@@ -2353,6 +2387,7 @@ h1 .accent{ color:var(--accent); }
 }
 </style></head><body>
 <div class="wrap">
+ <div class="hero-ink">
   <header class="top">
     <a class="brand" href="/" aria-label="Поиск жилья на сутки">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.4 12 4l9 7.4V20a1 1 0 0 1-1 1h-5.2v-5.6H9.2V21H4a1 1 0 0 1-1-1z"/></svg>
@@ -2362,6 +2397,8 @@ h1 .accent{ color:var(--accent); }
   </header>
   <h1>Жильё на сутки, <span class="accent">без лишних вкладок</span></h1>
   <p class="lead">Квартиры, коттеджи и усадьбы на сутки из Kufar, Realt и Flatbook по Беларуси — плюс отели и жильё России с 101Hotels. Всё в одной ленте и на карте: настройте фильтры и найдите вариант под свою дату и бюджет.</p>
+
+ </div>
 
   <div class="country">
     <button id="cbBY" class="on" type="button" onclick="setCountry('by')">🇧🇾 Беларусь · посуточно</button>
