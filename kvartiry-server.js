@@ -774,6 +774,11 @@ const RF_CITIES = {
   'sestroretsk':{name:'Сестрорецк', lat:60.1015, lng:29.9574, d:0.1},
   'lomonosov':{name:'Ломоносов', lat:59.9107, lng:29.7360, d:0.1},
   'solnechnoe':{name:'Солнечное', lat:60.1518, lng:29.9345, d:0.1},
+  'kareliya':{name:'Республика Карелия (вся)', lat:62.5, lng:33.5, d:2.6},
+  'petrozavodsk':{name:'Петрозаводск', lat:61.7849, lng:34.3469, d:0.12},
+  'sortavala':{name:'Сортавала', lat:61.7031, lng:30.6906, d:0.1},
+  'medvezhegorsk':{name:'Медвежьегорск', lat:62.9166, lng:34.4569, d:0.1},
+  'kostomuksha':{name:'Костомукша', lat:64.5783, lng:30.5836, d:0.1},
   'ekaterinburg':{name:'Екатеринбург', lat:56.8386, lng:60.6055, d:0.12},
   'chelyabinsk':{name:'Челябинск', lat:55.1602, lng:61.4006, d:0.12},
   'tyumen':{name:'Тюмень', lat:57.1529, lng:65.5341, d:0.12},
@@ -896,7 +901,7 @@ const EXTRA_PLACES = [
   "name": "Свято-Успенский Жировичский монастырь",
   "lat": 53.03,
   "lng": 25.342,
-  "addr": "XVII–XVIII вв.",
+  "addr": "аг. Жировичи, Слонимский р-н",
   "cat": "Монастырь",
   "group": "Из маршрутов",
   "pic": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b6/%D0%92._%D0%96%D1%8B%D1%80%D0%BE%D0%B2%D1%96%D1%87%D1%8B_-_%D0%90%D0%BD%D1%81%D0%B0%D0%BC%D0%B1%D0%B0%D0%BB%D1%8C_%D0%A1%D1%8C%D0%B2%D1%8F%D1%82%D0%B0-%D0%A3%D1%81%D1%8C%D0%BF%D0%B5%D0%BD%D1%81%D0%BA%D0%B0%D0%B3%D0%B0_%D0%BC%D0%B0%D0%BD%D0%B0%D1%81%D1%82%D1%8B%D1%80%D0%B0_PICT3028.jpg/960px-%D0%92._%D0%96%D1%8B%D1%80%D0%BE%D0%B2%D1%96%D1%87%D1%8B_-_%D0%90%D0%BD%D1%81%D0%B0%D0%BC%D0%B1%D0%B0%D0%BB%D1%8C_%D0%A1%D1%8C%D0%B2%D1%8F%D1%82%D0%B0-%D0%A3%D1%81%D1%8C%D0%BF%D0%B5%D0%BD%D1%81%D0%BA%D0%B0%D0%B3%D0%B0_%D0%BC%D0%B0%D0%BD%D0%B0%D1%81%D1%82%D1%8B%D1%80%D0%B0_PICT3028.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
@@ -910,7 +915,7 @@ const EXTRA_PLACES = [
   "name": "Памятник Тысячелетия Бреста",
   "lat": 52.092795,
   "lng": 23.692994,
-  "addr": "ул. Советская",
+  "addr": "Брест, ул. Советская",
   "cat": "памятник",
   "group": "Из маршрутов",
   "pic": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/83/Lieninski_rajon%2C_Brest%2C_Belarus_-_panoramio_%287%29.jpg/960px-Lieninski_rajon%2C_Brest%2C_Belarus_-_panoramio_%287%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
@@ -924,7 +929,7 @@ const EXTRA_PLACES = [
   "name": "Брестский музей железнодорожной техники",
   "lat": 52.085655,
   "lng": 23.672189,
-  "addr": "пр. Машерова, 2",
+  "addr": "Брест, пр. Машерова, 2",
   "cat": "музей",
   "group": "Из маршрутов",
   "pic": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/43/%D0%A1%D1%83250-30%2C_%D0%91%D0%B5%D0%BB%D0%B0%D1%80%D1%83%D1%81%D1%8C%2C_%D0%91%D1%80%D0%B5%D1%81%D1%82%D1%81%D0%BA%D0%B0%D1%8F_%D0%BE%D0%B1%D0%BB%D0%B0%D1%81%D1%82%D1%8C%2C_%D0%91%D1%80%D0%B5%D1%81%D1%82%D1%81%D0%BA%D0%B8%D0%B9_%D0%BC%D1%83%D0%B7%D0%B5%D0%B9_%D0%B6%D0%B5%D0%BB%D0%B5%D0%B7%D0%BD%D0%BE%D0%B4%D0%BE%D1%80%D0%BE%D0%B6%D0%BD%D0%BE%D0%B9_%D1%82%D0%B5%D1%85%D0%BD%D0%B8%D0%BA%D0%B8_%28Trainpix_204915%29.jpg/960px-thumbnail.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
@@ -938,7 +943,7 @@ const EXTRA_PLACES = [
   "name": "Памятник Жану Эммануэлю Жилиберу",
   "lat": 53.685987,
   "lng": 23.835413,
-  "addr": "парк Жилибера",
+  "addr": "Гродно, парк Жилибера",
   "cat": "памятник",
   "group": "Из маршрутов",
   "pic": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/68/%D0%9F%D0%BE%D0%BC%D0%BD%D1%96%D0%BA_%D0%96%D1%8B%D0%BB%D1%8C%D0%B1%D0%B5%D1%80%D1%83.jpg/960px-%D0%9F%D0%BE%D0%BC%D0%BD%D1%96%D0%BA_%D0%96%D1%8B%D0%BB%D1%8C%D0%B1%D0%B5%D1%80%D1%83.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
@@ -952,7 +957,7 @@ const EXTRA_PLACES = [
   "name": "Костёл Обретения Святого Креста и монастырь бернардинцев",
   "lat": 53.674795,
   "lng": 23.83023,
-  "addr": "ул. Парижской Коммуны, 1",
+  "addr": "Гродно, ул. Парижской Коммуны, 1",
   "cat": "костёл",
   "group": "Из маршрутов",
   "pic": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/97/Vilniaus_Kalvariju_baznycia.jpg/960px-Vilniaus_Kalvariju_baznycia.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
@@ -966,7 +971,7 @@ const EXTRA_PLACES = [
   "name": "Свято-Покровский кафедральный собор",
   "lat": 53.684498,
   "lng": 23.841407,
-  "addr": "ул. Ожешко, 23",
+  "addr": "Гродно, ул. Ожешко, 23",
   "cat": "собор",
   "group": "Из маршрутов",
   "pic": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/10/%D0%A1%D0%B2%D1%8F%D1%82%D0%BE-%D0%9F%D0%BE%D0%BA%D1%80%D0%BE%D0%B2%D1%81%D0%BA%D0%B8%D0%B9_%D0%9A%D0%B0%D1%84%D0%B5%D0%B4%D1%80%D0%B0%D0%BB%D1%8C%D0%BD%D1%8B%D0%B9_%D0%A1%D0%BE%D0%B1%D0%BE%D1%80.JPG/960px-%D0%A1%D0%B2%D1%8F%D1%82%D0%BE-%D0%9F%D0%BE%D0%BA%D1%80%D0%BE%D0%B2%D1%81%D0%BA%D0%B8%D0%B9_%D0%9A%D0%B0%D1%84%D0%B5%D0%B4%D1%80%D0%B0%D0%BB%D1%8C%D0%BD%D1%8B%D0%B9_%D0%A1%D0%BE%D0%B1%D0%BE%D1%80.JPG?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
@@ -1013,7 +1018,7 @@ const EXTRA_PLACES = [
   "name": "Часы «Время зажжения фонарей» и брестский фонарщик",
   "lat": 52.091211,
   "lng": 23.69223,
-  "addr": "ул. Советская",
+  "addr": "Брест, ул. Советская",
   "cat": "ритуал",
   "group": "Из маршрутов",
   "pic": "/фото-точек/lamplighter.jpg",
@@ -1025,7 +1030,7 @@ const EXTRA_PLACES = [
   "name": "Скульптура «Любовник» и знак «Место для поцелуев»",
   "lat": 52.088355,
   "lng": 23.692606,
-  "addr": "ул. Дзержинского, 21",
+  "addr": "Брест, ул. Дзержинского, 21",
   "cat": "скульптура",
   "group": "Из маршрутов",
   "pic": "",
@@ -1036,7 +1041,7 @@ const EXTRA_PLACES = [
   "name": "«Счастливый сапог»",
   "lat": 52.093996,
   "lng": 23.692077,
-  "addr": "ул. Советская, 34",
+  "addr": "Брест, ул. Советская, 34",
   "cat": "скульптура",
   "group": "Из маршрутов",
   "pic": "",
@@ -1047,7 +1052,7 @@ const EXTRA_PLACES = [
   "name": "«Пуговица фонарщика»",
   "lat": 52.0888,
   "lng": 23.695076,
-  "addr": "ул. Гоголя",
+  "addr": "Брест, ул. Гоголя",
   "cat": "арт-объект",
   "group": "Из маршрутов",
   "pic": "",
@@ -1058,7 +1063,7 @@ const EXTRA_PLACES = [
   "name": "Инсталляция «Любовь есть»",
   "lat": 52.091588,
   "lng": 23.693828,
-  "addr": "ул. Советская",
+  "addr": "Брест, ул. Советская",
   "cat": "арт-объект",
   "group": "Из маршрутов",
   "pic": "",
@@ -1069,7 +1074,7 @@ const EXTRA_PLACES = [
   "name": "Лавочка примирения",
   "lat": 52.085341,
   "lng": 23.682334,
-  "addr": "бульвар Шевченко",
+  "addr": "Брест, бульвар Шевченко",
   "cat": "скульптура",
   "group": "Из маршрутов",
   "pic": "",
@@ -1080,7 +1085,7 @@ const EXTRA_PLACES = [
   "name": "«Старый город» (кошки)",
   "lat": 52.095898,
   "lng": 23.690084,
-  "addr": "ул. Советская",
+  "addr": "Брест, ул. Советская",
   "cat": "арт-объект",
   "group": "Из маршрутов",
   "pic": "/фото-точек/koty.jpg",
@@ -1092,7 +1097,7 @@ const EXTRA_PLACES = [
   "name": "Музей «Спасённые художественные ценности»",
   "lat": 52.086684,
   "lng": 23.686331,
-  "addr": "ул. Ленина, 39",
+  "addr": "Брест, ул. Ленина, 39",
   "cat": "музей",
   "group": "Из маршрутов",
   "pic": "",
@@ -1103,7 +1108,7 @@ const EXTRA_PLACES = [
   "name": "Брестский областной краеведческий музей",
   "lat": 52.090129,
   "lng": 23.689331,
-  "addr": "ул. К. Маркса, 60",
+  "addr": "Брест, ул. К. Маркса, 60",
   "cat": "музей",
   "group": "Из маршрутов",
   "pic": "",
@@ -1114,7 +1119,7 @@ const EXTRA_PLACES = [
   "name": "Лягушка-путешественница",
   "lat": 53.685948,
   "lng": 23.844594,
-  "addr": "ул. Ожешко, у ж/д вокзала",
+  "addr": "Гродно, ул. Ожешко, у ж/д вокзала",
   "cat": "скульптура",
   "group": "Из маршрутов",
   "pic": "",
@@ -1125,7 +1130,7 @@ const EXTRA_PLACES = [
   "name": "Скамейка любви",
   "lat": 53.683993,
   "lng": 23.835969,
-  "addr": "парк Жилибера",
+  "addr": "Гродно, парк Жилибера",
   "cat": "скамейка",
   "group": "Из маршрутов",
   "pic": "",
@@ -1136,7 +1141,7 @@ const EXTRA_PLACES = [
   "name": "Скамейка примирения",
   "lat": 53.684002,
   "lng": 23.836625,
-  "addr": "парк Жилибера",
+  "addr": "Гродно, парк Жилибера",
   "cat": "скамейка",
   "group": "Из маршрутов",
   "pic": "",
@@ -1147,7 +1152,7 @@ const EXTRA_PLACES = [
   "name": "Купидон",
   "lat": 53.682656,
   "lng": 23.832296,
-  "addr": "центр города",
+  "addr": "Гродно, центр города",
   "cat": "скульптура",
   "group": "Из маршрутов",
   "pic": "",
@@ -1158,7 +1163,7 @@ const EXTRA_PLACES = [
   "name": "Скамья архитекторов",
   "lat": 53.684535,
   "lng": 23.834708,
-  "addr": "площадь Тызенгауза",
+  "addr": "Гродно, площадь Тызенгауза",
   "cat": "скульптура",
   "group": "Из маршрутов",
   "pic": "",
@@ -1169,7 +1174,7 @@ const EXTRA_PLACES = [
   "name": "«Я люблю тебя, Гродно!»",
   "lat": 53.68429,
   "lng": 23.836131,
-  "addr": "парк Жилибера",
+  "addr": "Гродно, парк Жилибера",
   "cat": "арт-объект",
   "group": "Из маршрутов",
   "pic": "",
@@ -1180,7 +1185,7 @@ const EXTRA_PLACES = [
   "name": "Скульптуры героев фильма «Белые Росы»",
   "lat": 53.707567,
   "lng": 23.843595,
-  "addr": "микрорайон Девятовка, ул. Дзержинского / Курчатова",
+  "addr": "Гродно, микрорайон Девятовка, ул. Дзержинского / Курчатова",
   "cat": "скульптура",
   "group": "Из маршрутов",
   "pic": "",
@@ -1191,7 +1196,7 @@ const EXTRA_PLACES = [
   "name": "Лютеранская кирха Святого Иоанна",
   "lat": 53.687063,
   "lng": 23.840521,
-  "addr": "ул. Академическая, 7а",
+  "addr": "Гродно, ул. Академическая, 7а",
   "cat": "кирха",
   "group": "Из маршрутов",
   "pic": "",
@@ -1202,7 +1207,7 @@ const EXTRA_PLACES = [
   "name": "Костёл Девы Марии Ангельской и монастырь францисканцев",
   "lat": 53.671985,
   "lng": 23.822247,
-  "addr": "ул. Огородная, 5",
+  "addr": "Гродно, ул. Огородная, 5",
   "cat": "костёл",
   "group": "Из маршрутов",
   "pic": "",
@@ -1213,7 +1218,7 @@ const EXTRA_PLACES = [
   "name": "Корпус ГрГУ имени Янки Купалы, увитый диким виноградом",
   "lat": 53.684994,
   "lng": 23.840073,
-  "addr": "ул. Ожешко, 22",
+  "addr": "Гродно, ул. Ожешко, 22",
   "cat": "здание",
   "group": "Из маршрутов",
   "pic": "",
@@ -1224,7 +1229,7 @@ const EXTRA_PLACES = [
   "name": "Августовский канал · шлюз «Немново»",
   "lat": 53.869476,
   "lng": 23.757476,
-  "addr": "д. Немново, ~35 км от Гродно",
+  "addr": "д. Немново, Гродненский р-н, ~35 км от Гродно",
   "cat": "канал",
   "group": "Из маршрутов",
   "pic": "/фото-точек/nemnovo.jpg",
@@ -1236,7 +1241,7 @@ const EXTRA_PLACES = [
   "name": "Музей автозаправочных колонок",
   "lat": 53.708177,
   "lng": 23.839407,
-  "addr": "ул. Победы",
+  "addr": "Гродно, ул. Победы",
   "cat": "музей",
   "group": "Из маршрутов",
   "pic": "",
@@ -1539,20 +1544,20 @@ async function cityPage(slug, kind){
 const ICON_192 = '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';
 const ICON_512 = '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';
 
-const META_DESC = 'Поиск жилья на сутки: Беларусь (Kufar, Realt, Flatbook) и отели России (101Hotels) в одном месте. Фильтры по городу, типу, цене, звёздам, рейтингу и удобствам, список и карта с ценами, телефоны и описания.';
+const META_DESC = 'Поиск жилья на сутки: Беларусь (Kufar, Realt, Flatbook) и отели России (101Hotels) в одном месте. Плюс раздел «Что посетить» — почти 800 достопримечательностей Беларуси на карте с фото, описанием и координатами, и подбор жилья рядом с каждой.';
 
 const PAGE = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Жильё на сутки — Беларусь (Kufar, Realt, Flatbook) и отели России (101Hotels)</title>
+<title>Жильё на сутки в Беларуси и России + что посмотреть рядом — Kufar, Realt, Flatbook, 101Hotels</title>
 <meta name="description" content="${META_DESC}">
-<meta name="keywords" content="снять квартиру на сутки, жильё на сутки Беларусь, квартира посуточно Минск, коттедж на сутки, усадьба на выходные, аренда посуточно Брест Гомель Гродно Витебск Могилёв, отели России посуточно, kufar, realt, flatbook, 101hotels">
+<meta name="keywords" content="снять квартиру на сутки, жильё на сутки Беларусь, квартира посуточно Минск, коттедж на сутки, усадьба на выходные, аренда посуточно Брест Гомель Гродно Витебск Могилёв, отели России посуточно, kufar, realt, flatbook, 101hotels, что посмотреть в Беларуси, достопримечательности Беларуси, замки Беларуси, куда съездить на выходные, карта достопримечательностей">
 <meta name="robots" content="index,follow">
 <meta name="author" content="poisk-kvartir">
 <meta name="theme-color" content="#ff5a1f">
 <link rel="canonical" href="${SITE_URL}/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Поиск жилья на сутки">
-<meta property="og:title" content="Жильё на сутки — Беларусь (Kufar, Realt, Flatbook) и Россия (101Hotels)">
+<meta property="og:title" content="Жильё на сутки в Беларуси и России + что посмотреть рядом">
 <meta property="og:description" content="${META_DESC}">
 <meta property="og:url" content="${SITE_URL}/">
 <meta property="og:locale" content="ru_BY">
@@ -1568,7 +1573,8 @@ const PAGE = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
 <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <script type="application/ld+json">
-{"@context":"https://schema.org","@type":"WebSite","name":"Поиск жилья на сутки","url":"${SITE_URL}/","inLanguage":"ru-BY","description":"${META_DESC}"}
+{"@context":"https://schema.org","@type":"WebSite","name":"Поиск жилья на сутки","url":"${SITE_URL}/","inLanguage":"ru-BY","description":"${META_DESC}",
+ "potentialAction":{"@type":"SearchAction","target":{"@type":"EntryPoint","urlTemplate":"${SITE_URL}/?country=places&q={search_term_string}"},"query-input":"required name=search_term_string"}}
 </script>
 <style>
 :root{
@@ -2562,7 +2568,7 @@ function setCountry(c, quiet){
   const pr = $('#presets'); if(pr) pr.style.display = (ru || pl) ? 'none' : '';
   const ft = $('#fToggle'); if(ft) ft.style.display = (ru || pl) ? 'none' : '';
   if(!window.__hintBY) window.__hintBY = $('#hint').innerHTML;
-  $('#hint').innerHTML = ru ? HINT_RU : window.__hintBY;
+  $('#hint').innerHTML = pl ? HINT_PL : (ru ? HINT_RU : window.__hintBY);
   window.__page = 1;
   if(!quiet) run();
 }
@@ -2594,6 +2600,7 @@ function sortItems(){
   (window.__items||[]).sort(function(a,b){ return s==='price_desc'? b.price-a.price : s==='rating_desc'? (((b.rating||0)-(a.rating||0))||(a.price-b.price)) : a.price-b.price; });
 }
 async function runRF(){
+  ++window.__runToken;   // то же самое при переходе на вкладку России
   syncUrl();
   const p=new URLSearchParams({ city:$('#rfCity').value });
   const t=$('#rfType').value;   if(t)  p.set('type', t);
@@ -2712,6 +2719,9 @@ async function run(){
   syncPresets();
 }
 function renderCards(){
+  // Второй рубеж: даже если запоздалый ответ доберётся сюда, он не должен
+  // рисовать квартиры в ленте мест.
+  if(window.__mode === 'places' && window.__view !== 'fav') return;
   const all = (window.__view==='fav') ? FAVS : (window.__items||[]);
   if(window.__view==='fav' && !all.length){
     $('#grid').innerHTML='<div class="empty">Здесь пусто. Нажмите ♥ на понравившемся варианте — он сохранится в вашем браузере.</div>';
@@ -3194,6 +3204,9 @@ function plParams(){
 }
 
 async function runPlaces(){
+  // Поиск жилья мог быть ещё в полёте: его ответ дорисовал бы свои карточки
+  // поверх мест. Сдвигаем метку — старый запрос увидит её и сам замолчит.
+  ++window.__runToken;
   const c = plCityCoords(), r = $('#plRadius').value, g = $('#plGroup').value;
   const q = $('#plQ').value.trim();
   // при поиске по названию ищем по всей стране, поэтому город и радиус гасим
@@ -3226,6 +3239,9 @@ async function runPlaces(){
 }
 
 function renderPlaces(){
+  // Тот же рубеж в обратную сторону: запоздалый ответ по местам не должен
+  // рисовать точки в ленте жилья.
+  if(window.__mode !== 'places') return;
   const list = window.__places || [];
   if(!list.length){ $('#grid').innerHTML = '<div class="empty">Здесь ничего не нашлось. Попробуйте больший радиус.</div>'; return; }
   $('#grid').className = 'pl-grid';
@@ -3435,6 +3451,14 @@ function nextWeekend(){
     String(x.getMonth()+1).padStart(2,'0') + '-' + String(x.getDate()).padStart(2,'0');
   return [fmt(a), fmt(b)];
 }
+const HINT_PL = 'Раздел «Что посетить» — почти 800 достопримечательностей Беларуси: замки, костёлы, '
+  + 'усадьбы, форты, музеи и памятники. У каждой точки фотография, короткое описание и координаты; '
+  + 'на карте нажмите метку, чтобы построить маршрут в Яндекс.Картах прямо с телефона. Кнопка '
+  + '«Жильё рядом» подбирает квартиры и усадьбы на сутки в 30 км от выбранного места — из Kufar, '
+  + 'Realt и Flatbook. Описания и фотографии взяты с нашего же сайта '
+  + '<a href="https://kudin.by" target="_blank" rel="noopener">kudin.by</a> — карты архитектурного '
+  + 'наследия Беларуси, ссылка «Подробнее» ведёт на полную страницу памятника.';
+
 const PRESETS = {
   cheap:   function(on){ $('#max').value = on ? '60' : ''; },
   company: function(on){ $('#guests').value = on ? '6' : ''; },
