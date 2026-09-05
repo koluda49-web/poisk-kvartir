@@ -22,6 +22,13 @@ const STATS_FILE = process.env.STATS_FILE || (__dirname + '/stats-data.json');
 const STATS_KEY  = process.env.STATS_KEY  || 'poisk2026';   // страница /stats?key=…
 const STATS_MAX  = 60000;                                   // сколько событий держим в памяти
 let STATS = [], statsDirty = false;
+const ЗАПУЩЕН = Date.now();
+function уптайм(){
+  const м = Math.round((Date.now() - ЗАПУЩЕН) / 60000);
+  if(м < 60) return м + ' мин';
+  const ч = Math.floor(м / 60);
+  return ч + ' ч ' + (м % 60) + ' мин';
+}
 
 try{
   STATS = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
@@ -266,6 +273,19 @@ function statsPage(){
       tile('Всего заходов', only(humanAll,'view').length, uniq(only(humanAll,'view')) + ' чел.') +
       tile('Открыли объявление', weekA.filter(function(x){ return x.e==='open'||x.e==='call'; }).length, 'за 7 дней') +
     '</div>' +
+
+    // Бесплатный Render усыпляет сайт после 15 минут без запросов, и первый
+    // зашедший ждёт полминуты. По этой плитке видно, засыпает ли он: если
+    // время работы почти всегда меньше 15 минут — значит да, и нужен
+    // внешний пингер.
+    '<h2>Сон сервера</h2><div class="card"><div class="tiles">' +
+      tile('Работает без перерыва', уптайм(), 'с последнего запуска') +
+      tile('Событий за это время', STATS.length, 'всё, что успели записать') +
+    '</div><p class="note">' +
+      (Date.now() - ЗАПУЩЕН < 15 * 60 * 1000
+        ? 'Меньше 15 минут — похоже, сайт засыпал и только что проснулся. Первый зашедший в такой момент ждёт около полуминуты. Лечится внешним пингером раз в 5–10 минут.'
+        : 'Больше 15 минут — сайт не засыпал, посетители попадают на готовый.') +
+    '</p></div>' +
 
     '<h2>Путь посетителя за 7 дней</h2><div class="card funnel">' +
       '<div><b>' + sessView.size + '</b> зашли на сайт</div>' +
