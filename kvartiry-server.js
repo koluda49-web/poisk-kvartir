@@ -1323,6 +1323,22 @@ const REGION_CENTERS = [
   ['vitebsk',    55.1904, 30.2049], ['gomel',     52.4345, 30.9754],
   ['mogilev',    53.9007, 30.3313],
 ];
+// Ближайший к точке город, для которого мы знаем координаты, и область,
+// в которой он лежит. Нужен для подбора жилья рядом с достопримечательностью:
+// поиск по областному центру не находит ни Лиду, ни Ошмяны, ни Быхов.
+function nearestTown(lat, lng){
+  let best = null, bd = Infinity;
+  for(const name in TOWN_CENTERS){
+    const c = TOWN_CENTERS[name];
+    const d = distKm(lat, lng, c[0], c[1]);
+    if(d < bd){ bd = d; best = name; }
+  }
+  if(!best) return null;
+  let key = 'minsk';
+  for(const k in CITIES_MAP) if(CITIES_MAP[k].indexOf(best) >= 0){ key = k; break; }
+  return { town: best, region: key, km: Math.round(bd * 10) / 10 };
+}
+
 function nearestRegion(lat, lng){
   let best = 'minsk', bd = Infinity;
   for(const [key, a, o] of REGION_CENTERS){
@@ -4011,10 +4027,13 @@ http.createServer(async (req,res)=>{
     const r = +(u.searchParams.get('r') || 30);
     let items = [], region = '';
     if(lat && lng){
-      // ищем по ближайшей области, затем отбираем по расстоянию
-      const reg = nearestRegion(lat, lng);
+      // Ищем вокруг ближайшего города, а не вокруг центра области: у замка
+      // в Лиде жильё есть, а по запросу «Гродно» его не видно.
+      const near = nearestTown(lat, lng);
+      const reg = (near && near.km <= 60) ? near.region : nearestRegion(lat, lng);
       region = reg;
-      const q = new URLSearchParams({ region:reg, city:'', type:(u.searchParams.get('type')||'flat'),
+      const town = (near && near.km <= 60 && near.town !== REGIONS[reg].main) ? near.town : '';
+      const q = new URLSearchParams({ region:reg, city:town, type:(u.searchParams.get('type')||'flat'),
                                       rooms:'', guests:'', max:'', source:'both' });
       try{
         const d = await runSearchQuery(q);
