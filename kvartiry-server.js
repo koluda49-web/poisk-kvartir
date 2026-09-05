@@ -1299,6 +1299,17 @@ const EXTRA_PLACES = [
   "author": "фото автора маршрута"
  },
  {
+  "id": 910025,
+  "name": "Парк-отель «Версаль»",
+  "lat": 53.500866,
+  "lng": 27.747423,
+  "addr": "аг. Сергеевичи, Пуховичский р-н, ~70 км от Минска",
+  "cat": "парк-отель",
+  "group": "Из маршрутов",
+  "pic": "",
+  "text": "Усадебный комплекс на берегу Сергеевского озера, в 70 км от Минска. Регулярный французский парк со смотровой площадкой, мини-зоопарк, дворец с парадной лестницей. Место рассчитано на отдых с ночёвкой, но по парку пускают и погулять."
+ },
+ {
   "id": 910024,
   "name": "Музей автозаправочных колонок",
   "lat": 53.708177,
@@ -1358,8 +1369,49 @@ function distKm(a1, o1, a2, o2){
   return 6371 * 2 * Math.asin(Math.sqrt(h));
 }
 
+// Приводим название к виду, по которому сравниваем имя файла и имя точки:
+// без кавычек, знаков и разницы между «е» и «ё». «Парк-отель «Версаль»» и
+// файл «Парк-отель Версаль.jpg» после этого совпадают.
+function normPlace(t){
+  return String(t || '').toLowerCase().replace(/ё/g, 'е')
+    .replace(/[«»"'`.,:;!?()\[\]—–_-]/g, ' ')
+    .replace(/\s+\d+$/, '')          // «Название 2.jpg» — второй снимок той же точки
+    .replace(/\s+/g, ' ').trim();
+}
+
+// Что лежит в папке со снимками. Перечитываем раз в минуту: положили файл —
+// через минуту он на сайте, перезапускать ничего не надо.
+let PHOTO_DIR = { at: 0, byName: {} };
+function ownPhotos(){
+  if(Date.now() - PHOTO_DIR.at < 60 * 1000) return PHOTO_DIR.byName;
+  const byName = {};
+  try{
+    for(const f of fs.readdirSync(__dirname + '/фото-точек')){
+      if(!/\.(jpg|jpeg|png|webp)$/i.test(f)) continue;
+      const key = normPlace(f.replace(/\.[^.]+$/, ''));
+      if(key && !byName[key]) byName[key] = f;
+    }
+  }catch(e){}
+  PHOTO_DIR = { at: Date.now(), byName };
+  return byName;
+}
+
+// Свой снимок побеждает снимок из справочника: его кладут осознанно,
+// чтобы заменить неудачный кадр или добавить недостающий.
+function attachOwn(list){
+  const m = ownPhotos();
+  for(const k in m){
+    return list.map(p => {
+      const f = m[normPlace(p.name)];
+      return f ? Object.assign({}, p, { pic: '/фото-точек/' + f,
+                                        author: p.author || 'фото автора маршрута' }) : p;
+    });
+  }
+  return list;                       // папка пуста — ничего не трогаем
+}
+
 async function placesRaw(){
-  return cached('raw|places', async ()=>{
+  const raw = await cached('raw|places', async ()=>{
     const [pts, filters] = await Promise.all([
       fetch(KUDIN + '/api/v1/points/',  {headers:{'User-Agent':UA}}).then(r=>r.json()),
       fetch(KUDIN + '/api/v1/filters/', {headers:{'User-Agent':UA}}).then(r=>r.json()),
@@ -1387,6 +1439,9 @@ async function placesRaw(){
       .map(p => PLACES_WITH_PEOPLE.has(p.id) ? Object.assign({}, p, { pic: '' }) : p);
     return clean.concat(EXTRA_PLACES);
   }, PLACES_TTL);
+  // Привязку делаем поверх кэша, а не внутри: иначе новый файл ждал бы
+  // шести часов, пока справочник перечитается.
+  return attachOwn(raw);
 }
 
 // короткое описание одной точки; полный текст остаётся на kudin.by
@@ -3920,7 +3975,14 @@ http.createServer(async (req,res)=>{
   // собственные фотографии точек: лежат файлами рядом с сервером
   if(u.pathname.startsWith('/фото-точек/') || u.pathname.startsWith('/%D1%84%D0%BE%D1%82%D0%BE-%D1%82%D0%BE%D1%87%D0%B5%D0%BA/')){
     const name = decodeURIComponent(u.pathname).split('/').pop();
-    if(!/^[a-z0-9_-]+\.(jpg|jpeg|png|webp)$/i.test(name)){ res.writeHead(404); res.end(); return; }
+    // Имя разрешаем русское: файл называют именем точки, и заставлять
+    // переименовывать в латиницу значит терять весь смысл затеи.
+    // Наружу из папки не выпускаем: косые черты уже отрезаны выше, здесь
+    // отсекаем обратную косую и переход на уровень выше.
+    if(name.indexOf('..') >= 0 || /[\\/:*?"<>|]/.test(name)
+       || !/^[0-9A-Za-zА-Яа-яЁё _.()-]+\.(jpg|jpeg|png|webp)$/.test(name)){
+      res.writeHead(404); res.end(); return;
+    }
     try{
       const buf = fs.readFileSync(__dirname + '/фото-точек/' + name);
       res.writeHead(200, {'Content-Type': /png$/i.test(name) ? 'image/png' : 'image/jpeg',
