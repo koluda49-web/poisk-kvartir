@@ -3606,6 +3606,14 @@ function allStay(btn){
   fillCities();
   $('#city').value = '';
   $('#type').value = 'flat';
+  // Кнопка обещает ВСЕ варианты, а блок «жильё рядом» и показывает всё подряд,
+  // не глядя на фильтры. Если оставить прежние — «1 комната», «только
+  // Flatbook» — человек попадёт на узкий список и решит, что вариантов мало.
+  // Даты заезда и выезда не трогаем: это его поездка, а не фильтр.
+  ['rooms','guests','min','max','qname'].forEach(function(id){ const el=$('#'+id); if(el) el.value=''; });
+  $('#source').value = 'both';
+  const ph = $('#onlyPhoto'); if(ph) ph.checked = false;
+  document.querySelectorAll('#bar .rb-amen-cb').forEach(function(cb){ cb.checked = false; });
   syncPresets();
   setCountry('by');
   syncUrl();

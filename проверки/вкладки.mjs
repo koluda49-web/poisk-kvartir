@@ -113,6 +113,40 @@ const after = await js("(function(){ document.querySelector('#plBtn').click();"
   + " return document.querySelector('#plBtn').textContent; })()");
 check('кнопка отвечает на нажатие', /Записали/.test(after || ''), 'на кнопке: ' + after);
 
+// ── кнопка «Показать все варианты в области» ────────
+// Кнопка обещает все варианты. Если оставить прежние фильтры человека —
+// «1 комната», «только Flatbook» — он увидит узкий список и решит, что
+// вариантов мало. Блок «жильё рядом» показывает всё подряд, и переход
+// с него должен вести туда же.
+console.log('\n=== кнопка «показать все варианты» ===');
+{
+  await send('Page.navigate', { url: SITE + '/?region=minsk-obl&rooms=1&source=flatbook' });
+  for (let i = 0; i < 90; i++) { if (await js("!!document.querySelector('#cbPL')")) break; await sleep(300); }
+  await sleep(4000);
+  await js("document.querySelector('#cbPL').click(); 1");
+  await sleep(6000);
+  await js('stayNear(0); 1');
+  for (let i = 0; i < 60; i++) { if (await js("!!document.querySelector('.allstay')")) break; await sleep(700); }
+  const есть = await js("!!document.querySelector('.allstay')");
+  check('кнопка появилась', есть, 'без неё проверять нечего');
+  if (есть) {
+    await js("document.querySelector('.allstay').click(); 1");
+    await sleep(9000);
+    const r = JSON.parse(await js(`JSON.stringify({
+      rooms: document.querySelector('#rooms').value,
+      source: document.querySelector('#source').value,
+      max: document.querySelector('#max').value,
+      preset: !!document.querySelector('.preset.on'),
+      url: location.search,
+      stat: (document.querySelector('#stat')||{}).textContent})`));
+    check('число комнат сброшено', r.rooms === '', 'осталось «' + r.rooms + '»');
+    check('источник сброшен на все', r.source === 'both', 'остался «' + r.source + '»');
+    check('цена сброшена', r.max === '', 'осталось «' + r.max + '»');
+    check('быстрый набор погашен', !r.preset, 'подсвечен набор, который уже не применён');
+    check('в адресе нет старых фильтров', !/rooms=|source=/.test(r.url), r.url);
+  }
+}
+
 console.log('\nИтог: успешно ' + passed + ', провалено ' + failed);
 ws.close(); chrome.kill();
 process.exit(failed ? 1 : 0);
