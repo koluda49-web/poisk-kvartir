@@ -105,5 +105,35 @@ const locs = (sitemap.match(/<loc>/g) || []).length;
 check('карта сайта содержит все страницы (' + locs + ')', locs >= 12,
       'ждали хотя бы 12 адресов');
 
+// ── обновление у тех, кто добавил сайт на экран ────────────
+// Без указаний о хранении Safari решает сам, сколько держать копию —
+// и человек с ярлыком на домашнем экране может неделю смотреть старую
+// версию. Просим спрашивать каждый раз, но по отпечатку, чтобы
+// неизменённая страница не качалась заново.
+console.log('\n=== страница обновляется у посетителя ===');
+{
+  const r1 = await fetch(BASE + '/');
+  const cc = (r1.headers.get('cache-control') || '').toLowerCase();
+  const tag = r1.headers.get('etag') || '';
+  await r1.text();
+  check('страница просит проверять свежесть (' + (cc || 'заголовка нет') + ')',
+        /no-cache|no-store|max-age=0/.test(cc),
+        'без этого браузер держит копию сколько сам решит');
+  check('у страницы есть отпечаток', !!tag, 'без него проверка свежести качает страницу целиком');
+  if (tag) {
+    const r2 = await fetch(BASE + '/', { headers: { 'If-None-Match': tag } });
+    await r2.text().catch(() => '');
+    check('неизменённая страница отвечает 304 (' + r2.status + ')', r2.status === 304,
+          'ждали 304 — иначе телефон качает 130 КБ на каждый заход');
+  }
+  for (const путь of ['/manifest.webmanifest', '/sw.js']) {
+    const r = await fetch(BASE + путь);
+    await r.text();
+    const c = (r.headers.get('cache-control') || '').toLowerCase();
+    check(путь + ' просит проверять свежесть', /no-cache|no-store|max-age=0/.test(c),
+          c || 'заголовка нет');
+  }
+}
+
 console.log('\nИтог: успешно ' + passed + ', провалено ' + failed);
 process.exitCode = failed ? 1 : 0;

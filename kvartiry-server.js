@@ -4,6 +4,7 @@
 // На Render порт берётся из переменной окружения PORT.
 
 const http = require('http');
+const crypto = require('crypto');
 const PORT = process.env.PORT || 8080;   // Render задаёт свой порт через переменную окружения
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36';
 const SITE_URL = 'https://poisk-kvartir.onrender.com';
@@ -3913,7 +3914,8 @@ http.createServer(async (req,res)=>{
     return;
   }
   if(u.pathname === '/manifest.webmanifest'){
-    res.writeHead(200, {'Content-Type':'application/manifest+json; charset=utf-8'});
+    res.writeHead(200, {'Content-Type':'application/manifest+json; charset=utf-8',
+                        'Cache-Control':'no-cache'});
     res.end(JSON.stringify({
       name: 'Жильё на сутки — Беларусь и Россия',
       short_name: 'Жильё на сутки',
@@ -3939,7 +3941,8 @@ http.createServer(async (req,res)=>{
   if(u.pathname === '/sw.js'){
     // Минимальный service worker: нужен, чтобы браузер предложил «Добавить на главный экран».
     // Ничего не кэшируем — цены должны быть свежими.
-    res.writeHead(200, {'Content-Type':'application/javascript; charset=utf-8'});
+    res.writeHead(200, {'Content-Type':'application/javascript; charset=utf-8',
+                        'Cache-Control':'no-cache'});
     res.end("self.addEventListener('install', function(){ self.skipWaiting(); });\n" +
             "self.addEventListener('activate', function(e){ e.waitUntil(self.clients.claim()); });\n" +
             "self.addEventListener('fetch', function(e){ e.respondWith(fetch(e.request)); });\n"); return;
@@ -4058,7 +4061,16 @@ http.createServer(async (req,res)=>{
       page = PAGE.replace('/*ПРЕДЗАГРУЗКА*/', () => inject);
     }catch(e){ /* не вышло — страница просто загрузится как раньше */ }
   }
-  res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
+  // Отпечаток страницы: браузер пришлёт его обратно, и если ничего
+  // не изменилось, мы ответим «304» без тела — это несколько сотен байт
+  // вместо ста тридцати килобайт.
+  const tag = '"' + crypto.createHash('sha1').update(page).digest('base64').slice(0, 22) + '"';
+  if(req.headers['if-none-match'] === tag){
+    res.writeHead(304, {'ETag': tag, 'Cache-Control':'no-cache'});
+    res.end(); return;
+  }
+  res.writeHead(200, {'Content-Type':'text/html; charset=utf-8',
+                      'Cache-Control':'no-cache', 'ETag': tag});
   res.end(page);
 }).listen(PORT, ()=> console.log('Открой http://localhost:'+PORT));
 
