@@ -4763,6 +4763,17 @@ function warmUp(){
       .then(function(d){ console.log('Прогрев ' + uu.searchParams.get('source') + ': ' + d.total); })
       .catch(function(e){ console.log('Прогрев не удался:', e.message); });
   });
+  // Отели России греем отдельно: 101hotels отвечает две с лишним секунды,
+  // и первый зашедший на вкладку столько и ждал. Греем ровно тот запрос,
+  // который страница делает при переключении: город по умолчанию и цена
+  // по возрастанию. Ключ кэша считаем той же функцией, что и обработчик, —
+  // иначе прогреется одно, а спросится другое.
+  const рф = new URL('/api/rf/search?city=moskva&sort=price_asc', 'http://localhost');
+  cached(cacheKey(рф), function(){
+    return searchRF('moskva', { types:'', stars:'', services:'', rating:'',
+                                no_card:'', bathroom:'', maxP:0, minP:0, sort:'price_asc' });
+  }).then(function(d){ console.log('Прогрев отелей России: ' + (d && d.total)); })
+    .catch(function(e){ console.log('Прогрев отелей не удался:', e.message); });
 }
 setTimeout(warmUp, 1500);
 setInterval(warmUp, 7 * 60 * 1000).unref();   // держим кэш тёплым
