@@ -272,5 +272,27 @@ for (const путь of ['/kakaya-to-chush', '/minsk-nesushestvuet', '/marshrut/x
   }
 }
 
+// ── никаких флагов ──────────────────────────────────
+// Флаг возвращается незаметно: Leaflet сам дописывает его в подпись под
+// картой, да и «🇧🇾 Беларусь» на кнопке кажется безобидным. Сайт про жильё,
+// политики на нём быть не должно — ни в разметке, ни в подписи карты.
+console.log('\n=== без флагов ===');
+{
+  const флаг = /[\u{1F1E6}-\u{1F1FF}]{2}/u;
+  for (const путь of ['/', '/minsk', '/mesto/2416-mirskij-zamok', '/marshrut?p=2416,244']) {
+    const h = await (await fetch(BASE + путь)).text();
+    check('на странице нет флага: ' + путь, !флаг.test(h),
+          'нашёлся флаг: ' + (h.match(флаг) || [''])[0]);
+  }
+  // подпись Leaflet рисуется скриптом, в разметке её не видно —
+  // сверяем, что мы задаём её сами
+  const м = await (await fetch(BASE + '/marshrut?p=2416,244')).text();
+  const г = await (await fetch(BASE + '/')).text();
+  check('подпись карты маршрута задана нами', /setPrefix\(/.test(м),
+        'Leaflet подставит свою подпись с флагом');
+  check('подпись карты мест задана нами', /setPrefix\(/.test(г),
+        'Leaflet подставит свою подпись с флагом');
+}
+
 console.log('\nИтог: успешно ' + passed + ', провалено ' + failed);
 process.exitCode = failed ? 1 : 0;
