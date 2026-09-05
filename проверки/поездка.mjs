@@ -217,6 +217,16 @@ try {
     const свод = await js(`(document.querySelector('#rsub')||{}).textContent || ''`);
     check('в сводке километраж по дорогам', /по дорогам/.test(свод), 'показано: ' + свод);
     check('сказано, сколько ехать', /за рулём/.test(свод), 'показано: ' + свод);
+    // Шаги в списке должны считаться так же, как итог: иначе сумма шагов
+    // не сходится с общим километражом, и непонятно, какому числу верить.
+    const шаги = await js(`JSON.stringify(Array.from(document.querySelectorAll('#rlist .it .km'))
+      .map(function(e){ return e.textContent; }))`);
+    const сумма = (JSON.parse(шаги) || []).reduce(function(a, s){
+      const m = String(s).match(/\+(\d+)/); return a + (m ? +m[1] : 0); }, 0);
+    const итог = +((свод.match(/([\d.]+)\s*км/) || [])[1] || 0);
+    check('шаги сходятся с итогом (' + сумма + ' и ' + итог + ' км)',
+          итог > 0 && Math.abs(сумма - итог) <= Math.max(2, итог * 0.05),
+          'в списке одно расстояние, в итоге другое');
   }
 
   console.log('\n=== переход открывается рядом ===');
