@@ -1683,6 +1683,17 @@ const ЛАТ = {'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'e','
   'й':'j','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u',
   'ф':'f','х':'h','ц':'c','ч':'ch','ш':'sh','щ':'sch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu',
   'я':'ya','і':'i','ў':'u','’':''};
+// «1 вариант», «24 варианта», «78 вариантов» — иначе текст читается
+// как машинный перевод и подрывает доверие к цифрам рядом.
+function скл(n, одна, две, много){
+  const a = Math.abs(n) % 100, b = a % 10;
+  if(a > 10 && a < 20) return много;
+  if(b > 1 && b < 5) return две;
+  if(b === 1) return одна;
+  return много;
+}
+function вариантов(n){ return n + ' ' + скл(n, 'вариант', 'варианта', 'вариантов'); }
+
 function slugify(name){
   return String(name || '').toLowerCase().split('')
     .map(c => (ЛАТ[c] !== undefined ? ЛАТ[c] : (/[a-z0-9]/.test(c) ? c : '-')))
@@ -1725,7 +1736,7 @@ async function mestoPageBuild(id){
   const title = p.name + (p.addr ? (', ' + p.addr) : '') + ' — что посмотреть и где переночевать рядом';
   const desc = (текст ? текст.slice(0, 150).replace(/\s+\S*$/, '') + '. ' : '')
     + (жильё.length
-        ? ('Жильё рядом: ' + рядом.items.length + ' вариантов от ' + цены[0] + ' BYN за сутки, ближайшее в ' + жильё[0].km + ' км.')
+        ? ('Жильё рядом: ' + вариантов(рядом.items.length) + ' от ' + цены[0] + ' BYN за сутки, ближайшее в ' + жильё[0].km + ' км.')
         : 'Координаты, маршрут в Яндекс.Картах и жильё поблизости.');
   const адрес = SITE_URL + '/mesto/' + p.id + '-' + slugify(p.name);
   const route = 'https://yandex.by/maps/?rtext=~' + p.lat + ',' + p.lng + '&rtt=auto';
@@ -1812,7 +1823,7 @@ async function mestoPageBuild(id){
     + '</div>'
     + (жильё.length
         ? ('<h2>Где переночевать рядом</h2>'
-           + '<p class="where">В 30 км отсюда сдаётся ' + рядом.items.length + ' вариантов'
+           + '<p class="where">В 30 км отсюда сдаётся ' + вариантов(рядом.items.length)
            + (цены.length ? (', самый дешёвый — ' + цены[0] + ' BYN за сутки') : '')
            + '. Это объявления частников с Kufar, Realt и Flatbook, собранные в один список.</p>'
            + '<div class="grid">' + карточки + '</div>'
@@ -1985,7 +1996,7 @@ async function cityPage(slug, kind){
   const midP = prices.length ? prices[Math.floor(prices.length/2)] : 0;
 
   const title = k.what + ' ' + c.where + k.extra + ' — снять посуточно';
-  const desc  = k.what + ' ' + c.where + k.extra + ': ' + (data.total || 0) + ' вариантов от частников с Kufar, Realt и Flatbook в одном списке'
+  const desc  = k.what + ' ' + c.where + k.extra + ': ' + вариантов(data.total || 0) + ' от частников с Kufar, Realt и Flatbook в одном списке'
     + (minP ? (', цены от ' + minP + ' BYN за сутки') : '') + '. Фото, цены, телефоны хозяев и карта.';
 
   const cards = items.map(function(x){
@@ -2057,7 +2068,8 @@ async function cityPage(slug, kind){
     + '</style></head><body><div class="w">'
     + '<h1>' + esc(k.what) + ' ' + esc(c.where) + esc(k.extra) + '</h1>'
     + '<p class="lead">Собрали объявления частников с <b>Kufar</b>, <b>Realt</b> и <b>Flatbook</b> в один список — '
-    +   'не нужно открывать три сайта. Сейчас доступно <b>' + (data.total || 0) + '</b> вариантов'
+    +   'не нужно открывать три сайта. Сейчас доступно <b>' + (data.total || 0) + '</b> '
+    +   скл(data.total || 0, 'вариант', 'варианта', 'вариантов')
     +   (minP ? (', самый дешёвый — <b>' + minP + ' BYN</b> за сутки, обычная цена около <b>' + midP + ' BYN</b>') : '')
     +   '. Цены и наличие подтягиваются из объявлений в реальном времени.</p>'
     + '<a class="cta" href="/?region=' + slug + '&type=' + k.type + (k.max ? ('&max=' + k.max) : '') + '">Открыть поиск с фильтрами и картой →</a>'
@@ -4003,7 +4015,10 @@ async function stayNear(i){
       ? ('<button class="allstay" type="button" data-r="' + d.region + '" onclick="allStay(this)">'
          + 'Показать все варианты в области →</button>')
       : '';
-    box.innerHTML = '<div class="near"><b>Жильё рядом — ' + d.total + ' вариантов</b><div class="near-list">'
+    box.innerHTML = '<div class="near"><b>Жильё рядом — ' + d.total + ' '
+      + (function(n){var a=Math.abs(n)%100,b=a%10;
+          return (a>10&&a<20)?'вариантов':(b>1&&b<5)?'варианта':(b===1)?'вариант':'вариантов';})(d.total)
+      + '</b><div class="near-list">'
       + cards + '</div>' + all + '</div>';
     if(window.__T) window.__T('stay_near', {});
   }catch(e){ box.innerHTML = ''; }
