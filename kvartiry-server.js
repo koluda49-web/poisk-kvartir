@@ -331,9 +331,7 @@ const REGIONS = {
     cities:['Брест','Барановичи','Пинск','Кобрин','Берёза','Лунинец','Пружаны','Ганцевичи','Иваново','Жабинка']},
   'minsk':    {realt:'minsk',          oblast:'Минск',               main:'Минск',
     cities:['Минск']},
-  // kufar: у Kufar Минск — сама по себе область, поэтому по главному городу
-  // Минской области находились только городские объявления и все отсеивались
-  'minsk-obl':{realt:'minsk-region',   oblast:'Минская область',     main:'Минск', kufar:'Минская область',
+  'minsk-obl':{realt:'minsk-region',   oblast:'Минская область',     main:'Минск',
     cities:['Минск','Борисов','Солигорск','Молодечно','Жодино','Слуцк','Дзержинск','Вилейка','Марьина Горка','Смолевичи','Логойск','Заславль']},
   'gomel':    {realt:'gomel-region',   oblast:'Гомельская область',  main:'Гомель',
     cities:['Гомель','Мозырь','Жлобин','Речица','Светлогорск','Калинковичи','Рогачёв','Добруш']},
@@ -396,7 +394,11 @@ const RB_AMEN_CHECKS = RB_AMENITIES.map(a=>'<label class="amen-item"><input type
 // и число гостей отсеиваются уже потом. Поэтому список кэшируем, а фильтры
 // применяем к сохранённому — смена цены или комнат больше не идёт к источнику.
 async function kufarRaw(reg, city, type){
-  const where = city || reg.kufar || reg.main;
+  // Без выбранного города спрашиваем область целиком, а не её центр.
+  // По запросу «Брест» Kufar отдаёт почти один Брест, по «Брестская область» —
+  // ещё Барановичи, Пинск, Кобрин, Берёзу. Для «что посмотреть рядом» это
+  // решает всё: у замка в глубинке ближайшее жильё как раз в райцентре.
+  const where = city || reg.oblast;
   return cached('raw|kufar|'+type+'|'+where, async ()=>{
     const t = TYPES[type]||TYPES.flat;
     const url='https://api.kufar.by/search-api/v2/search/rendered-paginated?query='+encodeURIComponent(t.kw+' на сутки '+where)+'&size=200&lang=ru';
@@ -4104,7 +4106,6 @@ http.createServer(async (req,res)=>{
       const близко = near && near.km <= 60;
       const регион = nearestRegion(lat, lng);          // ближайший областной центр
       region = близко ? near.region : регион;
-      const type = u.searchParams.get('type') || 'flat';
       // Мир лежит в Гродненской области, а жильё вокруг него — в Минской:
       // поэтому спрашиваем и «свою» область точки, и географически ближайшую.
       const где = [{ r: регион, c: '' }];
@@ -4112,10 +4113,16 @@ http.createServer(async (req,res)=>{
         if(near.town !== REGIONS[near.region].main) где.push({ r: near.region, c: near.town });
         if(near.region !== регион) где.push({ r: near.region, c: '' });
       }
-      const запрос = (r, c) => new URLSearchParams({ region:r, city:c, type,
-                                                    rooms:'', guests:'', max:'', source:'both' });
+      // И все виды жилья, а не одни квартиры: у замка в глубинке ночуют
+      // в усадьбе или коттедже, квартир там может не быть вовсе.
+      const виды = u.searchParams.get('type') ? [u.searchParams.get('type')]
+                                              : ['flat', 'usadba', 'cottage'];
+      const пары = [];
+      где.forEach(g => виды.forEach(t => пары.push({ r:g.r, c:g.c, t })));
+      const запрос = (r, c, t) => new URLSearchParams({ region:r, city:c, type:t,
+                                                       rooms:'', guests:'', max:'', source:'both' });
       try{
-        const части = await Promise.all(где.map(g => runSearchQuery(запрос(g.r, g.c)).catch(()=>({items:[]}))));
+        const части = await Promise.all(пары.map(g => runSearchQuery(запрос(g.r, g.c, g.t)).catch(()=>({items:[]}))));
         const было = new Set();
         items = [].concat(...части.map(d => d.items || []))
           .filter(x => { if(!x.lat || !x.lng || x.approx || было.has(x.link)) return false;
