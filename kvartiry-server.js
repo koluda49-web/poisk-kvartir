@@ -4027,17 +4027,29 @@ http.createServer(async (req,res)=>{
     const r = +(u.searchParams.get('r') || 30);
     let items = [], region = '';
     if(lat && lng){
-      // Ищем вокруг ближайшего города, а не вокруг центра области: у замка
-      // в Лиде жильё есть, а по запросу «Гродно» его не видно.
+      // Спрашиваем дважды. По области — иначе теряются Мир и Несвиж, у которых
+      // ближайший знакомый нам город далеко. По ближайшему городу — иначе
+      // теряются Лида и Гольшаны: поиск по областному центру их не видит.
       const near = nearestTown(lat, lng);
-      const reg = (near && near.km <= 60) ? near.region : nearestRegion(lat, lng);
-      region = reg;
-      const town = (near && near.km <= 60 && near.town !== REGIONS[reg].main) ? near.town : '';
-      const q = new URLSearchParams({ region:reg, city:town, type:(u.searchParams.get('type')||'flat'),
-                                      rooms:'', guests:'', max:'', source:'both' });
+      const близко = near && near.km <= 60;
+      const регион = nearestRegion(lat, lng);          // ближайший областной центр
+      region = близко ? near.region : регион;
+      const type = u.searchParams.get('type') || 'flat';
+      // Мир лежит в Гродненской области, а жильё вокруг него — в Минской:
+      // поэтому спрашиваем и «свою» область точки, и географически ближайшую.
+      const где = [{ r: регион, c: '' }];
+      if(близко){
+        if(near.town !== REGIONS[near.region].main) где.push({ r: near.region, c: near.town });
+        if(near.region !== регион) где.push({ r: near.region, c: '' });
+      }
+      const запрос = (r, c) => new URLSearchParams({ region:r, city:c, type,
+                                                    rooms:'', guests:'', max:'', source:'both' });
       try{
-        const d = await runSearchQuery(q);
-        items = (d.items||[]).filter(x => x.lat && x.lng && !x.approx)
+        const части = await Promise.all(где.map(g => runSearchQuery(запрос(g.r, g.c)).catch(()=>({items:[]}))));
+        const было = new Set();
+        items = [].concat(...части.map(d => d.items || []))
+          .filter(x => { if(!x.lat || !x.lng || x.approx || было.has(x.link)) return false;
+                         было.add(x.link); return true; })
           .map(x => Object.assign({}, x, { km: Math.round(distKm(lat, lng, x.lat, x.lng) * 10) / 10 }))
           .filter(x => x.km <= r).sort((a, b) => a.price - b.price);
       }catch(e){}
