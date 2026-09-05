@@ -1329,6 +1329,32 @@ const PLACES_TTL = 6 * 60 * 60 * 1000;   // список памятников м
 const DETAIL_TTL = 24 * 60 * 60 * 1000;
 
 // расстояние между двумя точками на земле, километры
+// Всё жильё страны с точными координатами — один список на восемь минут.
+// Собирается из тех же запросов, которыми пользуется обычный поиск, поэтому
+// отдельной нагрузки на источники почти нет: их ответы и так лежат в памяти.
+const STAY_REGIONS = ['minsk','minsk-obl','brest','gomel','grodno','vitebsk','mogilev'];
+const STAY_TYPES = ['flat','usadba','cottage'];
+async function stayIndex(){
+  return cached('idx|stay', async ()=>{
+    const было = new Set(), все = [];
+    const пары = [];
+    STAY_REGIONS.forEach(r => STAY_TYPES.forEach(t => пары.push([r, t])));
+    const части = await Promise.all(пары.map(([r, t]) =>
+      runSearchQuery(new URLSearchParams({ region:r, city:'', type:t,
+        rooms:'', guests:'', max:'', source:'both' }))
+        .then(d => ({ t, items: d.items || [] })).catch(()=>({ t, items: [] }))));
+    части.forEach(d => d.items.forEach(x => {
+      // без точных координат «рядом» посчитать нельзя: у таких объявлений
+      // метка стоит у центра города, и расстояние получилось бы выдуманным
+      if(!x.lat || !x.lng || x.approx || было.has(x.link)) return;
+      было.add(x.link);
+      // сам объявление вида не несёт — помечаем тем запросом, который его принёс
+      все.push(Object.assign({}, x, { vid: d.t }));
+    }));
+    return все;
+  });
+}
+
 // какой области принадлежит точка — по ближайшему областному центру
 const REGION_CENTERS = [
   ['minsk',      53.9023, 27.5619], ['minsk-obl', 53.9023, 27.5619],
@@ -4097,38 +4123,35 @@ http.createServer(async (req,res)=>{
   if(u.pathname === '/api/places/stay'){
     const lat = +u.searchParams.get('lat'), lng = +u.searchParams.get('lng');
     const r = +(u.searchParams.get('r') || 30);
+    const вид = u.searchParams.get('type') || '';
     let items = [], region = '';
     if(lat && lng){
-      // Спрашиваем дважды. По области — иначе теряются Мир и Несвиж, у которых
-      // ближайший знакомый нам город далеко. По ближайшему городу — иначе
-      // теряются Лида и Гольшаны: поиск по областному центру их не видит.
-      const near = nearestTown(lat, lng);
-      const близко = near && near.km <= 60;
-      const регион = nearestRegion(lat, lng);          // ближайший областной центр
-      region = близко ? near.region : регион;
-      // Мир лежит в Гродненской области, а жильё вокруг него — в Минской:
-      // поэтому спрашиваем и «свою» область точки, и географически ближайшую.
-      const где = [{ r: регион, c: '' }];
-      if(близко){
-        if(near.town !== REGIONS[near.region].main) где.push({ r: near.region, c: near.town });
-        if(near.region !== регион) где.push({ r: near.region, c: '' });
-      }
-      // И все виды жилья, а не одни квартиры: у замка в глубинке ночуют
-      // в усадьбе или коттедже, квартир там может не быть вовсе.
-      const виды = u.searchParams.get('type') ? [u.searchParams.get('type')]
-                                              : ['flat', 'usadba', 'cottage'];
-      const пары = [];
-      где.forEach(g => виды.forEach(t => пары.push({ r:g.r, c:g.c, t })));
-      const запрос = (r, c, t) => new URLSearchParams({ region:r, city:c, type:t,
-                                                       rooms:'', guests:'', max:'', source:'both' });
+      region = nearestRegion(lat, lng);        // для кнопки «показать всё в области»
       try{
-        const части = await Promise.all(пары.map(g => runSearchQuery(запрос(g.r, g.c, g.t)).catch(()=>({items:[]}))));
+        // Общий список по стране даёт широту охвата: он собран из запросов
+        // по всем областям и не зависит от того, куда мы отнесли точку.
+        const части = [await stayIndex()];
+        // Но Kufar отдаёт не больше двухсот объявлений на запрос, и в
+        // областной выдаче помещается лишь часть городских. Поэтому по
+        // ближайшему городу спрашиваем отдельно: у Лиды так 76 вариантов
+        // вместо тридцати.
+        const near = nearestTown(lat, lng);
+        if(near && near.km <= 60 && near.town !== REGIONS[near.region].main){
+          const виды = вид ? [вид] : STAY_TYPES;
+          const ещё = await Promise.all(виды.map(t =>
+            runSearchQuery(new URLSearchParams({ region:near.region, city:near.town, type:t,
+              rooms:'', guests:'', max:'', source:'both' }))
+              .then(d => (d.items||[]).map(x => Object.assign({}, x, { vid: t })))
+              .catch(()=>[])));
+          части.push([].concat(...ещё));
+        }
         const было = new Set();
-        items = [].concat(...части.map(d => d.items || []))
-          .filter(x => { if(!x.lat || !x.lng || x.approx || было.has(x.link)) return false;
-                         было.add(x.link); return true; })
+        items = [].concat(...части)
+          .filter(x => (!вид || x.vid === вид) && x.lat && x.lng && !x.approx
+                       && !было.has(x.link) && было.add(x.link) !== null)
           .map(x => Object.assign({}, x, { km: Math.round(distKm(lat, lng, x.lat, x.lng) * 10) / 10 }))
-          .filter(x => x.km <= r).sort((a, b) => a.price - b.price);
+          .filter(x => x.km <= r)
+          .sort((a, b) => a.price - b.price);
       }catch(e){}
     }
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
