@@ -1832,6 +1832,39 @@ function порядокОбъезда(list){
   return out;
 }
 
+// Страница «не нашлось». Отдаётся с кодом 404, чтобы поисковик понимал:
+// такой страницы нет и запоминать её не надо.
+function notFoundPage(путь, заголовок){
+  return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<title>Страница не нашлась — Поиск жилья на сутки</title>'
+    + '<meta name="robots" content="noindex,follow">'
+    + '<meta name="theme-color" content="#9a3412">'
+    + '<style>'
+    + 'body{margin:0;font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;'
+    +   'background:#faf7f3;color:#1c1917;display:flex;min-height:100vh;align-items:center}'
+    + '.w{max-width:640px;margin:0 auto;padding:32px 20px}'
+    + 'h1{font-size:clamp(24px,5vw,34px);line-height:1.15;margin:0 0 10px;letter-spacing:-.02em}'
+    + 'p{color:#57534e;margin:0 0 22px}'
+    + 'code{background:#f0eae1;border-radius:6px;padding:2px 7px;font-size:14px;word-break:break-all}'
+    + '.links{display:flex;flex-wrap:wrap;gap:10px}'
+    + '.links a{background:#fff;border:1px solid #e9e2d8;border-radius:999px;padding:10px 18px;'
+    +   'text-decoration:none;color:#1c1917;font-weight:600;font-size:14.5px}'
+    + '.links a.main{background:#9a3412;border-color:#9a3412;color:#fff}'
+    + '@media (prefers-color-scheme:dark){body{background:#14110e;color:#f6f2ed}'
+    +   'p{color:#c2b7ab}code{background:#2b251f}.links a{background:#1d1916;border-color:#332c25;color:#f6f2ed}'
+    +   '.links a.main{background:#e2703a;border-color:#e2703a;color:#14110e}}'
+    + '</style></head><body><div class="w">'
+    + '<h1>' + esc(заголовок || 'Такой страницы не нашлось') + '</h1>'
+    + '<p>Адрес <code>' + esc(String(путь).slice(0, 120)) + '</code> ведёт в никуда — '
+    +   'возможно, ссылка устарела или в ней опечатка.</p>'
+    + '<div class="links">'
+    +   '<a class="main" href="/">Искать жильё</a>'
+    +   '<a href="/?country=places">Что посетить</a>'
+    +   '<a href="/minsk">Квартиры в Минске</a>'
+    + '</div></div></body></html>';
+}
+
 // Страница маршрута: карта с точками по порядку, список, добавление точки —
 // и только потом уход в Яндекс.Карты. Раньше кнопка вела наружу вслепую.
 async function marshrutPage(ids){
@@ -4634,10 +4667,7 @@ http.createServer(async (req,res)=>{
     if(id){ try{ html = await mestoPage(id); }catch(e){ console.error('Место ' + id + ':', e.message); } }
     if(!html){
       res.writeHead(404, {'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'no-cache'});
-      res.end('<!doctype html><meta charset="utf-8"><title>Такого места у нас нет</title>'
-        + '<body style="font:16px system-ui;padding:40px;max-width:40em;margin:0 auto">'
-        + '<h1>Такого места у нас нет</h1><p>Возможно, ссылка устарела или в ней опечатка.</p>'
-        + '<p><a href="/?country=places">Посмотреть все места на карте</a></p>');
+      res.end(notFoundPage(u.pathname, 'Такого места у нас нет'));
       return;
     }
     res.writeHead(200, {'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'public, max-age=600'});
@@ -4670,6 +4700,17 @@ http.createServer(async (req,res)=>{
     res.end('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
       + urls.concat(места).join('') + '</urlset>'); return;
   }
+  // Всё, что не разобрали выше, — не наш адрес. Раньше сюда попадал любой
+  // мусор и получал главную страницу с кодом «200».
+  if(u.pathname !== '/'){
+    if(u.pathname.startsWith('/api/')){
+      res.writeHead(404, {'Content-Type':'application/json; charset=utf-8'});
+      res.end('{"error":"нет такого адреса"}'); return;
+    }
+    res.writeHead(404, {'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'no-cache'});
+    res.end(notFoundPage(u.pathname)); return;
+  }
+
   // Главную отдаём уже с квартирами: список лежит в памяти после прогрева,
   // и человеку не приходится ждать запроса, а поисковик видит содержимое.
   // Вкладываем только первую страницу выдачи — этого хватает на первый экран.
