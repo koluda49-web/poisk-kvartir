@@ -1669,9 +1669,25 @@ function slugify(name){
     .join('').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
 }
 
+// Готовые страницы мест держим десять минут: их 798, поисковик обходит их
+// подряд, и собирать каждую заново — лишняя работа и лишние запросы к
+// источникам жилья.
+const MESTO_HTML = new Map();
+const MESTO_TTL = 10 * 60 * 1000;
+async function mestoPage(id){
+  const было = MESTO_HTML.get(String(id));
+  if(было && Date.now() - было.at < MESTO_TTL) return было.html;
+  const html = await mestoPageBuild(id);
+  if(html){
+    if(MESTO_HTML.size > 900) MESTO_HTML.clear();
+    MESTO_HTML.set(String(id), { at: Date.now(), html });
+  }
+  return html;
+}
+
 // Страница одного места. Отдаётся сервером целиком: поисковик не выполняет
 // наш скрипт, а раздел «Что посетить» без этого для него не существует.
-async function mestoPage(id){
+async function mestoPageBuild(id){
   const list = await placesRaw();
   const p = list.find(x => String(x.id) === String(id));
   if(!p) return null;
@@ -1733,8 +1749,9 @@ async function mestoPage(id){
     + 'body{margin:0;font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#faf7f3;color:#1c1917}'
     + '.w{max-width:900px;margin:0 auto;padding:22px 16px 60px}'
     + 'a{color:#9a3412}'
-    + '.crumb{font-size:13.5px;color:#9c948c;margin-bottom:10px}'
-    + '.crumb a{color:#57534e;text-decoration:none}'
+    + '.back{display:inline-block;margin:0 0 14px;padding:9px 17px;background:#fff;border:1px solid #e9e2d8;'
+    +   'border-radius:999px;text-decoration:none;color:#1c1917;font-size:14.5px;font-weight:600}'
+    + '.back:hover{border-color:#9a3412;color:#9a3412}'
     + 'h1{font-size:clamp(24px,4.6vw,36px);line-height:1.15;margin:0 0 6px;letter-spacing:-.02em}'
     + '.where{color:#57534e;margin:0 0 16px}'
     + '.hero{width:100%;max-height:460px;object-fit:cover;border-radius:14px;display:block;margin:0 0 16px}'
@@ -1760,10 +1777,10 @@ async function mestoPage(id){
     +   'font-size:14px;text-decoration:none;color:#1c1917}'
     + 'footer{margin-top:36px;color:#9c948c;font-size:13.5px;max-width:75ch}'
     + '@media (prefers-color-scheme:dark){body{background:#14110e;color:#f6f2ed}'
-    +   '.c,.facts a,.facts span,.near a{background:#1d1916;border-color:#332c25;color:#f6f2ed}'
-    +   '.noimg{background:#2b251f}.where,.crumb,.c .m span{color:#c2b7ab}a{color:#e2703a}}'
+    +   '.c,.facts a,.facts span,.near a,.back{background:#1d1916;border-color:#332c25;color:#f6f2ed}'
+    +   '.noimg{background:#2b251f}.where,.c .m span{color:#c2b7ab}a{color:#e2703a}}'
     + '</style></head><body><div class="w">'
-    + '<nav class="crumb"><a href="/">Поиск жилья</a> → <a href="/?country=places">Что посетить</a></nav>'
+    + '<a class="back" href="/?country=places">← Ко всем местам</a>'
     + '<h1>' + esc(p.name) + '</h1>'
     + (где ? ('<p class="where">' + esc(где) + '</p>') : '')
     + (p.pic ? ('<img class="hero" src="' + esc(p.pic) + '" alt="' + esc(p.name) + '">') : '')
@@ -1794,6 +1811,64 @@ async function mestoPage(id){
     + 'карты архитектурного наследия Беларуси. Жильё мы не сдаём и комиссию не берём: показываем объявления '
     + 'с Kufar, Realt и Flatbook. Перед поездкой уточняйте детали у собственника.</p>'
     + '<p><a href="/?country=places">Все ' + list.length + ' мест на карте →</a></p></footer>'
+    + '</div></body></html>';
+}
+
+
+// Страница маршрута: карта с точками по порядку, список, добавление точки —
+// и только потом уход в Яндекс.Карты. Раньше кнопка вела наружу вслепую.
+async function marshrutPage(ids){
+  const все = await placesRaw();
+  const точки = ids.map(id => все.find(p => String(p.id) === String(id)))
+                   .filter(Boolean)
+                   .map(p => ({ id:p.id, name:p.name, addr:p.addr, lat:p.lat, lng:p.lng }));
+
+  let сумма = 0;
+  точки.forEach((p, i) => { if(i) сумма += distKm(точки[i-1].lat, точки[i-1].lng, p.lat, p.lng); });
+
+  const яндекс = 'https://yandex.by/maps/?rtext='
+    + точки.map(p => p.lat + ',' + p.lng).join('~') + '&rtt=auto';
+
+  const строки = точки.map(function(p, i){
+    const шаг = i ? distKm(точки[i-1].lat, точки[i-1].lng, p.lat, p.lng) : 0;
+    return '<div class="it"><span class="n">' + (i+1) + '</span>'
+      + '<span class="t"><a href="/mesto/' + p.id + '-' + slugify(p.name) + '">' + esc(p.name) + '</a>'
+      + (p.addr ? ('<small>' + esc(p.addr) + '</small>') : '') + '</span>'
+      + '<span class="km">' + (i ? ('+' + Math.round(шаг) + ' км') : 'старт') + '</span>'
+      + '<button class="x" type="button" title="убрать" data-id="' + p.id + '">×</button></div>';
+  }).join('');
+
+  const заголовок = точки.length
+    ? ('Маршрут на день: ' + точки.map(p => p.name).slice(0, 3).join(', ')
+       + (точки.length > 3 ? (' и ещё ' + (точки.length - 3)) : ''))
+    : 'Маршрут на день по Беларуси';
+
+  return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<title>' + esc(заголовок) + '</title>'
+    + '<meta name="description" content="Маршрут на день по Беларуси'
+    +   (точки.length ? (': ' + точки.length + ' точек, около ' + Math.round(сумма) + ' км между ними') : '')
+    +   '. Карта, порядок объезда и переход в Яндекс.Карты.">'
+    + '<meta name="robots" content="noindex,follow">'
+    + '<meta name="theme-color" content="#9a3412">'
+    + '<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">'
+    + '<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></' + 'script>'
+    + '<style>' + '*{box-sizing:border-box}'+ 'body{margin:0;font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#faf7f3;color:#1c1917}'+ '.w{max-width:900px;margin:0 auto;padding:20px 16px 60px}'+ 'a{color:#9a3412}'+ '.back{display:inline-block;margin:0 0 14px;padding:9px 17px;background:#fff;border:1px solid #e9e2d8;'+   'border-radius:999px;text-decoration:none;color:#1c1917;font-size:14.5px;font-weight:600}'+ 'h1{font-size:clamp(22px,4.4vw,32px);line-height:1.15;margin:0 0 4px;letter-spacing:-.02em}'+ '.sub{color:#57534e;margin:0 0 16px}'+ '#rmap{height:min(58vh,440px);border-radius:14px;overflow:hidden;margin:0 0 16px;border:1px solid #e9e2d8}'+ '.pin{width:26px;height:26px;border-radius:50%;background:#9a3412;color:#fff;font-weight:700;font-size:13px;'+   'display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)}'+ '.it{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid #e9e2d8}'+ '.it:first-child{border-top:0}'+ '.it .n{width:24px;height:24px;flex:none;border-radius:50%;background:#9a3412;color:#fff;font-size:12.5px;'+   'font-weight:700;display:inline-flex;align-items:center;justify-content:center}'+ '.it .t{display:flex;flex-direction:column;line-height:1.25;min-width:0}'+ '.it .t a{text-decoration:none;font-weight:600;color:#1c1917}'+ '.it .t small{color:#9c948c;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'+ '.it .km{margin-left:auto;color:#9c948c;font-size:13px;white-space:nowrap}'+ '.it .x{font:inherit;font-size:22px;line-height:1;background:none;border:0;color:#9c948c;cursor:pointer;padding:0 4px}'+ '.it .x:hover{color:#9a3412}'+ '.add{margin:16px 0 0;position:relative}'+ '.add input{width:100%;font:inherit;padding:12px 14px;border:1px solid #e9e2d8;border-radius:10px;background:#fff;color:inherit}'+ '.sug{position:absolute;left:0;right:0;top:100%;background:#fff;border:1px solid #e9e2d8;border-radius:10px;'+   'margin-top:4px;max-height:270px;overflow:auto;z-index:5;display:none;box-shadow:0 8px 24px rgba(41,32,24,.12)}'+ '.sug button{display:block;width:100%;text-align:left;font:inherit;background:none;border:0;padding:9px 13px;cursor:pointer}'+ '.sug button:hover{background:#f8f4ef}'+ '.sug small{color:#9c948c;display:block;font-size:12.5px}'+ '.go{display:inline-block;margin-top:18px;background:#9a3412;color:#fff;text-decoration:none;font-weight:700;'+   'padding:14px 22px;border-radius:11px}'+ '.go.off{opacity:.4;pointer-events:none}'+ '.empty{background:#fff;border:1px dashed #d9cec0;border-radius:14px;padding:22px;color:#57534e;margin-bottom:8px}'+ '@media (prefers-color-scheme:dark){body{background:#14110e;color:#f6f2ed}'+   '.back,.add input,.sug,.empty{background:#1d1916;border-color:#332c25;color:#f6f2ed}'+   '.it{border-color:#332c25}.it .t a{color:#f6f2ed}.sub,.it .t small,.it .km{color:#c2b7ab}'+   '.sug button:hover{background:#241f1a}a{color:#e2703a}#rmap{border-color:#332c25}}' + '</style></head><body><div class="w">'
+    + '<a class="back" href="/?country=places">← Ко всем местам</a>'
+    + '<h1>Маршрут на день</h1>'
+    + '<p class="sub" id="rsub">' + (точки.length
+        ? (точки.length + ' точек · около ' + Math.round(сумма) + ' км между ними')
+        : 'Пока пусто') + '</p>'
+    + '<div class="empty" id="rEmpty"' + (точки.length ? ' style="display:none"' : '') + '>'
+    +   '<b>Маршрут пока пуст.</b><br>Добавьте места поиском ниже — или отметьте их кнопкой '
+    +   '«в маршрут» в разделе <a href="/?country=places">Что посетить</a>.</div>'
+    + '<div id="rmap"' + (точки.length ? '' : ' style="display:none"') + '></div>'
+    + '<div id="rlist">' + строки + '</div>'
+    + '<div class="add"><input id="rAdd" type="text" placeholder="Добавить место: замок, костёл, Мир…" autocomplete="off">'
+    +   '<div class="sug" id="rSug"></div></div>'
+    + '<a class="go' + (точки.length ? '' : ' off') + '" id="rGo" href="' + яндекс + '" target="_blank" rel="noopener">'
+    +   'Открыть маршрут в Яндекс.Картах →</a>'
+    + '<script>' + 'var Т = ' + JSON.stringify(точки) + ';'+ 'var карта = null, слой = null, линия = null;'+ 'function км(a,b){var t=Math.PI/180,x=(b.lat-a.lat)*t,y=(b.lng-a.lng)*t;'+   'var h=Math.sin(x/2)*Math.sin(x/2)+Math.cos(a.lat*t)*Math.cos(b.lat*t)*Math.sin(y/2)*Math.sin(y/2);'+   'return 6371*2*Math.asin(Math.sqrt(h));}'+ 'function esc(t){return String(t==null?"":t).replace(/[&<>"]/g,function(c){'+   'return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c];});}'+ 'function сохранить(){try{localStorage.setItem("route",JSON.stringify(Т));}catch(e){}'+   'var q = Т.length ? ("?p=" + Т.map(function(p){return p.id;}).join(",")) : "";'+   'history.replaceState(null, "", "/marshrut" + q);}'+ 'function убрать(id){Т = Т.filter(function(p){return String(p.id)!==String(id);});сохранить();нарисовать();}'+ 'function добавить(p){if(Т.some(function(x){return String(x.id)===String(p.id);}))return;'+   'Т = Т.concat([{id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}]);сохранить();нарисовать();}'+ 'function нарисовать(){'+   'var сумма=0, строки="";'+   'Т.forEach(function(p,i){var шаг=i?км(Т[i-1],p):0;сумма+=шаг;'+     'строки += "<div class=\\"it\\"><span class=\\"n\\">"+(i+1)+"</span>"'+       '+"<span class=\\"t\\"><a href=\\"/mesto/"+p.id+"\\">"+esc(p.name)+"</a>"'+       '+(p.addr?("<small>"+esc(p.addr)+"</small>"):"")+"</span>"'+       '+"<span class=\\"km\\">"+(i?("+"+Math.round(шаг)+" км"):"старт")+"</span>"'+       '+"<button class=\\"x\\" type=\\"button\\" title=\\"убрать\\" data-id=\\""+p.id+"\\">×</button></div>";});'+   'document.getElementById("rlist").innerHTML = строки;'+   'document.getElementById("rsub").textContent = Т.length'+     '? (Т.length + " точек · около " + Math.round(сумма) + " км между ними")'+     ': "Пока пусто";'+   'var g = document.getElementById("rGo");'+   'g.href = "https://yandex.by/maps/?rtext=" + Т.map(function(p){return p.lat+","+p.lng;}).join("~") + "&rtt=auto";'+   'g.className = "go" + (Т.length ? "" : " off");'+   'document.getElementById("rEmpty").style.display = Т.length ? "none" : "";'+   'document.getElementById("rmap").style.display = Т.length ? "" : "none";'+   'рисоватьКарту();}'+ 'function рисоватьКарту(){if(!Т.length||typeof L==="undefined")return;'+   'if(!карта){карта=L.map("rmap",{scrollWheelZoom:false});'+     'L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,'+       'attribution:"&copy; OpenStreetMap"}).addTo(карта);слой=L.layerGroup().addTo(карта);}'+   'слой.clearLayers(); if(линия){карта.removeLayer(линия);линия=null;}'+   'var пути=[];'+   'Т.forEach(function(p,i){пути.push([p.lat,p.lng]);'+     'L.marker([p.lat,p.lng],{icon:L.divIcon({className:"",iconSize:[26,26],iconAnchor:[13,13],'+       'html:"<div class=\\"pin\\">"+(i+1)+"</div>"})}).bindTooltip(p.name).addTo(слой);});'+   'if(пути.length>1) линия=L.polyline(пути,{color:"#9a3412",weight:3,opacity:.7}).addTo(карта);'+   'setTimeout(function(){карта.invalidateSize();'+     'if(пути.length>1)карта.fitBounds(пути,{padding:[40,40]});else карта.setView(пути[0],13);},60);}'+ 'var поле=document.getElementById("rAdd"), список=document.getElementById("rSug"), таймер=null;'+ 'поле.addEventListener("input", function(){clearTimeout(таймер);таймер=setTimeout(искать,400);});'+ 'async function искать(){var q=поле.value.trim();'+   'if(q.length<2){список.style.display="none";return;}'+   'try{var d=await (await fetch("/api/places?q="+encodeURIComponent(q))).json();'+     'var найдено=(d.items||[]).slice(0,8);'+     'if(!найдено.length){список.style.display="none";return;}'+     'список.innerHTML=найдено.map(function(p){return "<button type=\\"button\\" data-p=\\""'+       '+esc(JSON.stringify({id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}))+"\\">"'+       '+esc(p.name)+"<small>"+esc(p.addr||"")+"</small></button>";}).join("");'+     'список.style.display="";}catch(e){список.style.display="none";}}'+ 'document.addEventListener("click", function(e){'+   'var x=e.target.closest(".it .x"); if(x){убрать(x.getAttribute("data-id"));return;}'+   'var b=e.target.closest(".sug button");'+   'if(b){try{добавить(JSON.parse(b.getAttribute("data-p")));}catch(err){}'+     'поле.value="";список.style.display="none";return;}'+   'if(!e.target.closest(".add")) список.style.display="none";});'+ 'нарисовать();' + '</' + 'script>'
     + '</div></body></html>';
 }
 
@@ -2596,6 +2671,13 @@ h1 .accent{ color:var(--accent); }
 .allstay{display:block;width:100%;margin-top:10px;padding:11px 14px;border:0;border-radius:11px;
   background:var(--accent);color:#fff;font:inherit;font-weight:700;font-size:14px;cursor:pointer}
 .allstay:hover{filter:brightness(1.06)}
+/* Пока маршрут набирается, панель уезжает вверх за экран. Полоска внизу
+   держит его на виду и ведёт на страницу с картой. */
+#routeBar{position:fixed;left:50%;transform:translateX(-50%);bottom:16px;z-index:60;
+  background:var(--accent);color:var(--accent-ink);text-decoration:none;font-weight:700;
+  font-size:14.5px;padding:12px 20px;border-radius:999px;box-shadow:0 8px 24px rgba(41,32,24,.28)}
+#routeBar:hover{background:var(--accent-2)}
+@media (max-width:520px){ #routeBar{left:12px;right:12px;transform:none;text-align:center} }
 #routeBox{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
   padding:14px 16px;margin:0 0 14px;box-shadow:var(--shadow-sm)}
 .rt-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
@@ -2963,7 +3045,7 @@ h1 .accent{ color:var(--accent); }
       <button type="button" id="rtClear" class="rt-clear">очистить</button>
     </div>
     <div id="rtList"></div>
-    <a id="routeGo" class="rt-go" href="#" target="_blank" rel="noopener">Открыть весь маршрут в Яндекс.Картах →</a>
+    <a id="routeGo" class="rt-go" href="/marshrut">Посмотреть маршрут на карте →</a>
   </div>
 
   <div id="map" style="display:none"></div>
@@ -2995,6 +3077,8 @@ h1 .accent{ color:var(--accent); }
   <button id="fbOpen" class="fb-open" type="button">💬 Оставить пожелание или дополнение</button>
   </div>
 </div>
+
+<a id="routeBar" href="/marshrut" style="display:none"></a>
 
 <div class="fb-overlay" id="fbModal">
   <div class="fb-panel">
@@ -3978,7 +4062,12 @@ function drawRoute(){
   const box = $('#routeBox'); if(!box) return;
   const list = orderRoute(window.__route || []);
   window.__route = list;
-  if(!list.length || window.__mode !== 'places'){ box.style.display = 'none'; return; }
+  const bar = $('#routeBar');
+  if(!list.length || window.__mode !== 'places'){
+    box.style.display = 'none';
+    if(bar) bar.style.display = 'none';
+    return;
+  }
   box.style.display = '';
   let сумма = 0;
   const строки = list.map(function(p, i){
@@ -3991,8 +4080,15 @@ function drawRoute(){
   }).join('');
   $('#rtList').innerHTML = строки;
   $('#rtSum').textContent = list.length + ' точ. · около ' + Math.round(сумма) + ' км между ними';
-  $('#routeGo').href = 'https://yandex.by/maps/?rtext='
-    + list.map(function(p){ return p.lat + ',' + p.lng; }).join('~') + '&rtt=auto';
+  // Ведём на свою страницу: там маршрут видно на карте и можно доложить
+  // точку, не возвращаясь в список. В Яндекс уходим уже оттуда.
+  const адрес = '/marshrut?p=' + list.map(function(p){ return p.id; }).join(',');
+  $('#routeGo').href = адрес;
+  if(bar){
+    bar.href = адрес;
+    bar.textContent = 'Маршрут: ' + list.length + ' точ. · показать на карте →';
+    bar.style.display = '';
+  }
 }
 
 function dropRoute(id){
@@ -4502,6 +4598,15 @@ http.createServer(async (req,res)=>{
     res.end(JSON.stringify({ total: d.items.length, region: d.region, items: d.items.slice(0, 12) })); return;
   }
   // страница отдельного места: /mesto/2416 или /mesto/2416-mirskij-zamok
+  if(u.pathname === '/marshrut'){
+    const ids = (u.searchParams.get('p') || '').split(',')
+      .map(x => x.replace(/[^0-9]/g, '')).filter(Boolean).slice(0, 20);
+    let html = '';
+    try{ html = await marshrutPage(ids); }catch(e){ html = ''; }
+    if(!html){ res.writeHead(500); res.end('Не получилось собрать маршрут'); return; }
+    res.writeHead(200, {'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'no-cache'});
+    res.end(html); return;
+  }
   if(u.pathname.startsWith('/mesto/')){
     const хвост = decodeURIComponent(u.pathname.slice('/mesto/'.length));
     const id = (хвост.match(/^[0-9]+/) || [''])[0];
