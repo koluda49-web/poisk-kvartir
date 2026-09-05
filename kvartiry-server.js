@@ -330,7 +330,9 @@ const REGIONS = {
     cities:['Брест','Барановичи','Пинск','Кобрин','Берёза','Лунинец','Пружаны','Ганцевичи','Иваново','Жабинка']},
   'minsk':    {realt:'minsk',          oblast:'Минск',               main:'Минск',
     cities:['Минск']},
-  'minsk-obl':{realt:'minsk-region',   oblast:'Минская область',     main:'Минск',
+  // kufar: у Kufar Минск — сама по себе область, поэтому по главному городу
+  // Минской области находились только городские объявления и все отсеивались
+  'minsk-obl':{realt:'minsk-region',   oblast:'Минская область',     main:'Минск', kufar:'Минская область',
     cities:['Минск','Борисов','Солигорск','Молодечно','Жодино','Слуцк','Дзержинск','Вилейка','Марьина Горка','Смолевичи','Логойск','Заславль']},
   'gomel':    {realt:'gomel-region',   oblast:'Гомельская область',  main:'Гомель',
     cities:['Гомель','Мозырь','Жлобин','Речица','Светлогорск','Калинковичи','Рогачёв','Добруш']},
@@ -393,10 +395,10 @@ const RB_AMEN_CHECKS = RB_AMENITIES.map(a=>'<label class="amen-item"><input type
 // и число гостей отсеиваются уже потом. Поэтому список кэшируем, а фильтры
 // применяем к сохранённому — смена цены или комнат больше не идёт к источнику.
 async function kufarRaw(reg, city, type){
-  const where = city || reg.main;
+  const where = city || reg.kufar || reg.main;
   return cached('raw|kufar|'+type+'|'+where, async ()=>{
     const t = TYPES[type]||TYPES.flat;
-    const url='https://api.kufar.by/search-api/v2/search/rendered-paginated?query='+encodeURIComponent(t.kw+' на сутки '+where)+'&size=30&lang=ru';
+    const url='https://api.kufar.by/search-api/v2/search/rendered-paginated?query='+encodeURIComponent(t.kw+' на сутки '+where)+'&size=200&lang=ru';
     const k = await (await fetch(url,{headers:{'User-Agent':UA}})).json();
     const g=(a,n)=>(a.ad_parameters||[]).find(y=>y.p===n);
     return (k.ads||[]).map(a=>{
@@ -427,11 +429,15 @@ async function kufarRaw(reg, city, type){
   });
 }
 
+// «Могилёвская» у нас и «Могилевская» у Kufar — одно и то же место.
+// Сравнение строка в строку выбрасывало всю область целиком.
+const сравнимо = t => String(t||'').toLowerCase().replace(/ё/g,'е').trim();
+
 async function fromKufar(reg, city, type, rooms, maxP, guests, minP){
   try{
     const list = await kufarRaw(reg, city, type);
     return list.filter(x=>
-         (city ? new RegExp(city,'i').test(x.area) : x.region===reg.oblast)
+         (city ? new RegExp(city,'i').test(x.area) : сравнимо(x.region)===сравнимо(reg.oblast))
       && (!rooms||x.rooms==rooms) && (!maxP||x.price<=maxP) && (!minP||x.price>=minP)
       && (!guests|| (+x.capacity||0)>=guests));
   }catch(e){ console.error('Kufar:', e.message); return []; }
@@ -730,7 +736,13 @@ async function search(regKey, city, type, rooms, maxP, guests, source, amen, min
   // убрать дубли по ссылке (Kufar при 'любой области' может повторяться)
   const seen = new Set();
   all = all.filter(x=>{ if(seen.has(x.link)) return false; seen.add(x.link); return true; })
-           .sort((a,b)=>a.price-b.price);
+           .sort((a,b)=>a.price-b.price)
+           // Отдаём наружу полегче: шестнадцать снимков в карточке никто
+           // не листает, а список удобств нужен был только что выше, при отборе.
+           .map(x=>{ const y = Object.assign({}, x);
+                     if(y.photos && y.photos.length > 8) y.photos = y.photos.slice(0, 8);
+                     delete y.amenText;
+                     return y; });
   return { total: all.length,
            kufar: all.filter(x=>x.src==='Kufar').length,
            realt: all.filter(x=>x.src==='Realt').length,
