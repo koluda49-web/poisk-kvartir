@@ -170,6 +170,70 @@ try {
     check('внизу видна кнопка перехода к маршруту', залипшая,
           'до маршрута надо докручивать страницу вручную');
   }
+
+  // ── маршрут в соседней вкладке ──────────────────────
+  // Страницу маршрута держат открытой рядом и продолжают набирать точки
+  // в основной. Если страница берёт точки только из адреса, новые на ней
+  // не появятся ни при обновлении, ни сами.
+  console.log('\n=== маршрут рядом с основной страницей ===');
+  {
+    // кладём маршрут так, как его кладёт основная страница
+    await send('Page.navigate', { url: SITE + '/marshrut' });
+    await sleep(2500);
+    await js(`(function(){ localStorage.setItem('route', JSON.stringify([
+      {id:2416,name:'Мирский замок',addr:'г. Мир',lat:53.451232,lng:26.473042},
+      {id:244,name:'Несвижский замок',addr:'г. Несвиж',lat:53.222816,lng:26.691436}]));})(); 1`);
+    await send('Page.navigate', { url: SITE + '/marshrut' });
+    await sleep(3000);
+    const своё = await js(`document.querySelectorAll('#rlist .it').length`);
+    check('без адреса страница берёт мой маршрут (' + своё + ')', своё === 2,
+          'открыли /marshrut без ?p= и маршрут пустой');
+
+    // основная страница добавила точку — это видно и здесь
+    await js(`(function(){
+      var было = JSON.parse(localStorage.getItem('route') || '[]');
+      было.push({id:285,name:'Лидский замок',addr:'г. Лида',lat:53.887131,lng:25.302564});
+      var s = JSON.stringify(было);
+      localStorage.setItem('route', s);
+      window.dispatchEvent(new StorageEvent('storage', {key:'route', newValue:s}));
+    })(); 1`);
+    await sleep(1500);
+    const стало = await js(`document.querySelectorAll('#rlist .it').length`);
+    check('новая точка появляется без обновления (' + стало + ')', стало === 3,
+          'пришлось бы обновлять страницу руками');
+
+    // ссылкой по-прежнему можно поделиться
+    await send('Page.navigate', { url: SITE + '/marshrut?p=2416,301' });
+    await sleep(3000);
+    const поссылке = await js(`document.querySelectorAll('#rlist .it').length`);
+    check('маршрут по ссылке открывается как есть (' + поссылке + ')', поссылке === 2,
+          'ссылка перестала работать');
+  }
+
+  console.log('\n=== линия по дорогам ===');
+  {
+    await send('Page.navigate', { url: SITE + '/marshrut?p=2416,244' });
+    await sleep(7000);
+    const свод = await js(`(document.querySelector('#rsub')||{}).textContent || ''`);
+    check('в сводке километраж по дорогам', /по дорогам/.test(свод), 'показано: ' + свод);
+    check('сказано, сколько ехать', /за рулём/.test(свод), 'показано: ' + свод);
+  }
+
+  console.log('\n=== переход открывается рядом ===');
+  {
+    await открыть('/?country=places');
+    await js(`(function(){ try{ localStorage.removeItem('route'); }catch(e){}
+      window.__route = []; if(typeof drawRoute === 'function') drawRoute(); })(); 1`);
+    await sleep(400);
+    await js(`document.querySelectorAll('.plc .toroute')[0].click(); 1`);
+    await sleep(1000);
+    const цели = JSON.parse(await js(`JSON.stringify({
+      панель: (document.querySelector('#routeGo')||{}).target || '',
+      полоска: (document.querySelector('#routeBar')||{}).target || '' })`));
+    check('маршрут открывается в соседней вкладке',
+          цели.панель === '_blank' && цели.полоска === '_blank',
+          'уходит из списка мест: панель «' + цели.панель + '», полоска «' + цели.полоска + '»');
+  }
 } finally {
   console.log('\nИтог: успешно ' + passed + ', провалено ' + failed);
   try { ws.close(); } catch {}
