@@ -10,18 +10,24 @@
 //   npm run проверка-вкладок
 //   npm run проверка-вкладок https://poisk-kvartir.onrender.com
 //
-// Чтобы увидеть ошибку своими глазами, запустите сервер с задержкой в
-// /api/search — тогда старый код падает на всех четырёх переключениях.
+// Сервер трогать не нужно: на время первого блока проверка сама задерживает
+// ответы /api/search на 2,5 с через CDP (Fetch.requestPaused), иначе на
+// прогретом кэше ответ приходит за миллисекунды, гонки нет и старый код
+// проходил проверку как исправный. Запросы страницы идут через service worker
+// (/sw.js), и перехват их не видит — на это же время он обходится
+// (Network.setBypassServiceWorker), иначе задержка молча не срабатывает.
 
 import { spawn } from 'node:child_process';
 
-const PORT = 9351, sleep = ms => new Promise(r => setTimeout(r, ms));
+// Порт отладки и профиль — свои на каждый прогон: иначе вторая проверка
+// подряд не запускается, прежний Chrome ещё держит и то и другое.
+const PORT = 9351 + (process.pid % 400), sleep = ms => new Promise(r => setTimeout(r, ms));
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 const CHROME = process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 
 const chrome = spawn(CHROME, [
   '--headless=new', `--remote-debugging-port=${PORT}`, '--disable-gpu', '--hide-scrollbars',
-  '--no-first-run', '--no-default-browser-check', '--user-data-dir=' + process.env.TEMP + '/cdp-race', 'about:blank',
+  '--no-first-run', '--no-default-browser-check', '--user-data-dir=' + process.env.TEMP + '/cdp-race-' + process.pid, 'about:blank',
 ], { stdio: 'ignore' });
 
 let ws, id = 0; const pend = new Map();
@@ -35,7 +41,16 @@ if (!url) { console.log('Не удалось запустить Chrome — пр�
 
 ws = new WebSocket(url);
 await new Promise(r => ws.addEventListener('open', r));
-ws.addEventListener('message', e => { const m = JSON.parse(e.data); if (m.id && pend.has(m.id)) { const p = pend.get(m.id); pend.delete(m.id); m.error ? p.rej(new Error(m.error.message)) : p.res(m.result); } });
+// Пока включён Fetch (только в первом блоке), каждый запрос к /api/search
+// придерживается на SEARCH_DELAY мс — так воспроизводится медленный сервер.
+// Запрос могла уже отменить навигация — тогда continueRequest ругается, это не ошибка.
+const SEARCH_DELAY = 2500;
+ws.addEventListener('message', e => {
+  const m = JSON.parse(e.data);
+  if (m.method === 'Fetch.requestPaused')
+    setTimeout(() => send('Fetch.continueRequest', { requestId: m.params.requestId }).catch(() => {}), SEARCH_DELAY);
+  if (m.id && pend.has(m.id)) { const p = pend.get(m.id); pend.delete(m.id); m.error ? p.rej(new Error(m.error.message)) : p.res(m.result); }
+});
 
 await send('Page.enable'); await send('Runtime.enable');
 await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
@@ -48,19 +63,26 @@ const check = (name, ok, detail) => {
 };
 
 // ── жильё → места ─────────────────────────────────────────────────────────
-console.log('\n=== переход на «Что посетить» ===');
-for (const [name, delay] of [['сразу', 0], ['через 300 мс', 300], ['через 1200 мс', 1200], ['через 3000 мс', 3000]]) {
+// Ответ поиска придерживаем на SEARCH_DELAY мс, а вкладку переключаем в разные
+// моменты: пока запрос ещё не ушёл, пока летит, перед самым ответом и уже
+// после него. После клика ждём с запасом, чтобы задержанный ответ точно пришёл.
+console.log('\n=== переход на «Что посетить» (ответ /api/search задержан на ' + SEARCH_DELAY + ' мс) ===');
+await send('Network.enable'); await send('Network.setBypassServiceWorker', { bypass: true });
+await send('Fetch.enable', { patterns: [{ urlPattern: '*/api/search*' }] });
+for (const [name, delay] of [['сразу', 0], ['через 500 мс', 500], ['через 2000 мс', 2000], ['через 4000 мс', 4000]]) {
   await send('Page.navigate', { url: SITE + '/' });
   for (let i = 0; i < 90; i++) { if (await js('!!document.querySelector("#cbPL")')) break; await sleep(300); }
   if (delay) await sleep(delay);
   await js(`document.querySelector('#cbPL').click(); 1`);
-  await sleep(9000);
+  await sleep(12000);
   const r = JSON.parse(await js(`JSON.stringify({mode: window.__mode,
     flats: document.querySelectorAll('#grid .card').length,
     places: document.querySelectorAll('#grid .plc').length})`));
   check('переключение ' + name, r.mode === 'places' && r.flats === 0 && r.places > 0,
         'в ленте мест осталось карточек жилья: ' + r.flats + ', мест: ' + r.places);
 }
+// дальше задержка не нужна — остальные блоки ждут обычный быстрый ответ
+await send('Fetch.disable'); await send('Network.setBypassServiceWorker', { bypass: false });
 
 // ── места → жильё ─────────────────────────────────────────────────────────
 console.log('\n=== возврат к жилью ===');

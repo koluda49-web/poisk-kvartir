@@ -1350,7 +1350,7 @@ async function stayIndex(){
     const части = await mapLimit(пары, 4, ([r, t]) =>
       runSearchQuery(new URLSearchParams({ region:r, city:'', type:t,
         rooms:'', guests:'', max:'', source:'both' }))
-        .then(d => ({ t, items: d.items || [] })).catch(()=>({ t, items: [] })));
+        .then(d => ({ t, r, items: d.items || [] })).catch(()=>({ t, r, items: [] })));
     части.forEach(d => d.items.forEach(x => {
       // Точных координат нет у всего Realt: он ставит метку у центра города.
       // Отбрасывать их — значит выкинуть целый источник из трёх, поэтому
@@ -1358,11 +1358,54 @@ async function stayIndex(){
       // такие помечены словом «около».
       if(!x.lat || !x.lng || было.has(x.link)) return;
       было.add(x.link);
-      // сам объявление вида не несёт — помечаем тем запросом, который его принёс
-      все.push(Object.assign({}, x, { vid: d.t }));
+      // сам объявление ни вида, ни области не несёт — помечаем тем запросом,
+      // который его принёс: по области потом выбирается, куда ведёт кнопка
+      все.push(Object.assign({}, x, { vid: d.t, reg: d.r }));
     }));
     return все;
   });
+}
+
+// Жильё рядом с точкой: общий список страны плюс отдельный запрос по
+// ближайшим городам. Одним списком не обойтись — Kufar отдаёт не больше
+// двухсот объявлений на запрос, и в областной выдаче городские помещаются
+// не полностью.
+async function stayNearPoint(lat, lng, r, вид){
+  if(!lat || !lng) return { items: [], region: '' };
+  let items = [], region = '';
+  try{
+    const части = [await stayIndex()];
+    const виды = вид ? [вид] : STAY_TYPES;
+    const рядом = townsNear(lat, lng, 75, 8);
+    const пары = [];
+    рядом.forEach(g => виды.forEach(t => пары.push({ g, t })));
+    const ещё = await Promise.all(пары.map(({ g, t }) =>
+      runSearchQuery(new URLSearchParams({ region:g.region, city:g.town, type:t,
+        rooms:'', guests:'', max:'', source:'both' }))
+        .then(d => (d.items||[]).map(x => Object.assign({}, x, { vid: t, reg: g.region })))
+        .catch(()=>[])));
+    части.push([].concat(...ещё));
+
+    const было = new Set();
+    items = [].concat(...части)
+      .filter(x => (!вид || x.vid === вид) && x.lat && x.lng
+                   && !было.has(x.link) && было.add(x.link) !== null)
+      .map(x => Object.assign({}, x, { km: Math.round(distKm(lat, lng, x.lat, x.lng) * 10) / 10 }))
+      .filter(x => x.km <= r)
+      .sort((a, b) => a.price - b.price);
+
+    // Куда вести кнопку «Показать все варианты в области»: туда, где это
+    // жильё и стоит. Считаем по тридцати ближайшим — дальние могут быть уже
+    // из соседней области и перетянуть счёт на себя.
+    const счёт = {};
+    items.slice().sort((a, b) => a.km - b.km).slice(0, 30)
+         .forEach(x => { if(x.reg) счёт[x.reg] = (счёт[x.reg] || 0) + 1; });
+    const победитель = Object.keys(счёт).sort((a, b) => счёт[b] - счёт[a])[0];
+    const город = nearestTown(lat, lng);
+    region = победитель || ((город && город.km <= 60) ? город.region : nearestRegion(lat, lng));
+  }catch(e){}
+  if(!region) region = nearestRegion(lat, lng);
+  return { items, region };
 }
 
 // какой области принадлежит точка — по ближайшему областному центру
@@ -1613,6 +1656,145 @@ function parseCitySlug(path){
     }
   }
   return null;
+}
+
+// Человеческий кусок адреса из названия: «Мирский замок» → «mirskij-zamok».
+const ЛАТ = {'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'e','ж':'zh','з':'z','и':'i',
+  'й':'j','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u',
+  'ф':'f','х':'h','ц':'c','ч':'ch','ш':'sh','щ':'sch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu',
+  'я':'ya','і':'i','ў':'u','’':''};
+function slugify(name){
+  return String(name || '').toLowerCase().split('')
+    .map(c => (ЛАТ[c] !== undefined ? ЛАТ[c] : (/[a-z0-9]/.test(c) ? c : '-')))
+    .join('').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
+}
+
+// Страница одного места. Отдаётся сервером целиком: поисковик не выполняет
+// наш скрипт, а раздел «Что посетить» без этого для него не существует.
+async function mestoPage(id){
+  const list = await placesRaw();
+  const p = list.find(x => String(x.id) === String(id));
+  if(!p) return null;
+
+  let d = { text:'', years:'', pics:[], more: KUDIN + '/?point=' + id };
+  try{ d = await placeDetail(id); }catch(e){}
+  const своё = EXTRA_PLACES.find(x => String(x.id) === String(id));
+  const текст = (своё && своё.text) || d.text || '';
+
+  const рядом = await stayNearPoint(p.lat, p.lng, 30, '');
+  const жильё = рядом.items.slice(0, 8);
+  const цены = рядом.items.map(x => x.price).filter(x => x > 0).sort((a,b)=>a-b);
+
+  const где = [p.addr, p.cat].filter(Boolean).join(' · ');
+  const title = p.name + (p.addr ? (', ' + p.addr) : '') + ' — что посмотреть и где переночевать рядом';
+  const desc = (текст ? текст.slice(0, 150).replace(/\s+\S*$/, '') + '. ' : '')
+    + (жильё.length
+        ? ('Жильё рядом: ' + рядом.items.length + ' вариантов от ' + цены[0] + ' BYN за сутки, ближайшее в ' + жильё[0].km + ' км.')
+        : 'Координаты, маршрут в Яндекс.Картах и жильё поблизости.');
+  const адрес = SITE_URL + '/mesto/' + p.id + '-' + slugify(p.name);
+  const route = 'https://yandex.by/maps/?rtext=~' + p.lat + ',' + p.lng + '&rtt=auto';
+
+  const карточки = жильё.map(function(x){
+    const img = (x.photos && x.photos[0]) ? ('<img src="' + esc(x.photos[0]) + '" alt="" loading="lazy">')
+                                          : '<div class="noimg">без фото</div>';
+    return '<a class="c" href="' + esc(x.link) + '" target="_blank" rel="noopener nofollow">' + img
+      + '<div class="b"><div class="p">' + x.price + ' BYN <small>/ сутки</small></div>'
+      + '<div class="m"><span>' + (x.approx ? esc(x.area || 'рядом') : (x.km + ' км')) + '</span><span>' + esc(x.src) + '</span></div>'
+      + '<h3>' + esc((x.title || '').slice(0, 70)) + '</h3></div></a>';
+  }).join('');
+
+  const рядомМеста = list
+    .filter(x => x.id !== p.id && x.lat && x.lng && distKm(p.lat, p.lng, x.lat, x.lng) <= 25)
+    .map(x => Object.assign({}, x, { km: Math.round(distKm(p.lat, p.lng, x.lat, x.lng) * 10) / 10 }))
+    .sort((a, b) => a.km - b.km).slice(0, 8);
+
+  return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<title>' + esc(title) + '</title>'
+    + '<meta name="description" content="' + esc(desc) + '">'
+    + '<meta name="robots" content="index,follow">'
+    + '<meta name="theme-color" content="#9a3412">'
+    + '<link rel="canonical" href="' + адрес + '">'
+    + '<meta property="og:type" content="article">'
+    + '<meta property="og:title" content="' + esc(p.name) + '">'
+    + '<meta property="og:description" content="' + esc(desc) + '">'
+    + '<meta property="og:url" content="' + адрес + '">'
+    + (p.pic ? ('<meta property="og:image" content="' + esc(p.pic.startsWith('/') ? (SITE_URL + p.pic) : p.pic) + '">') : '')
+    + '<script type="application/ld+json">'
+    + JSON.stringify({ '@context':'https://schema.org', '@type':'TouristAttraction',
+        name: p.name, description: текст.slice(0, 300) || undefined,
+        image: p.pic ? (p.pic.startsWith('/') ? (SITE_URL + p.pic) : p.pic) : undefined,
+        address: p.addr || undefined,
+        geo: { '@type':'GeoCoordinates', latitude: p.lat, longitude: p.lng },
+        url: адрес }).replace(/</g,'\\u003c')
+    + '</' + 'script>'
+    + '<style>'
+    + '*{box-sizing:border-box}'
+    + 'body{margin:0;font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#faf7f3;color:#1c1917}'
+    + '.w{max-width:900px;margin:0 auto;padding:22px 16px 60px}'
+    + 'a{color:#9a3412}'
+    + '.crumb{font-size:13.5px;color:#9c948c;margin-bottom:10px}'
+    + '.crumb a{color:#57534e;text-decoration:none}'
+    + 'h1{font-size:clamp(24px,4.6vw,36px);line-height:1.15;margin:0 0 6px;letter-spacing:-.02em}'
+    + '.where{color:#57534e;margin:0 0 16px}'
+    + '.hero{width:100%;max-height:460px;object-fit:cover;border-radius:14px;display:block;margin:0 0 16px}'
+    + '.txt{max-width:70ch}'
+    + '.facts{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0}'
+    + '.facts a,.facts span{background:#fff;border:1px solid #e9e2d8;border-radius:999px;padding:8px 15px;'
+    +   'font-size:14px;text-decoration:none;color:#1c1917}'
+    + '.cta{display:inline-block;background:#9a3412;color:#fff;text-decoration:none;font-weight:700;'
+    +   'padding:13px 22px;border-radius:10px;margin:8px 0 4px}'
+    + 'h2{font-size:20px;margin:30px 0 12px}'
+    + '.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px}'
+    + '.c{background:#fff;border:1px solid #e9e2d8;border-radius:14px;overflow:hidden;display:flex;'
+    +   'flex-direction:column;text-decoration:none;color:inherit}'
+    + '.c img{width:100%;height:150px;object-fit:cover;display:block}'
+    + '.noimg{height:150px;display:flex;align-items:center;justify-content:center;background:#f0eae1;color:#9c948c;font-size:13px}'
+    + '.c .b{padding:11px 13px 13px;display:flex;flex-direction:column;gap:5px}'
+    + '.c .p{font-size:19px;font-weight:800}.c .p small{font-size:12.5px;font-weight:600;color:#9c948c}'
+    + '.c .m{display:flex;gap:6px;flex-wrap:wrap}'
+    + '.c .m span{font-size:12.5px;background:#f8f4ef;border:1px solid #f0eae1;border-radius:999px;padding:2px 9px;color:#57534e}'
+    + '.c h3{font-size:14px;font-weight:600;margin:2px 0 0}'
+    + '.near{display:flex;flex-wrap:wrap;gap:9px;margin-top:6px}'
+    + '.near a{background:#fff;border:1px solid #e9e2d8;border-radius:999px;padding:7px 14px;'
+    +   'font-size:14px;text-decoration:none;color:#1c1917}'
+    + 'footer{margin-top:36px;color:#9c948c;font-size:13.5px;max-width:75ch}'
+    + '@media (prefers-color-scheme:dark){body{background:#14110e;color:#f6f2ed}'
+    +   '.c,.facts a,.facts span,.near a{background:#1d1916;border-color:#332c25;color:#f6f2ed}'
+    +   '.noimg{background:#2b251f}.where,.crumb,.c .m span{color:#c2b7ab}a{color:#e2703a}}'
+    + '</style></head><body><div class="w">'
+    + '<nav class="crumb"><a href="/">Поиск жилья</a> → <a href="/?country=places">Что посетить</a></nav>'
+    + '<h1>' + esc(p.name) + '</h1>'
+    + (где ? ('<p class="where">' + esc(где) + '</p>') : '')
+    + (p.pic ? ('<img class="hero" src="' + esc(p.pic) + '" alt="' + esc(p.name) + '">') : '')
+    + (текст ? ('<div class="txt"><p>' + esc(текст) + '</p></div>') : '')
+    + '<div class="facts">'
+    +   '<a href="' + route + '" target="_blank" rel="noopener">Проложить маршрут →</a>'
+    +   '<span>' + p.lat.toFixed(6) + ', ' + p.lng.toFixed(6) + '</span>'
+    +   '<a href="' + esc(d.more || (KUDIN + '/?point=' + p.id)) + '" target="_blank" rel="noopener">Подробнее на kudin.by →</a>'
+    + '</div>'
+    + (жильё.length
+        ? ('<h2>Где переночевать рядом</h2>'
+           + '<p class="where">В 30 км отсюда сдаётся ' + рядом.items.length + ' вариантов'
+           + (цены.length ? (', самый дешёвый — ' + цены[0] + ' BYN за сутки') : '')
+           + '. Это объявления частников с Kufar, Realt и Flatbook, собранные в один список.</p>'
+           + '<div class="grid">' + карточки + '</div>'
+           + '<a class="cta" href="/?country=by&region=' + рядом.region + '&type=flat">Все варианты в области с фильтрами и картой →</a>')
+        : ('<h2>Где переночевать рядом</h2>'
+           + '<p class="where">В 30 километрах отсюда сдаваемого жилья сейчас нет. '
+           + '<a href="/?country=by&region=' + рядом.region + '&type=flat">Посмотрите жильё в области</a> — '
+           + 'до многих мест это час-полтора дороги.</p>'))
+    + (рядомМеста.length
+        ? ('<h2>Что ещё рядом</h2><div class="near">'
+           + рядомМеста.map(x => '<a href="/mesto/' + x.id + '-' + slugify(x.name) + '">'
+               + esc(x.name) + ' · ' + x.km + ' км</a>').join('')
+           + '</div>')
+        : '')
+    + '<footer><p>Описание и снимок — с нашего сайта <a href="https://kudin.by" target="_blank" rel="noopener">kudin.by</a>, '
+    + 'карты архитектурного наследия Беларуси. Жильё мы не сдаём и комиссию не берём: показываем объявления '
+    + 'с Kufar, Realt и Flatbook. Перед поездкой уточняйте детали у собственника.</p>'
+    + '<p><a href="/?country=places">Все ' + list.length + ' мест на карте →</a></p></footer>'
+    + '</div></body></html>';
 }
 
 async function cityPage(slug, kind){
@@ -2414,6 +2596,28 @@ h1 .accent{ color:var(--accent); }
 .allstay{display:block;width:100%;margin-top:10px;padding:11px 14px;border:0;border-radius:11px;
   background:var(--accent);color:#fff;font:inherit;font-weight:700;font-size:14px;cursor:pointer}
 .allstay:hover{filter:brightness(1.06)}
+#routeBox{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+  padding:14px 16px;margin:0 0 14px;box-shadow:var(--shadow-sm)}
+.rt-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.rt-head b{font-size:16px}
+#rtSum{color:var(--txt-3);font-size:13.5px}
+.rt-clear{margin-left:auto;font:inherit;font-size:13px;color:var(--txt-2);background:none;
+  border:1px solid var(--line);border-radius:999px;padding:4px 12px;cursor:pointer}
+.rt-clear:hover{border-color:var(--accent);color:var(--accent)}
+.rt-item{display:flex;align-items:baseline;gap:9px;padding:5px 0;font-size:14.5px;
+  border-top:1px solid var(--line)}
+.rt-item:first-child{border-top:0}
+.rt-item .n{width:22px;height:22px;flex:none;border-radius:50%;background:var(--accent);color:var(--accent-ink);
+  font-size:12px;font-weight:700;display:inline-flex;align-items:center;justify-content:center}
+.rt-item .km{margin-left:auto;color:var(--txt-3);font-size:13px;white-space:nowrap}
+.rt-item .x{font:inherit;background:none;border:0;color:var(--txt-3);cursor:pointer;padding:0 2px}
+.rt-item .x:hover{color:var(--accent)}
+.rt-go{display:inline-block;margin-top:12px;background:var(--accent);color:var(--accent-ink);
+  text-decoration:none;font-weight:700;font-size:14.5px;border-radius:var(--radius-sm);padding:11px 18px}
+.rt-go:hover{background:var(--accent-2)}
+.plc .toroute{font:inherit;font-size:13.5px;font-weight:600;background:var(--surface-2);
+  border:1px solid var(--line);border-radius:999px;padding:7px 14px;cursor:pointer;color:var(--txt-2)}
+.plc .toroute.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .fld.off{opacity:.45}
 .fld.off select{cursor:not-allowed}
 .plc .nopic{width:100%;height:100%;display:flex;align-items:center;justify-content:center;
@@ -2723,6 +2927,14 @@ h1 .accent{ color:var(--accent); }
       <span>Что смотреть</span>
       <select id="plGroup"><option value="">всё подряд</option></select>
     </label>
+    <label class="fld">
+      <span>Заезд</span>
+      <input id="plFrom" type="date">
+    </label>
+    <label class="fld">
+      <span>Выезд</span>
+      <input id="plTo" type="date">
+    </label>
   </form>
 
   <div class="presets" id="presets">
@@ -2742,6 +2954,16 @@ h1 .accent{ color:var(--accent); }
       <button id="viewMap" type="button" onclick="setView('map')">📍 Карта</button>
       <button id="viewFav" type="button" onclick="setView('fav')">♥ <span id="favN">0</span></button>
     </div>
+  </div>
+
+  <div id="routeBox" style="display:none">
+    <div class="rt-head">
+      <b>Маршрут на день</b>
+      <span id="rtSum"></span>
+      <button type="button" id="rtClear" class="rt-clear">очистить</button>
+    </div>
+    <div id="rtList"></div>
+    <a id="routeGo" class="rt-go" href="#" target="_blank" rel="noopener">Открыть весь маршрут в Яндекс.Картах →</a>
   </div>
 
   <div id="map" style="display:none"></div>
@@ -2821,6 +3043,7 @@ function setCountry(c, quiet){
   // логично только там, где эти точки и показаны.
   const sb = $('#subBox'); if(sb) sb.style.display = pl ? 'none' : '';
   const pb = $('#plBox');  if(pb) pb.style.display = pl ? '' : 'none';
+  drawRoute();
   const ft = $('#fToggle'); if(ft) ft.style.display = (ru || pl) ? 'none' : '';
   if(!window.__hintBY) window.__hintBY = $('#hint').innerHTML;
   $('#hint').innerHTML = pl ? HINT_PL : (ru ? HINT_RU : window.__hintBY);
@@ -3501,6 +3724,7 @@ async function runPlaces(){
     const where = q ? (' по запросу «' + q + '»') : ((c && +r) ? (' ' + around + ', до ' + r + ' км') : ' по всей Беларуси');
     $('#stat').textContent = 'Найдено мест: ' + d.total + where;
     renderPlaces();
+    drawRoute();
     if(window.__view === 'map') plotPlaces();
     syncUrl();
     if(window.__T) window.__T('places', { city: $('#plCity').value, total: d.total });
@@ -3531,7 +3755,9 @@ function renderPlaces(){
       + '<div class="row">'
       +   '<a class="go2" href="' + route + '" target="_blank" rel="noopener">Проложить маршрут</a>'
       +   '<button class="stay2" type="button" onclick="stayNear(' + i + ')">Жильё рядом</button>'
-      +   '<a href="https://kudin.by/?point=' + p.id + '" target="_blank" rel="noopener">Подробнее</a>'
+      +   '<button class="toroute' + (inRoute(p.id) ? ' on' : '') + '" type="button" onclick="toggleRoute('
+      +     i + ')">' + (inRoute(p.id) ? '✓ в маршруте' : '+ в маршрут') + '</button>'
+      +   '<a href="/mesto/' + p.id + '-' + esc2(slugRu(p.name)) + '">Подробнее</a>'
       + '</div><div id="near' + i + '"></div></div></article>';
   }).join('');
   // Описания тянем по одному запросу на точку, поэтому не грузим всё сразу:
@@ -3552,6 +3778,17 @@ function renderPlaces(){
     list.slice(0, 12).forEach(function(p, i){ loadPlaceText(p.id, i); });
   }
 }
+// то же превращение названия в кусок адреса, что и на сервере
+const ЛАТ2 = {'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'e','ж':'zh','з':'z','и':'i',
+  'й':'j','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u',
+  'ф':'f','х':'h','ц':'c','ч':'ch','ш':'sh','щ':'sch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu',
+  'я':'ya','і':'i','ў':'u'};
+function slugRu(name){
+  return String(name || '').toLowerCase().split('')
+    .map(function(c){ return ЛАТ2[c] !== undefined ? ЛАТ2[c] : (/[a-z0-9]/.test(c) ? c : '-'); })
+    .join('').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
+}
+
 function esc2(t){ return String(t == null ? '' : t).replace(/[&<>"]/g, function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
 
@@ -3582,10 +3819,11 @@ async function stayNear(i){
         + '</div>';
       return;
     }
+    const N = nights();
     const cards = (d.items || []).slice(0, 6).map(function(x){
       const img = (x.photos && x.photos[0]) ? '<img src="' + x.photos[0] + '" loading="lazy" alt="">' : '';
       return '<a href="' + x.link + '" target="_blank" rel="noopener">' + img
-        + '<div class="p">' + x.price + ' BYN</div><div class="s">'
+        + '<div class="p">' + x.price + ' BYN' + (N ? ('<small> · ' + (x.price*N) + ' за ' + N + ' ноч.</small>') : '') + '</div><div class="s">'
         // У Realt точной точки нет — метка стоит у центра города. Показывать
         // «около 0 км» было бы враньём, поэтому пишем сам город.
         + (x.approx ? esc2(x.area || 'рядом') : (x.km + ' км'))
@@ -3671,6 +3909,98 @@ function allStay(btn){
   if(window.__T) window.__T('all_stay', { region: reg });
   const g = $('#stat') || $('#grid');
   if(g) g.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+
+// ── Маршрут на день ───────────────────────────────────────────────────────
+// Набор точек, порядок объезда и одна ссылка в Яндекс.Карты. Порядок считаем
+// жадно: от первой добавленной каждый раз идём к ближайшей из оставшихся.
+// Для трёх-пяти точек это даёт тот же ответ, что и перебор, а считается сразу.
+window.__route = [];
+try{ window.__route = JSON.parse(localStorage.getItem('route') || '[]'); }catch(e){}
+
+// Расстояние по прямой, километры. На сервере такая функция есть, но она
+// там и остаётся: страница живёт в браузере и до неё не дотянется.
+function кмМежду(a1, o1, a2, o2){
+  const t = Math.PI / 180, x = (a2 - a1) * t, y = (o2 - o1) * t;
+  const h = Math.sin(x/2)*Math.sin(x/2)
+          + Math.cos(a1*t) * Math.cos(a2*t) * Math.sin(y/2) * Math.sin(y/2);
+  return 6371 * 2 * Math.asin(Math.sqrt(h));
+}
+
+function inRoute(id){ return (window.__route || []).some(function(p){ return p.id === id; }); }
+
+function toggleRoute(i){
+  const p = (window.__places || [])[i]; if(!p) return;
+  const было = inRoute(p.id);
+  if(было) window.__route = window.__route.filter(function(x){ return x.id !== p.id; });
+  else window.__route = window.__route.concat([{ id:p.id, name:p.name, lat:p.lat, lng:p.lng }]);
+  try{ localStorage.setItem('route', JSON.stringify(window.__route)); }catch(e){}
+  if(window.__T && !было) window.__T('route_add', {});
+  // Перерисовываем одну кнопку, а не всю ленту: заново рисовать шесть десятков
+  // карточек ради галочки — это перезагрузка всех снимков и рывок страницы.
+  markRoute(i, !было);
+  drawRoute();
+}
+
+// вид кнопки «в маршрут» у одной карточки
+function markRoute(i, on){
+  const card = document.getElementById('pl' + i); if(!card) return;
+  const b = card.querySelector('.toroute'); if(!b) return;
+  b.classList.toggle('on', !!on);
+  b.textContent = on ? '✓ в маршруте' : '+ в маршрут';
+}
+
+function clearRoute(){
+  const были = (window.__route || []).map(function(p){ return p.id; });
+  window.__route = [];
+  try{ localStorage.removeItem('route'); }catch(e){}
+  (window.__places || []).forEach(function(p, i){ if(были.indexOf(p.id) >= 0) markRoute(i, false); });
+  drawRoute();
+}
+
+// порядок объезда: от первой точки каждый раз к ближайшей из оставшихся
+function orderRoute(list){
+  if(list.length < 3) return list.slice();
+  const left = list.slice(1), out = [list[0]];
+  while(left.length){
+    const cur = out[out.length - 1];
+    let bi = 0, bd = Infinity;
+    left.forEach(function(p, i){
+      const d = кмМежду(cur.lat, cur.lng, p.lat, p.lng);
+      if(d < bd){ bd = d; bi = i; }
+    });
+    out.push(left.splice(bi, 1)[0]);
+  }
+  return out;
+}
+
+function drawRoute(){
+  const box = $('#routeBox'); if(!box) return;
+  const list = orderRoute(window.__route || []);
+  window.__route = list;
+  if(!list.length || window.__mode !== 'places'){ box.style.display = 'none'; return; }
+  box.style.display = '';
+  let сумма = 0;
+  const строки = list.map(function(p, i){
+    const шаг = i ? кмМежду(list[i-1].lat, list[i-1].lng, p.lat, p.lng) : 0;
+    сумма += шаг;
+    return '<div class="rt-item"><span class="n">' + (i+1) + '</span>'
+      + '<span>' + esc2(p.name) + '</span>'
+      + '<span class="km">' + (i ? ('+' + Math.round(шаг) + ' км') : 'старт') + '</span>'
+      + '<button class="x" type="button" title="убрать" onclick="dropRoute(' + p.id + ')">×</button></div>';
+  }).join('');
+  $('#rtList').innerHTML = строки;
+  $('#rtSum').textContent = list.length + ' точ. · около ' + Math.round(сумма) + ' км между ними';
+  $('#routeGo').href = 'https://yandex.by/maps/?rtext='
+    + list.map(function(p){ return p.lat + ',' + p.lng; }).join('~') + '&rtt=auto';
+}
+
+function dropRoute(id){
+  window.__route = (window.__route || []).filter(function(p){ return p.id !== id; });
+  try{ localStorage.setItem('route', JSON.stringify(window.__route)); }catch(e){}
+  // если эта точка сейчас видна в ленте — снимаем отметку с её кнопки
+  (window.__places || []).forEach(function(p, i){ if(p.id === id) markRoute(i, false); });
+  drawRoute();
 }
 
 // Копируем координаты в буфер. Если браузер не разрешил (так бывает на
@@ -3790,6 +4120,8 @@ function syncUrl(){
       if($('#plRadius').value!=='50') p.set('r', $('#plRadius').value);
       if($('#plGroup').value)  p.set('group',  $('#plGroup').value);
       if($('#plQ').value.trim()) p.set('q', $('#plQ').value.trim());
+      if($('#from').value) p.set('from', $('#from').value);
+      if($('#to').value)   p.set('to',   $('#to').value);
     } else if(window.__mode==='ru'){
       p.set('country','ru');
       p.set('city', $('#rfCity').value);
@@ -3830,6 +4162,8 @@ function applyUrl(){
       if(q.get('city'))  $('#plCity').value  = q.get('city');
       if(q.get('r'))     $('#plRadius').value = q.get('r');
       if(q.get('q'))     $('#plQ').value = q.get('q');
+      if(q.get('from')){ $('#from').value = q.get('from'); $('#plFrom').value = q.get('from'); }
+      if(q.get('to')){   $('#to').value   = q.get('to');   $('#plTo').value   = q.get('to'); }
       window.__plGroup = q.get('group') || '';
       setCountry('places', true);
       return;
@@ -3871,6 +4205,23 @@ function applyUrl(){
   });
   $('#plCity').addEventListener('change', function(){ window.__plCenter = null; runPlaces(); });
   $('#plRadius').addEventListener('change', runPlaces);
+  // Даты поездки одни на весь сайт: поля в разделе мест пишут в те же
+  // «заезд» и «выезд», по которым считается стоимость за весь срок.
+  ['plFrom','plTo'].forEach(function(id){
+    const el = $('#' + id); if(!el) return;
+    el.addEventListener('change', function(){
+      $('#from').value = $('#plFrom').value;
+      $('#to').value   = $('#plTo').value;
+      syncUrl();
+      // пересобираем уже раскрытые блоки «жильё рядом», чтобы в них
+      // появилась стоимость за весь срок
+      document.querySelectorAll('.plc [id^=near]').forEach(function(b){
+        if(b.dataset.open === '1'){ const i = +b.id.replace('near',''); b.dataset.open='0'; stayNear(i); }
+      });
+    });
+  });
+  $('#rtClear').addEventListener('click', clearRoute);
+
   let plTimer = null;
   $('#plQ').addEventListener('input', function(){
     clearTimeout(plTimer); plTimer = setTimeout(runPlaces, 400);   // ждём, пока допечатают
@@ -4146,42 +4497,26 @@ http.createServer(async (req,res)=>{
   if(u.pathname === '/api/places/stay'){
     const lat = +u.searchParams.get('lat'), lng = +u.searchParams.get('lng');
     const r = +(u.searchParams.get('r') || 30);
-    const вид = u.searchParams.get('type') || '';
-    let items = [], region = '';
-    if(lat && lng){
-      region = nearestRegion(lat, lng);        // для кнопки «показать всё в области»
-      try{
-        // Общий список по стране даёт широту охвата: он собран из запросов
-        // по всем областям и не зависит от того, куда мы отнесли точку.
-        const части = [await stayIndex()];
-        // Но Kufar отдаёт не больше двухсот объявлений на запрос, и в
-        // областной выдаче помещается лишь часть городских. Поэтому по
-        // ближайшему городу спрашиваем отдельно: у Лиды так 76 вариантов
-        // вместо тридцати.
-        const виды = вид ? [вид] : STAY_TYPES;
-        // Берём города и подальше: у объявления метка «Жодино», а сама
-        // квартира может стоять в тридцати километрах от точки, хотя центр
-        // Жодина от неё в пятидесяти семи.
-        const рядом = townsNear(lat, lng, 75, 8);
-        const пары = [];
-        рядом.forEach(g => виды.forEach(t => пары.push({ g, t })));
-        const ещё = await Promise.all(пары.map(({ g, t }) =>
-          runSearchQuery(new URLSearchParams({ region:g.region, city:g.town, type:t,
-            rooms:'', guests:'', max:'', source:'both' }))
-            .then(d => (d.items||[]).map(x => Object.assign({}, x, { vid: t })))
-            .catch(()=>[])));
-        части.push([].concat(...ещё));
-        const было = new Set();
-        items = [].concat(...части)
-          .filter(x => (!вид || x.vid === вид) && x.lat && x.lng
-                       && !было.has(x.link) && было.add(x.link) !== null)
-          .map(x => Object.assign({}, x, { km: Math.round(distKm(lat, lng, x.lat, x.lng) * 10) / 10 }))
-          .filter(x => x.km <= r)
-          .sort((a, b) => a.price - b.price);
-      }catch(e){}
-    }
+    const d = await stayNearPoint(lat, lng, r, u.searchParams.get('type') || '');
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
-    res.end(JSON.stringify({ total: items.length, region, items: items.slice(0, 12) })); return;
+    res.end(JSON.stringify({ total: d.items.length, region: d.region, items: d.items.slice(0, 12) })); return;
+  }
+  // страница отдельного места: /mesto/2416 или /mesto/2416-mirskij-zamok
+  if(u.pathname.startsWith('/mesto/')){
+    const хвост = decodeURIComponent(u.pathname.slice('/mesto/'.length));
+    const id = (хвост.match(/^[0-9]+/) || [''])[0];
+    let html = null;
+    if(id){ try{ html = await mestoPage(id); }catch(e){ console.error('Место ' + id + ':', e.message); } }
+    if(!html){
+      res.writeHead(404, {'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'no-cache'});
+      res.end('<!doctype html><meta charset="utf-8"><title>Такого места у нас нет</title>'
+        + '<body style="font:16px system-ui;padding:40px;max-width:40em;margin:0 auto">'
+        + '<h1>Такого места у нас нет</h1><p>Возможно, ссылка устарела или в ней опечатка.</p>'
+        + '<p><a href="/?country=places">Посмотреть все места на карте</a></p>');
+      return;
+    }
+    res.writeHead(200, {'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'public, max-age=600'});
+    res.end(html); return;
   }
   if(u.pathname === '/robots.txt'){
     res.writeHead(200, {'Content-Type':'text/plain; charset=utf-8'});
@@ -4198,7 +4533,17 @@ http.createServer(async (req,res)=>{
           return '<url><loc>'+SITE_URL+'/'+city+'-'+kind+'</loc><changefreq>daily</changefreq><priority>0.6</priority></url>';
         });
       })));
-    res.end('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'+urls.join('')+'</urlset>'); return;
+    // Места — самая большая часть карты сайта: их ищут по названию, а не
+    // по слову «квартира». Без карты поисковик о них не узнает.
+    let места = [];
+    try{
+      места = (await placesRaw()).map(function(p){
+        return '<url><loc>'+SITE_URL+'/mesto/'+p.id+'-'+slugify(p.name)+'</loc>'
+             + '<changefreq>weekly</changefreq><priority>0.7</priority></url>';
+      });
+    }catch(e){}
+    res.end('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+      + urls.concat(места).join('') + '</urlset>'); return;
   }
   // Главную отдаём уже с квартирами: список лежит в памяти после прогрева,
   // и человеку не приходится ждать запроса, а поисковик видит содержимое.
