@@ -7,6 +7,11 @@ const http = require('http');
 const crypto = require('crypto');
 const PORT = process.env.PORT || 8080;   // Render задаёт свой порт через переменную окружения
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36';
+// Срок ожидания для всех запросов наружу. Без него одно зависшее соединение
+// оставляет запрос «в полёте» навсегда: все, кто спросит то же самое, будут
+// ждать его до перезапуска сервера.
+const WAIT = 15000;
+const ждём = (extra) => Object.assign({ signal: AbortSignal.timeout(WAIT) }, extra || {});
 const SITE_URL = 'https://poisk-kvartir.onrender.com';
 
 // ── Своя статистика посещений (без Метрики/Analytics) ──────────────────────
@@ -332,7 +337,7 @@ const REGIONS = {
   'minsk':    {realt:'minsk',          oblast:'Минск',               main:'Минск',
     cities:['Минск']},
   'minsk-obl':{realt:'minsk-region',   oblast:'Минская область',     main:'Минск',
-    cities:['Минск','Борисов','Солигорск','Молодечно','Жодино','Слуцк','Дзержинск','Вилейка','Марьина Горка','Смолевичи','Логойск','Заславль']},
+    cities:['Минск','Борисов','Солигорск','Молодечно','Жодино','Слуцк','Дзержинск','Вилейка','Марьина Горка','Смолевичи','Логойск','Заславль','Червень']},
   'gomel':    {realt:'gomel-region',   oblast:'Гомельская область',  main:'Гомель',
     cities:['Гомель','Мозырь','Жлобин','Речица','Светлогорск','Калинковичи','Рогачёв','Добруш']},
   'grodno':   {realt:'grodno-region',  oblast:'Гродненская область', main:'Гродно',
@@ -353,6 +358,7 @@ const TOWN_CENTERS = {
   'Минск':[53.9020,27.5615],'Борисов':[54.2260,28.5050],'Солигорск':[52.7880,27.5420],'Молодечно':[54.3120,26.8490],
   'Жодино':[54.2980,28.0330],'Слуцк':[53.0270,27.5520],'Дзержинск':[53.6840,27.1440],'Вилейка':[54.4890,26.9190],
   'Марьина Горка':[53.5120,28.1470],'Смолевичи':[54.0280,28.0830],'Логойск':[54.2000,27.8500],'Заславль':[54.0030,27.2760],
+  'Червень':[53.7106,28.4247],
   'Гомель':[52.4345,30.9754],'Мозырь':[52.0490,29.2450],'Жлобин':[52.8930,30.0240],'Речица':[52.3620,30.3940],
   'Светлогорск':[52.6330,29.7350],'Калинковичи':[52.1310,29.3290],'Рогачёв':[53.0890,30.0490],'Добруш':[52.4100,31.3190],
   'Гродно':[53.6690,23.8130],'Лида':[53.8880,25.2990],'Слоним':[53.0930,25.3190],'Волковыск':[53.1610,24.4570],
@@ -402,7 +408,7 @@ async function kufarRaw(reg, city, type){
   return cached('raw|kufar|'+type+'|'+where, async ()=>{
     const t = TYPES[type]||TYPES.flat;
     const url='https://api.kufar.by/search-api/v2/search/rendered-paginated?query='+encodeURIComponent(t.kw+' на сутки '+where)+'&size=200&lang=ru';
-    const k = await (await fetch(url,{headers:{'User-Agent':UA}})).json();
+    const k = await (await fetch(url, ждём({headers:{'User-Agent':UA}}))).json();
     const g=(a,n)=>(a.ad_parameters||[]).find(y=>y.p===n);
     return (k.ads||[]).map(a=>{
       // координаты Kufar: параметр p="coordinates", v=[долгота, широта]
@@ -440,7 +446,7 @@ async function fromKufar(reg, city, type, rooms, maxP, guests, minP){
   try{
     const list = await kufarRaw(reg, city, type);
     return list.filter(x=>
-         (city ? new RegExp(city,'i').test(x.area) : сравнимо(x.region)===сравнимо(reg.oblast))
+         (city ? сравнимо(x.area).includes(сравнимо(city)) : сравнимо(x.region)===сравнимо(reg.oblast))
       && (!rooms||x.rooms==rooms) && (!maxP||x.price<=maxP) && (!minP||x.price>=minP)
       && (!guests|| (+x.capacity||0)>=guests));
   }catch(e){ console.error('Kufar:', e.message); return []; }
@@ -491,7 +497,7 @@ async function realtGeo(url){
   if(REALT_GEO.has(url)) return REALT_GEO.get(url);
   let loc=null;
   try{
-    const h = await (await fetch(url,{headers:{'User-Agent':UA}})).text();
+    const h = await (await fetch(url, ждём({headers:{'User-Agent':UA}}))).text();
     loc = extractRealtLocation(h);
   }catch(e){ loc=null; }
   if(REALT_GEO.size>8000) REALT_GEO.clear();   // мягкий предел кэша
@@ -519,7 +525,7 @@ async function galleryFor(src, key){
   let out=[];
   try{
     if(src==='Flatbook'){
-      const h = await (await fetch(key,{headers:{'User-Agent':UA,'Accept-Language':'ru'}})).text();
+      const h = await (await fetch(key, ждём({headers:{'User-Agent':UA,'Accept-Language':'ru'}}))).text();
       const set=new Set();
       // Имена файлов бывают и такие: 0-02-05-0559b976…_49.jpg — с дефисами.
       // Прежний разбор их не допускал, и у таких объявлений слайдер молча
@@ -528,7 +534,7 @@ async function galleryFor(src, key){
       out=[...set].slice(0,20);
     } else if(src==='H101'){
       const at=key.indexOf('@@'); const hid=key.slice(0,at), pageUrl=key.slice(at+2);
-      const h = await (await fetch(pageUrl,{headers:{'User-Agent':UA,'Accept-Language':'ru'}})).text();
+      const h = await (await fetch(pageUrl, ждём({headers:{'User-Agent':UA,'Accept-Language':'ru'}}))).text();
       const set=new Set();
       const re=new RegExp('https://s\\.101hotelscdn\\.ru/uploads/image/hotel_image/'+hid.replace(/[^0-9]/g,'')+'/[0-9a-z_]+\\.(?:jpg|jpeg|png|webp)','gi');
       for(const m of h.matchAll(re)) set.add(m[0].replace(/_(thumb|preview|mobile_preview|mobile)\./,'.'));
@@ -545,7 +551,7 @@ async function realtRaw(reg, type){
     const t = TYPES[type]||TYPES.flat;
     const base = realtBase(reg, t.section);
     // тянем 1-ю страницу; для Минска её (до 180) достаточно, пагинацию делаем на клиенте
-    const h = await (await fetch(base,{headers:{'User-Agent':UA}})).text();
+    const h = await (await fetch(base, ждём({headers:{'User-Agent':UA}}))).text();
     const res = parseRealt(h);
     return res.map(a=>{
       const town=a.townName||'';
@@ -568,7 +574,7 @@ async function fromRealt(reg, city, type, rooms, maxP, guests, minP){
   try{
     const list = await realtRaw(reg, type);
     return list.filter(x=>
-         (city ? new RegExp(city,'i').test(x.area) : true)
+         (city ? сравнимо(x.area).includes(сравнимо(city)) : true)
       && (!rooms||x.rooms==rooms) && (!maxP||x.price<=maxP) && (!minP||x.price>=minP)
       && (!guests|| (+x.capacity||0)>=guests));
   }catch(e){ console.error('Realt:', e.message); return []; }
@@ -606,7 +612,7 @@ async function flatbookRaw(regKey, center, type, rooms, amenFb){
   }
   const q = params.length ? ('?'+params.join('&')) : '';
   try{
-    const h = await (await fetch(host+path+q,{headers:{'User-Agent':UA,'Accept-Language':'ru'}})).text();
+    const h = await (await fetch(host+path+q, ждём({headers:{'User-Agent':UA,'Accept-Language':'ru'}}))).text();
     return parseFlatbookGeo(h).map(f=>{
       const ph=String(f.phone||'').replace(/\D/g,'');
       const phone = ph.length===9 ? ('375'+ph) : ph;
@@ -641,7 +647,7 @@ async function fromFlatbook(regKey, city, type, maxP, rooms, amenFb, minP){
   // flatbook работает по областным центрам; если выбран конкретный НЕ центр — не подмешиваем
   const tasks = keys.filter(k=>{
     const center = REGIONS[k] && REGIONS[k].main;
-    return center && (!city || new RegExp(city,'i').test(center));
+    return center && (!city || сравнимо(center).includes(сравнимо(city)));
   }).map(k=> fromFlatbookCity(k, REGIONS[k].main, type, maxP, rooms, amenFb, minP));
   const arrs = await Promise.all(tasks);
   return [].concat(...arrs);
@@ -658,7 +664,7 @@ async function fromRealtByName(rx, type, maxP, minP){
   const tasks = RB_REALT_KEYS.map(async k=>{
     const reg = REGIONS[k];
     try{
-      const h = await (await fetch(realtBase(reg,t.section),{headers:{'User-Agent':UA}})).text();
+      const h = await (await fetch(realtBase(reg,t.section), ждём({headers:{'User-Agent':UA}}))).text();
       return parseRealt(h).map(a=>{
         const town=a.townName||'';
         const text=[a.title,a.headline,a.address,town,a.streetName].filter(Boolean).join(' ');
@@ -685,7 +691,7 @@ async function searchByName(name, type, maxP, minP){
   const kufarTask=(async()=>{
     try{
       const url='https://api.kufar.by/search-api/v2/search/rendered-paginated?query='+encodeURIComponent(q+' на сутки')+'&size=42&lang=ru';
-      const k=await (await fetch(url,{headers:{'User-Agent':UA}})).json();
+      const k=await (await fetch(url, ждём({headers:{'User-Agent':UA}}))).json();
       const g=(a,n)=>(a.ad_parameters||[]).find(y=>y.p===n);
       return (k.ads||[]).map(a=>{
         let lat=null,lng=null,approx=true; const cp=g(a,'coordinates');
@@ -1339,14 +1345,18 @@ async function stayIndex(){
     const было = new Set(), все = [];
     const пары = [];
     STAY_REGIONS.forEach(r => STAY_TYPES.forEach(t => пары.push([r, t])));
-    const части = await Promise.all(пары.map(([r, t]) =>
+    // По четыре пары за раз, а не двадцать одна разом: залп из шестидесяти
+    // запросов к трём сайтам — верный способ получить отказ по частоте.
+    const части = await mapLimit(пары, 4, ([r, t]) =>
       runSearchQuery(new URLSearchParams({ region:r, city:'', type:t,
         rooms:'', guests:'', max:'', source:'both' }))
-        .then(d => ({ t, items: d.items || [] })).catch(()=>({ t, items: [] }))));
+        .then(d => ({ t, items: d.items || [] })).catch(()=>({ t, items: [] })));
     части.forEach(d => d.items.forEach(x => {
-      // без точных координат «рядом» посчитать нельзя: у таких объявлений
-      // метка стоит у центра города, и расстояние получилось бы выдуманным
-      if(!x.lat || !x.lng || x.approx || было.has(x.link)) return;
+      // Точных координат нет у всего Realt: он ставит метку у центра города.
+      // Отбрасывать их — значит выкинуть целый источник из трёх, поэтому
+      // берём, но расстояние по ним считается приблизительное. В карточке
+      // такие помечены словом «около».
+      if(!x.lat || !x.lng || было.has(x.link)) return;
       было.add(x.link);
       // сам объявление вида не несёт — помечаем тем запросом, который его принёс
       все.push(Object.assign({}, x, { vid: d.t }));
@@ -1365,17 +1375,26 @@ const REGION_CENTERS = [
 // Ближайший к точке город, для которого мы знаем координаты, и область,
 // в которой он лежит. Нужен для подбора жилья рядом с достопримечательностью:
 // поиск по областному центру не находит ни Лиду, ни Ошмяны, ни Быхов.
-function nearestTown(lat, lng){
-  let best = null, bd = Infinity;
+function регионГорода(town){
+  for(const k in CITIES_MAP) if(CITIES_MAP[k].indexOf(town) >= 0) return k;
+  return 'minsk';
+}
+
+// Все знакомые нам города в округе, от ближнего к дальнему. Одного мало:
+// Полоцк и Новополоцк стоят в восьми километрах друг от друга, Борисов
+// и Жодино — в двенадцати, и точка между ними теряла половину вариантов.
+function townsNear(lat, lng, maxKm, limit){
+  const out = [];
   for(const name in TOWN_CENTERS){
     const c = TOWN_CENTERS[name];
     const d = distKm(lat, lng, c[0], c[1]);
-    if(d < bd){ bd = d; best = name; }
+    if(d <= (maxKm || 45)) out.push({ town: name, region: регионГорода(name), km: Math.round(d * 10) / 10 });
   }
-  if(!best) return null;
-  let key = 'minsk';
-  for(const k in CITIES_MAP) if(CITIES_MAP[k].indexOf(best) >= 0){ key = k; break; }
-  return { town: best, region: key, km: Math.round(bd * 10) / 10 };
+  return out.sort((a, b) => a.km - b.km).slice(0, limit || 5);
+}
+
+function nearestTown(lat, lng){
+  return townsNear(lat, lng, 1e9, 1)[0] || null;
 }
 
 function nearestRegion(lat, lng){
@@ -3566,7 +3585,11 @@ async function stayNear(i){
     const cards = (d.items || []).slice(0, 6).map(function(x){
       const img = (x.photos && x.photos[0]) ? '<img src="' + x.photos[0] + '" loading="lazy" alt="">' : '';
       return '<a href="' + x.link + '" target="_blank" rel="noopener">' + img
-        + '<div class="p">' + x.price + ' BYN</div><div class="s">' + x.km + ' км · ' + srcName(x.src) + '</div></a>';
+        + '<div class="p">' + x.price + ' BYN</div><div class="s">'
+        // У Realt точной точки нет — метка стоит у центра города. Показывать
+        // «около 0 км» было бы враньём, поэтому пишем сам город.
+        + (x.approx ? esc2(x.area || 'рядом') : (x.km + ' км'))
+        + ' · ' + srcName(x.src) + '</div></a>';
     }).join('');
     const all = d.region
       ? ('<button class="allstay" type="button" data-r="' + d.region + '" onclick="allStay(this)">'
@@ -3944,7 +3967,7 @@ http.createServer(async (req,res)=>{
         const dj = await (await fetch('https://api.kufar.by/search-api/v1/item/'+id+'/rendered?lang=ru',{headers:{'User-Agent':UA}})).json();
         text = (dj.result && dj.result.body) || '';
       } else if(src==='Realt' && isRealtUrl(url)){
-        const h = await (await fetch(url,{headers:{'User-Agent':UA}})).text();
+        const h = await (await fetch(url, ждём({headers:{'User-Agent':UA}}))).text();
         const m = h.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
         if(m){ let best='';
           (function f(o,d){ if(d>10||!o||typeof o!=='object') return;
@@ -4135,19 +4158,22 @@ http.createServer(async (req,res)=>{
         // областной выдаче помещается лишь часть городских. Поэтому по
         // ближайшему городу спрашиваем отдельно: у Лиды так 76 вариантов
         // вместо тридцати.
-        const near = nearestTown(lat, lng);
-        if(near && near.km <= 60 && near.town !== REGIONS[near.region].main){
-          const виды = вид ? [вид] : STAY_TYPES;
-          const ещё = await Promise.all(виды.map(t =>
-            runSearchQuery(new URLSearchParams({ region:near.region, city:near.town, type:t,
-              rooms:'', guests:'', max:'', source:'both' }))
-              .then(d => (d.items||[]).map(x => Object.assign({}, x, { vid: t })))
-              .catch(()=>[])));
-          части.push([].concat(...ещё));
-        }
+        const виды = вид ? [вид] : STAY_TYPES;
+        // Берём города и подальше: у объявления метка «Жодино», а сама
+        // квартира может стоять в тридцати километрах от точки, хотя центр
+        // Жодина от неё в пятидесяти семи.
+        const рядом = townsNear(lat, lng, 75, 8);
+        const пары = [];
+        рядом.forEach(g => виды.forEach(t => пары.push({ g, t })));
+        const ещё = await Promise.all(пары.map(({ g, t }) =>
+          runSearchQuery(new URLSearchParams({ region:g.region, city:g.town, type:t,
+            rooms:'', guests:'', max:'', source:'both' }))
+            .then(d => (d.items||[]).map(x => Object.assign({}, x, { vid: t })))
+            .catch(()=>[])));
+        части.push([].concat(...ещё));
         const было = new Set();
         items = [].concat(...части)
-          .filter(x => (!вид || x.vid === вид) && x.lat && x.lng && !x.approx
+          .filter(x => (!вид || x.vid === вид) && x.lat && x.lng
                        && !было.has(x.link) && было.add(x.link) !== null)
           .map(x => Object.assign({}, x, { km: Math.round(distKm(lat, lng, x.lat, x.lng) * 10) / 10 }))
           .filter(x => x.km <= r)
@@ -4216,6 +4242,10 @@ const WARM_UP = [
   '/api/search?region=minsk&city=&type=flat&rooms=&guests=&max=&source=flatbook'
 ];
 function warmUp(){
+  // Общий список жилья для «что рядом» — заранее, чтобы первый нажавший
+  // кнопку не ждал семь секунд.
+  stayIndex().then(function(l){ console.log('Прогрев «рядом»: ' + l.length); })
+             .catch(function(e){ console.log('Прогрев «рядом» не удался:', e.message); });
   WARM_UP.forEach(function(path){
     const uu = new URL(path, 'http://localhost');
     runSearchQuery(uu.searchParams)
