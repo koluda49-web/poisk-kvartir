@@ -676,14 +676,18 @@ async function flatbookRaw(regKey, center, type, rooms, amenFb){
       // с нескольких, и раньше он подписывался то Минском, то Брестом.
       const la = +f.latitude, lo = +f.longitude;
       const рядом = (la > 50 && lo > 22) ? nearestTown(la, lo) : null;
-      const город = (рядом && рядом.km <= 35) ? рядом.town : center;
+      // Города в данных Flatbook нет вовсе. Если поблизости нет города,
+      // который мы знаем, подпись не ставим совсем: раньше подставлялся
+      // центр области, и дом в Несвиже показывался как «Минск». Адрес
+      // и название в карточке и так говорят, где это.
+      const город = (рядом && рядом.km <= 35) ? рядом.town : '';
       return { src:'Flatbook', cur:'BYN', unit:'сутки',
         price:+f.price_day||0, rooms:0, area:город, capacity:'',
-        title: [addr, label].filter(Boolean).join(' · ') || город,
+        title: [addr, label].filter(Boolean).join(' · ') || город || 'Жильё на сутки',
         photos: img0 ? [img0] : [],
         rating:0, reviews:0, descId:null, phone, name:'',
         lat:la, lng:lo, approx:false,
-        chips: [город].concat(metro?['м. '+metro]:[]),
+        chips: [город].filter(Boolean).concat(metro?['м. '+metro]:[]),
         // Часть объявлений отдаётся со ссылкой на тестовый сайт flatbook.
         // Те же страницы есть на основном домене, поэтому просто убираем
         // приставку: человека нельзя отправлять на тестовый стенд.
@@ -3595,7 +3599,9 @@ function renderCards(){
       }
       const tag='<span class="tag '+x.src+'">'+srcName(x.src)+'</span>';
       const meta = x.chips
-        ? '<div class="meta">'+x.chips.map(function(c){return '<span>'+c+'</span>';}).join('')+'</div>'
+        ? (x.chips.length
+            ? '<div class="meta">'+x.chips.map(function(c){return '<span>'+c+'</span>';}).join('')+'</div>'
+            : '')
         : '<div class="meta"><span>'+(x.area||'—')+'</span><span>'+x.rooms+'-комн</span>'+capChip+'</div>';
       const ph=x.photos&&x.photos.length? x.photos : [];
       let slider;
@@ -3687,7 +3693,7 @@ function popupHtml(x){
     const call=x.phone? '<a class="mp-call" href="tel:+'+x.phone+'">📞 '+fmtPhone(x.phone)+'</a>':'';
     return '<div class="mp"><div class="mp-price">'+x.price+' '+curOf(x)+' <small>/ '+unit+'</small></div>'
       +'<div class="mp-meta">'+(x.title||'')+'</div>'
-      +'<div class="mp-meta">'+x.chips.join(' · ')+'</div>'+rate+img+call
+      +(x.chips.length ? ('<div class="mp-meta">'+x.chips.join(' · ')+'</div>') : '')+rate+img+call
       +'<a class="mp-open" href="'+x.link+'" target="_blank" rel="noopener">Открыть на '+srcName(x.src)+' →</a></div>';
   }
   const call=x.phone? '<a class="mp-call" href="tel:+'+x.phone+'">📞 '+fmtPhone(x.phone)+(x.name?(' · '+x.name):'')+'</a>':'';
@@ -3760,7 +3766,7 @@ function plotMap(fit){
     const mk=L.marker([x.lat,x.lng],{icon:icon,riseOnHover:true});
     window.__mlayer.addLayer(mk);
     const tip = x.chips
-      ? (x.chips.join(' · ')+' · '+x.price+' '+curOf(x))
+      ? ((x.chips.length ? (x.chips.join(' · ')+' · ') : '')+x.price+' '+curOf(x))
       : ((x.area?x.area+' · ':'')+x.rooms+'-комн · '+x.price+' BYN'+(x.approx?' (≈)':''));
     mk.bindTooltip(tip,{direction:'top',offset:[0,-14]});
     mk.bindPopup(popupHtml(x),{maxWidth:260,minWidth:220});
