@@ -1724,6 +1724,191 @@ function runSearchQuery(q){
       );
 }
 
+
+// ── Рейс: страница для телефона ───────────────────────────────────────────
+// Отслеживаем один конкретный рейс. Номер и аэропорты можно поменять здесь.
+const РЕЙС = process.env.РЕЙС || 'WZ1309';
+const АЭРОПОРТЫ = {
+  KUF: { name: 'Самара (Курумоч)', lat: 53.504722, lon: 50.164444, tz: 4, станцияЯндекс: '9600380' },
+  MSQ: { name: 'Минск (Национальный)', lat: 53.882500, lon: 28.030731, tz: 3 },
+};
+const РЕЙС_TTL = 60 * 1000;
+
+const безПробелов = t => String(t || '').replace(/\s+/g, '').toUpperCase();
+
+// Курумоч: табло вылета. Данные лежат JSON-ом внутри страницы Яндекса.
+async function рейсВылет(номер){
+  const html = await (await fetch('https://rasp.yandex.ru/station/'
+    + АЭРОПОРТЫ.KUF.станцияЯндекс + '/?event=departure',
+    {headers:{'User-Agent':UA,'Accept-Language':'ru'}})).text();
+  const сПробелом = номер.replace(/^([A-Za-z]{2})\s*/, '$1 ').toUpperCase();
+  const i = html.indexOf('"number":"' + сПробелом + '"');
+  if(i === -1) return { error: 'нет в табло вылета' };
+  const нач = html.lastIndexOf('{"eventDt"', i);
+  if(нач === -1) return { error: 'не разобрал табло вылета' };
+  let г = 0, кон = -1;
+  for(let k = нач; k < html.length; k++){
+    if(html[k] === '{') г++;
+    else if(html[k] === '}'){ г--; if(!г){ кон = k; break; } }
+  }
+  let o;
+  try{ o = JSON.parse(html.slice(нач, кон + 1)); }catch(e){ return { error: 'не разобрал запись рейса' }; }
+  const st = o.status || {};
+  return { plan:(o.eventDt && o.eventDt.datetime) || null, actual: st.actualDt || null,
+           status: st.status || null, terminal: st.actualTerminalName || null,
+           desks: st.checkInDesks || null,
+           // у Яндекса знак обратный: положительное значит «раньше плана»
+           delay: typeof o.minutesBetweenEventDtAndActualDt === 'number'
+                  ? -o.minutesBetweenEventDtAndActualDt : null };
+}
+
+// Минск: табло прилёта, чистый JSON. Номер приходит вместе с совместным
+// («WZ1309 / B2-2039»), поэтому ищем вхождение, а не точное совпадение.
+async function рейсПрилёт(номер){
+  const raw = await (await fetch('https://airport.by/ru/flights/arrival',
+    {headers:{'User-Agent':UA,'Accept-Language':'ru','X-Requested-With':'XMLHttpRequest'}})).text();
+  let d;
+  try{ d = JSON.parse(raw); }catch(e){ return { error: 'табло отдало не JSON' }; }
+  const список = Array.isArray(d) ? d : (d.flights || d.data || []);
+  const row = список.find(f => безПробелов(f.flight).includes(безПробелов(номер)));
+  if(!row) return { error: 'нет в табло прилёта' };
+  return { plan: row.plan || null, fact: row.fact || null, delayedTo: row.DelayedTo || null,
+           status: (row.status && row.status.title) || '', statusId: row.status && row.status.id,
+           delayed: !!row.isDelayed, canceled: !!row.isCanceled,
+           gate: row.gate || null, baggage: row.sector_bag_claim || null,
+           airline: row.airline && row.airline.title, aircraft: row.aircraft && row.aircraft.title,
+           from: ((row.airport && row.airport.title) || '').trim() };
+}
+
+// Ред Вингс: своё табло. Отдельного запроса за данными нет, всё в разметке.
+// В ячейке времени два места: первое — по расписанию, второе — изменённое.
+async function рейсАвиакомпания(номер){
+  const html = await (await fetch('https://flyredwings.com/flight-board/',
+    {headers:{'User-Agent':UA,'Accept-Language':'ru'}})).text();
+  const ключ = 'data-value="' + номер.replace(/^([A-Za-z]{2})\s*/, '$1 ').toUpperCase() + '"';
+  const i = html.indexOf(ключ);
+  if(i === -1) return { error: 'нет на табло Ред Вингс' };
+  const a = html.lastIndexOf('<tr', i), b = html.indexOf('</tr>', i);
+  if(a === -1 || b === -1) return { error: 'не разобрал строку табло' };
+  const строка = html.slice(a, b + 5).replace(/\s+/g, ' ');
+  const ячейка = к => { const j = строка.indexOf('cell--' + к); if(j === -1) return '';
+                        return строка.slice(j, строка.indexOf('</td>', j)); };
+  const времена = кусок => (кусок.match(/<span class="cell-time__i">([\s\S]*?)<\/span>/g) || [])
+    .map(x => x.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim() || null);
+  const в = времена(ячейка('departure')), п = времена(ячейка('destination'));
+  const ст = ячейка('status');
+  return { planDep: в[0] || null, factDep: в[1] || null,
+           planArr: п[0] || null, factArr: п[1] || null,
+           status: ст.slice(ст.indexOf('>') + 1).replace(/<[^>]+>/g, ' ')
+                     .replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim() || null };
+}
+
+async function рейсСводка(номер){
+  return cached('рейс|' + номер, async ()=>{
+    const [в, п, а] = await Promise.all([
+      рейсВылет(номер).catch(e => ({ error: String(e).slice(0, 90) })),
+      рейсПрилёт(номер).catch(e => ({ error: String(e).slice(0, 90) })),
+      рейсАвиакомпания(номер).catch(e => ({ error: String(e).slice(0, 90) })),
+    ]);
+    const вылетел = в.status === 'departed' || в.status === 'airborne';
+    const сел = п.statusId === 'arrived' || /прибыл|приземл/i.test(п.status || '');
+    return { номер, снято: Date.now(), вылет: в, прилёт: п, авиакомпания: а,
+             вВоздухе: вылетел && !сел, сел };
+  }, РЕЙС_TTL);
+}
+
+// Время всегда показываем в часовом поясе того аэропорта, о котором речь:
+// Самара живёт на час впереди Минска, и путать их нельзя.
+function времяВ(iso, tz){
+  if(!iso) return '—';
+  const d = new Date(iso);
+  if(isNaN(d)) return '—';
+  const l = new Date(d.getTime() + d.getTimezoneOffset() * 60000 + tz * 3600000);
+  return String(l.getHours()).padStart(2, '0') + ':' + String(l.getMinutes()).padStart(2, '0');
+}
+
+function рейсPage(d){
+  const в = d.вылет || {}, п = d.прилёт || {}, а = d.авиакомпания || {};
+  const опоздание = в.delay && в.delay > 5 ? в.delay : null;
+  const задержан = п.delayed || в.status === 'delayed' || !!опоздание
+                   || (а.factDep && а.factDep !== а.planDep);
+  const мин = n => { if(n == null) return ''; const h = Math.floor(Math.abs(n)/60), m = Math.abs(n)%60;
+                     return (h ? h + ' ч ' : '') + m + ' мин'; };
+
+  let полоса, вид;
+  if(п.canceled){ вид = 'плохо'; полоса = 'Рейс отменён'; }
+  else if(d.сел){ вид = 'ок'; полоса = 'Приземлился в ' + времяВ(п.fact || п.plan, 3) + ' по Минску'; }
+  else if(d.вВоздухе){ вид = 'ок'; полоса = 'В воздухе · посадка в '
+    + времяВ(п.fact || п.delayedTo || п.plan, 3) + ' по Минску'; }
+  else if(задержан){ вид = 'плохо'; полоса = 'Задержан · вылет в '
+    + (а.factDep || времяВ(в.actual || в.plan, 4)) + ' по Самаре'
+    + (опоздание ? (' · опоздание ' + мин(опоздание)) : ''); }
+  else if(в.error && п.error && а.error){ вид = 'плохо'; полоса = 'Рейса нет в сегодняшних табло'; }
+  else { вид = 'ровно'; полоса = 'По расписанию'; }
+
+  const плитка = (k, v, n) => '<div class="p"><div class="k">' + esc(k) + '</div>'
+    + '<div class="v">' + esc(v) + '</div>'
+    + (n ? ('<div class="n">' + esc(n) + '</div>') : '') + '</div>';
+
+  const источник = (имя, ош, что) => '<span class="' + (ош ? 'нет' : 'есть') + '">'
+    + esc(имя) + ': ' + esc(ош || что || 'на связи') + '</span>';
+
+  return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width, initial-scale=1">'
+    + '<meta name="robots" content="noindex, nofollow">'
+    + '<meta http-equiv="refresh" content="60">'
+    + '<title>Рейс ' + esc(d.номер) + '</title>'
+    + '<style>'
+    + '*{box-sizing:border-box;margin:0;padding:0}'
+    + 'body{background:#faf7f3;color:#1c1917;font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:18px 14px 40px}'
+    + '.w{max-width:560px;margin:0 auto}'
+    + 'h1{font-size:26px;letter-spacing:-.02em;margin:0 0 2px}'
+    + '.sub{color:#57534e;font-size:14px;margin-bottom:16px}'
+    + '.b{border-radius:12px;padding:16px 18px;font-size:17px;font-weight:700;margin-bottom:16px;'
+    +   'border-left:5px solid #9c948c;background:#f0ebe4}'
+    + '.b.ок{border-color:#3d5a40;background:#eef3ee}'
+    + '.b.плохо{border-color:#9a3412;background:#fbeee8}'
+    + '.g{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}'
+    + '.p{background:#fff;border:1px solid #e9e2d8;border-radius:12px;padding:12px 14px}'
+    + '.k{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:#9c948c;margin-bottom:4px}'
+    + '.v{font-size:21px;font-weight:700}'
+    + '.n{font-size:12.5px;color:#9c948c;margin-top:2px}'
+    + '.src{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:14px}'
+    + '.src span{font-size:12px;padding:5px 10px;border-radius:999px;background:#fff;border:1px solid #e9e2d8;color:#9c948c}'
+    + '.src .есть{border-color:#3d5a40;color:#3d5a40}'
+    + '.src .нет{border-color:#9a3412;color:#9a3412}'
+    + '.note{font-size:13px;color:#57534e;background:#f0ebe4;border-left:4px solid #9c948c;'
+    +   'border-radius:0 8px 8px 0;padding:11px 14px}'
+    + '@media (prefers-color-scheme:dark){body{background:#14110e;color:#f6f2ed}'
+    +   '.p{background:#1d1916;border-color:#332c25}.b{background:#1d1916}'
+    +   '.src span{background:#1d1916;border-color:#332c25}.note{background:#1d1916}'
+    +   '.sub,.n,.note{color:#c2b7ab}}'
+    + '</style></head><body><div class="w">'
+    + '<h1>Рейс ' + esc(d.номер.replace(/^([A-Za-z]{2})/, '$1 ')) + '</h1>'
+    + '<p class="sub">' + esc(АЭРОПОРТЫ.KUF.name) + ' → ' + esc(АЭРОПОРТЫ.MSQ.name)
+    +   (п.aircraft ? (' · ' + esc(п.aircraft)) : '') + '</p>'
+    + '<div class="b ' + вид + '">' + esc(полоса) + '</div>'
+    + '<div class="g">'
+    +   плитка('Вылет по плану', времяВ(в.plan, 4), 'Самара')
+    +   плитка('Вылет ожидается', а.factDep || времяВ(в.actual || в.plan, 4),
+              опоздание ? ('позже на ' + мин(опоздание)) : (в.status === 'on_time' ? 'без изменений' : ''))
+    +   плитка('Посадка по плану', времяВ(п.plan, 3), 'Минск')
+    +   плитка('Посадка ожидается', времяВ(п.fact || п.delayedTo || п.plan, 3), п.status || '')
+    +   (в.desks ? плитка('Стойки в Курумоче', в.desks, в.terminal ? ('терминал ' + в.terminal) : '') : '')
+    +   ((п.gate || п.baggage) ? плитка('В Минске', п.gate ? ('выход ' + п.gate) : '—',
+              п.baggage ? ('багаж, лента ' + п.baggage) : '') : '')
+    + '</div>'
+    + '<div class="src">'
+    +   источник('Курумоч', в.error, '')
+    +   источник('Минск', п.error, '')
+    +   источник('Ред Вингс', а.error, а.status)
+    + '</div>'
+    + '<p class="note">Страница сама обновляется раз в минуту. Три табло: аэропорт вылета, '
+    + 'аэропорт прилёта и сама авиакомпания — задержку первым показывает кто-то из первых двух, '
+    + 'а точное время посадки знает только Минск.</p>'
+    + '</div></body></html>';
+}
+
 // ── Городские страницы для поисковиков ────────────────────────────────────
 // Google не ждёт, пока страница дорисуется скриптом, поэтому для каждого
 // областного центра отдаём готовый HTML со списком вариантов.
@@ -4905,6 +5090,21 @@ http.createServer(async (req,res)=>{
       res.writeHead(204); res.end();
     });
     return;
+  }
+  // Рейс — за тем же ключом, что и статистика: страница личная,
+  // в поиске ей делать нечего.
+  if(u.pathname === '/reis'){
+    if(u.searchParams.get('key') !== STATS_KEY){
+      res.writeHead(403, {'Content-Type':'text/plain; charset=utf-8'});
+      res.end('Нужен ключ: /reis?key=…'); return;
+    }
+    const номер = (u.searchParams.get('n') || РЕЙС).trim().slice(0, 10);
+    let свод;
+    try{ свод = await рейсСводка(номер); }
+    catch(e){ свод = { номер, вылет:{error:'нет связи'}, прилёт:{error:'нет связи'},
+                       авиакомпания:{error:'нет связи'}, вВоздухе:false, сел:false }; }
+    res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+    res.end(рейсPage(свод)); return;
   }
   if(u.pathname === '/stats'){
     if(u.searchParams.get('key') !== STATS_KEY){
