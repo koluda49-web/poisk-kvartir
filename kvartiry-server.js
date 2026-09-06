@@ -1561,7 +1561,15 @@ async function placeDetail(id){
     return { id: +id, name: it.name || '', years: it.years || '', addr: it.addr || '',
              text: text.length > 420 ? (text.slice(0, 420).replace(/[\s,;:—-]+\S*$/, '') + '…') : text,
              full: text.length > 420,
-             pics: (it.prevpics || []).slice(0, 6).map(x => KUDIN + x),
+             // Снимки лежат в двух местах: у самой точки и у каждой поездки.
+             // Берём отовсюду, повторы отбрасываем — из них собирается слайдер.
+             pics: (function(){
+               const все = [];
+               const добавить = a => (a || []).forEach(u => { if(u && !все.includes(u)) все.push(u); });
+               добавить(it.prevpics);
+               (j.visits || []).forEach(v => добавить(v.prevpics));
+               return все.slice(0, 12).map(x => KUDIN + x);
+             })(),
              more: KUDIN + '/?point=' + id };
   }, DETAIL_TTL);
 }
@@ -1714,14 +1722,35 @@ async function mestoPageBuild(id){
   const p = list.find(x => String(x.id) === String(id));
   if(!p) return null;
 
-  let d = { text:'', years:'', pics:[], more: KUDIN + '/?point=' + id };
-  try{ d = await placeDetail(id); }catch(e){}
+  // Оба запроса идут наружу и друг от друга не зависят: раньше страница
+  // ждала их по очереди и открывалась вдвое дольше.
+  const [d, рядом] = await Promise.all([
+    placeDetail(id).catch(() => ({ text:'', years:'', pics:[], more: KUDIN + '/?point=' + id })),
+    stayNearPoint(p.lat, p.lng, 30, ''),
+  ]);
   const своё = EXTRA_PLACES.find(x => String(x.id) === String(id));
   const текст = (своё && своё.text) || d.text || '';
-
-  const рядом = await stayNearPoint(p.lat, p.lng, 30, '');
   const жильё = рядом.items.slice(0, 8);
   const цены = рядом.items.map(x => x.price).filter(x => x > 0).sort((a,b)=>a-b);
+
+  // Обложка всегда первая: её выбирали руками, чтобы в кадре не было людей.
+  const кадры = [];
+  if(p.pic) кадры.push(p.pic);
+  (d.pics || []).forEach(u => { if(u && !кадры.includes(u)) кадры.push(u); });
+
+  // Первый снимок с адресом, остальные — только с пометкой: браузер их не
+  // тронет, пока человек не долистает. Иначе страница тянула бы мегабайты.
+  const снимки = !кадры.length ? ''
+    : (кадры.length === 1
+        ? ('<img class="hero" src="' + esc(кадры[0]) + '" alt="' + esc(p.name) + '">')
+        : ('<div class="ph" id="ph">'
+           + кадры.map((u, i) => '<img class="hero' + (i ? '' : ' on') + '"'
+               + (i ? (' data-src="' + esc(u) + '"') : (' src="' + esc(u) + '"'))
+               + ' alt="' + esc(p.name) + '">').join('')
+           + '<button class="ph-b ph-l" type="button" aria-label="Предыдущий снимок">‹</button>'
+           + '<button class="ph-b ph-r" type="button" aria-label="Следующий снимок">›</button>'
+           + '<span class="ph-n" id="phn">1/' + кадры.length + '</span>'
+           + '</div>'));
 
   const где = [p.addr, p.cat].filter(Boolean).join(' · ');
   const title = p.name + (p.addr ? (', ' + p.addr) : '') + ' — что посмотреть и где переночевать рядом';
@@ -1794,6 +1823,16 @@ async function mestoPageBuild(id){
     + '.c .m{display:flex;gap:6px;flex-wrap:wrap}'
     + '.c .m span{font-size:12.5px;background:#f8f4ef;border:1px solid #f0eae1;border-radius:999px;padding:2px 9px;color:#57534e}'
     + '.c h3{font-size:14px;font-weight:600;margin:2px 0 0}'
+    + '.ph{position:relative;margin:0 0 18px}'
+    + '.ph .hero{display:none;margin:0}'
+    + '.ph .hero.on{display:block}'
+    + '.ph-b{position:absolute;top:50%;transform:translateY(-50%);width:42px;height:42px;'
+    +   'border:0;border-radius:999px;background:rgba(28,25,23,.55);color:#fff;font-size:26px;'
+    +   'line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}'
+    + '.ph-b:hover{background:rgba(28,25,23,.8)}'
+    + '.ph-l{left:10px}.ph-r{right:10px}'
+    + '.ph-n{position:absolute;right:12px;bottom:12px;background:rgba(28,25,23,.6);color:#fff;'
+    +   'font-size:12.5px;padding:3px 9px;border-radius:999px}'
     + '.near{display:flex;flex-wrap:wrap;gap:9px;margin-top:6px}'
     + '.near a{background:#fff;border:1px solid #e9e2d8;border-radius:999px;padding:7px 14px;'
     +   'font-size:14px;text-decoration:none;color:#1c1917}'
@@ -1805,7 +1844,8 @@ async function mestoPageBuild(id){
     + '<a class="back" href="/?country=places">← Ко всем местам</a>'
     + '<h1>' + esc(p.name) + '</h1>'
     + (где ? ('<p class="where">' + esc(где) + '</p>') : '')
-    + (p.pic ? ('<img class="hero" src="' + esc(p.pic) + '" alt="' + esc(p.name) + '">') : '')
+    + снимки
+    + (текст ? '' : '')
     + (текст ? ('<div class="txt"><p>' + esc(текст) + '</p></div>') : '')
     + '<div class="facts">'
     +   '<a href="' + route + '" target="_blank" rel="noopener">Проложить маршрут →</a>'
@@ -1832,7 +1872,25 @@ async function mestoPageBuild(id){
     + 'Жильё мы не сдаём и комиссию не берём: показываем объявления '
     + 'с Kufar, Realt и Flatbook. Перед поездкой уточняйте детали у собственника.</p>'
     + '<p><a href="/?country=places">Все ' + list.length + ' мест на карте →</a></p></footer>'
-    + '</div></body></html>';
+    + '</div>'
+    + (кадры.length > 1 ? ('<script>'
+      + '(function(){var к=document.getElementById("ph");if(!к)return;'
+      + 'var с=к.querySelectorAll(".hero"), н=0, ном=document.getElementById("phn");'
+      // Подставляем адрес только тому снимку, который вот-вот покажем, и
+      // соседнему: браузер успевает загрузить его, пока человек смотрит.
+      + 'function грузить(i){var э=с[i];if(э&&!э.src&&э.dataset.src)э.src=э.dataset.src;}'
+      + 'function идти(ш){с[н].classList.remove("on");н=(н+ш+с.length)%с.length;'
+      + '  грузить(н);грузить((н+1)%с.length);грузить((н-1+с.length)%с.length);'
+      + '  с[н].classList.add("on");ном.textContent=(н+1)+"/"+с.length;}'
+      + 'к.querySelector(".ph-l").addEventListener("click",function(){идти(-1);});'
+      + 'к.querySelector(".ph-r").addEventListener("click",function(){идти(1);});'
+      // на телефоне листают пальцем, а не кнопками
+      + 'var x0=null;'
+      + 'к.addEventListener("touchstart",function(e){x0=e.touches[0].clientX;},{passive:true});'
+      + 'к.addEventListener("touchend",function(e){if(x0===null)return;'
+      + '  var d=e.changedTouches[0].clientX-x0;x0=null;if(Math.abs(d)>40)идти(d<0?1:-1);},{passive:true});'
+      + '})();</script>') : '')
+    + '</body></html>';
 }
 
 
