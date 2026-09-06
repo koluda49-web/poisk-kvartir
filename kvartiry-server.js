@@ -1850,8 +1850,11 @@ function рейсPage(d){
     + '<div class="v">' + esc(v) + '</div>'
     + (n ? ('<div class="n">' + esc(n) + '</div>') : '') + '</div>';
 
-  const источник = (имя, ош, что) => '<span class="' + (ош ? 'нет' : 'есть') + '">'
-    + esc(имя) + ': ' + esc(ош || что || 'на связи') + '</span>';
+  // Подпись источника — сразу ссылка на его табло: если наши данные вызывают
+  // сомнение, человек в одно нажатие смотрит первоисточник.
+  const источник = (имя, ош, что, адрес) => '<a class="' + (ош ? 'нет' : 'есть') + '"'
+    + ' href="' + esc(адрес) + '" target="_blank" rel="noopener">'
+    + esc(имя) + ': ' + esc(ош || что || 'на связи') + ' ↗</a>';
 
   return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -1874,14 +1877,16 @@ function рейсPage(d){
     + '.v{font-size:21px;font-weight:700}'
     + '.n{font-size:12.5px;color:#9c948c;margin-top:2px}'
     + '.src{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:14px}'
-    + '.src span{font-size:12px;padding:5px 10px;border-radius:999px;background:#fff;border:1px solid #e9e2d8;color:#9c948c}'
+    + '.src a{font-size:12px;padding:6px 11px;border-radius:999px;background:#fff;border:1px solid #e9e2d8;'
+    +   'color:#9c948c;text-decoration:none;display:inline-block}'
+    + '.src a:hover{border-color:#9a3412}'
     + '.src .есть{border-color:#3d5a40;color:#3d5a40}'
     + '.src .нет{border-color:#9a3412;color:#9a3412}'
     + '.note{font-size:13px;color:#57534e;background:#f0ebe4;border-left:4px solid #9c948c;'
     +   'border-radius:0 8px 8px 0;padding:11px 14px}'
     + '@media (prefers-color-scheme:dark){body{background:#14110e;color:#f6f2ed}'
     +   '.p{background:#1d1916;border-color:#332c25}.b{background:#1d1916}'
-    +   '.src span{background:#1d1916;border-color:#332c25}.note{background:#1d1916}'
+    +   '.src a{background:#1d1916;border-color:#332c25}.note{background:#1d1916}'
     +   '.sub,.n,.note{color:#c2b7ab}}'
     + '</style></head><body><div class="w">'
     + '<h1>Рейс ' + esc(d.номер.replace(/^([A-Za-z]{2})/, '$1 ')) + '</h1>'
@@ -1903,11 +1908,12 @@ function рейсPage(d){
               п.baggage ? ('багаж, лента ' + п.baggage) : '') : '')
     + '</div>'
     + '<div class="src">'
-    +   источник('Курумоч', в.error, '')
-    +   источник('Минск', п.error, '')
-    +   источник('Ред Вингс', а.error, а.status)
+    +   источник('Курумоч', в.error, '', 'https://rasp.yandex.by/station/9600380/?event=departure')
+    +   источник('Минск', п.error, '', 'https://airport.by/raspisanie-rejsov/prilety')
+    +   источник('Ред Вингс', а.error, а.status, 'https://flyredwings.com/flight-board/')
     + '</div>'
-    + '<p class="note">Страница сама обновляется раз в минуту. Три табло: аэропорт вылета, '
+    + '<p class="note">Плашки выше — ссылки: нажмите, чтобы открыть само табло. '
+    + 'Страница сама обновляется раз в минуту. Три табло: аэропорт вылета, '
     + 'аэропорт прилёта и сама авиакомпания — задержку первым показывает кто-то из первых двух, '
     + 'а точное время посадки знает только Минск.</p>'
     + '</div></body></html>';
