@@ -258,5 +258,28 @@ const stayFar = await json('/api/places/stay?lat=53.4514&lng=26.4731');
 check('область приходит, даже когда рядом пусто (' + (stayFar.region || '') + ')',
       !!stayFar.region, 'в пустом ответе нет области');
 
+console.log('\n=== обложки без людей ===');
+{
+  // Раньше точку с «людной» фотографией просто прятали — карточка выходила
+  // пустой. Теперь подставляем из той же галереи общий вид, а точку
+  // показываем всегда. Список замен — в обложки-точек.json.
+  const { readFileSync } = await import('node:fs');
+  let замены = {};
+  try{ замены = JSON.parse(readFileSync(new URL('../обложки-точек.json', import.meta.url), 'utf8')); }
+  catch(e){ замены = {}; }
+  check('список замен на месте (' + Object.keys(замены).length + ')',
+        Object.keys(замены).length > 50, 'файл обложки-точек.json потерялся');
+
+  const все = await json('/api/places?r=0&limit=1000');
+  const точки = все.items || [];
+  const затронутые = точки.filter(p => замены[p.id]);
+  const подменено = затронутые.filter(p => p.pic && p.pic.endsWith(замены[p.id]));
+  check('замена применена ко всем таким точкам (' + подменено.length + ' из ' + затронутые.length + ')',
+        затронутые.length > 0 && подменено.length === затронутые.length,
+        'часть точек снова показывает прежний снимок');
+  check('ни одна точка не осталась без снимка из-за замены',
+        затронутые.every(p => !!p.pic), 'снимок обнулился вместо подмены');
+}
+
 console.log('\nИтог: успешно ' + passed + ', провалено ' + failed);
 process.exitCode = failed ? 1 : 0;

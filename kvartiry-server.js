@@ -964,22 +964,15 @@ function isRealtUrl(v){
 // Точки берём из нашего же справочника kudin.by. Полные описания остаются
 // там: у себя показываем выжимку и ссылку на первоисточник, чтобы два сайта
 // не конкурировали в поиске одинаковым текстом.
-// Фотографии, на которых есть люди: такие карточки не показываем.
-// Список собран просмотром всех 161 снимка, которые попадают в выдачу
-// вокруг Минска, Бреста и Гродно. Точки не удалены — просто скрыты,
-// вернуть можно, убрав номер отсюда.
-// Снимки, где человек в кадре — главный герой: лицо читается, фигура крупная.
-// Людей на фоне и мелкие фигуры вдалеке оставляем: они не мешают, а масштаб
-// сооружения по ним, наоборот, понятнее.
-const PLACES_WITH_PEOPLE = new Set([
-  4959,   // Дот 122 — человек в центре кадра
-  4261,   // Перевёрнутый дом — портрет во весь рост
-  278,    // Градирни ТЭЦ-5 — человек крупно
-  4794,   // Мемориальный комплекс Литовец — человек крупно слева
-  297,    // Карьер возле Гродно — голова крупным планом
-  293,    // Форт №2 — голова на переднем плане
-  4627,   // Форт №6 — человек и есть сюжет
-]);
+// Обложки, где человек в кадре — главный герой: лицо читается, фигура
+// крупная. Прятать точку из-за этого нельзя — она нужна на карте, — поэтому
+// берём из той же галереи другой кадр, общий вид. Просмотрены все 767
+// снимков; замены выбраны глазами и лежат в «обложки-точек.json».
+// Людей на фоне и мелкие фигуры вдалеке оставляем: масштаб сооружения по
+// ним, наоборот, понятнее. Где другого кадра нет — оставляем что есть.
+let ОБЛОЖКИ = {};
+try{ ОБЛОЖКИ = JSON.parse(fs.readFileSync(__dirname + '/обложки-точек.json', 'utf8')); }
+catch(e){ ОБЛОЖКИ = {}; }
 
 // Точки из наших маршрутов, которых нет в справочнике kudin.by.
 // Описания — наши собственные, из файлов маршрутов. Фотографии взяты
@@ -1542,11 +1535,9 @@ async function placesRaw(){
                pic: p.picture ? (KUDIN + p.picture) : '',
                cat: cat[fid] || '', group: group[fid] || cat[fid] || '' };
     });
-    // Точку показываем всегда, если есть название и координаты. Снимок с людьми
-    // в кадре просто убираем: сама точка от этого не пропадает, а фотографию
-    // можно будет подставить свою.
+    // Точку показываем всегда, если есть название и координаты.
     const clean = list.filter(p => p.name && p.lat && p.lng)
-      .map(p => PLACES_WITH_PEOPLE.has(p.id) ? Object.assign({}, p, { pic: '' }) : p);
+      .map(p => ОБЛОЖКИ[p.id] ? Object.assign({}, p, { pic: KUDIN + ОБЛОЖКИ[p.id] }) : p);
     return clean.concat(EXTRA_PLACES);
   }, PLACES_TTL);
   // Привязку делаем поверх кэша, а не внутри: иначе новый файл ждал бы
@@ -1819,7 +1810,6 @@ async function mestoPageBuild(id){
     + '<div class="facts">'
     +   '<a href="' + route + '" target="_blank" rel="noopener">Проложить маршрут →</a>'
     +   '<span>' + p.lat.toFixed(6) + ', ' + p.lng.toFixed(6) + '</span>'
-    +   '<a href="' + esc(d.more || (KUDIN + '/?point=' + p.id)) + '" target="_blank" rel="noopener">Подробнее на kudin.by →</a>'
     + '</div>'
     + (жильё.length
         ? ('<h2>Где переночевать рядом</h2>'
@@ -1838,8 +1828,8 @@ async function mestoPageBuild(id){
                + esc(x.name) + ' · ' + x.km + ' км</a>').join('')
            + '</div>')
         : '')
-    + '<footer><p>Описание и снимок — с нашего сайта <a href="https://kudin.by" target="_blank" rel="noopener">kudin.by</a>, '
-    + 'карты архитектурного наследия Беларуси. Жильё мы не сдаём и комиссию не берём: показываем объявления '
+    + '<footer><p>Описание и снимок — из нашего же справочника архитектурного наследия Беларуси. '
+    + 'Жильё мы не сдаём и комиссию не берём: показываем объявления '
     + 'с Kufar, Realt и Flatbook. Перед поездкой уточняйте детали у собственника.</p>'
     + '<p><a href="/?country=places">Все ' + list.length + ' мест на карте →</a></p></footer>'
     + '</div></body></html>';
@@ -1958,8 +1948,31 @@ async function marshrutPage(ids){
     +   '<div class="sug" id="rSug"></div></div>'
     + '<a class="go' + (точки.length ? '' : ' off') + '" id="rGo" href="' + яндекс + '" target="_blank" rel="noopener">'
     +   'Открыть маршрут в Яндекс.Картах →</a>'
-    + '<a class="go2" href="/">Искать жильё на сутки →</a>'
-    + '<script>' + 'var СЕРВЕРНЫЕ = ' + JSON.stringify(точки) + ';'+ 'function прочитать(){try{var v=JSON.parse(localStorage.getItem("route")||"[]");'+   'return Array.isArray(v)?v.filter(function(p){return p&&p.lat&&p.lng;}):[];}catch(e){return [];}}'+ 'var ПО_ССЫЛКЕ = /[?&]p=/.test(location.search);'+ 'var МОЙ = прочитать();'+ 'var Т = ПО_ССЫЛКЕ ? СЕРВЕРНЫЕ : МОЙ;'+ 'if(ПО_ССЫЛКЕ && МОЙ.length > СЕРВЕРНЫЕ.length && СЕРВЕРНЫЕ.every(function(p){'+   'return МОЙ.some(function(x){return String(x.id)===String(p.id);});})) Т = МОЙ;'+ 'var карта = null, слой = null, линия = null;'+ 'function км(a,b){var t=Math.PI/180,x=(b.lat-a.lat)*t,y=(b.lng-a.lng)*t;'+   'var h=Math.sin(x/2)*Math.sin(x/2)+Math.cos(a.lat*t)*Math.cos(b.lat*t)*Math.sin(y/2)*Math.sin(y/2);'+   'return 6371*2*Math.asin(Math.sqrt(h));}'+ 'function esc(t){return String(t==null?"":t).replace(/[&<>"]/g,function(c){'+   'return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c];});}'+ 'function сохранить(){try{localStorage.setItem("route",JSON.stringify(Т));}catch(e){}'+   'var q = Т.length ? ("?p=" + Т.map(function(p){return p.id;}).join(",")) : "";'+   'history.replaceState(null, "", "/marshrut" + q);}'+ 'function убрать(id){Т = Т.filter(function(p){return String(p.id)!==String(id);});нарисовать();сохранить();}'+ 'function добавить(p){if(Т.some(function(x){return String(x.id)===String(p.id);}))return;'+   'Т = Т.concat([{id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}]);нарисовать();сохранить();}'+ 'function порядок(){if(Т.length<3)return;var left=Т.slice(1),out=[Т[0]];'+   'while(left.length){var c=out[out.length-1],bi=0,bd=Infinity;'+     'left.forEach(function(p,i){var d=км(c,p);if(d<bd){bd=d;bi=i;}});'+     'out.push(left.splice(bi,1)[0]);}Т=out;}'+ 'function нарисовать(){порядок();'+   'var сумма=0, строки="";'+   'Т.forEach(function(p,i){var шаг=i?км(Т[i-1],p):0;сумма+=шаг;'+     'строки += "<div class=\\"it\\"><span class=\\"n\\">"+(i+1)+"</span>"'+       '+"<span class=\\"t\\"><a href=\\"/mesto/"+p.id+"\\">"+esc(p.name)+"</a>"'+       '+(p.addr?("<small>"+esc(p.addr)+"</small>"):"")+"</span>"'+       '+"<span class=\\"km\\">"+(i?("+"+Math.round(шаг)+" км"):"старт")+"</span>"'+       '+"<button class=\\"x\\" type=\\"button\\" title=\\"убрать\\" data-id=\\""+p.id+"\\">×</button></div>";});'+   'document.getElementById("rlist").innerHTML = строки; подписатьШаги();'+   'document.getElementById("rsub").textContent = Т.length'+     '? (Т.length + " точек · около " + Math.round(сумма) + " км между ними")'+     ': "Пока пусто";'+   'var g = document.getElementById("rGo");'+   'g.href = "https://yandex.by/maps/?rtext=" + Т.map(function(p){return p.lat+","+p.lng;}).join("~") + "&rtt=auto";'+   'g.className = "go" + (Т.length ? "" : " off");'+   'document.getElementById("rEmpty").style.display = Т.length ? "none" : "";'+   'document.getElementById("rmap").style.display = Т.length ? "" : "none";'+   'рисоватьКарту();}'+ 'function рисоватьКарту(){if(!Т.length||typeof L==="undefined")return;'+   'if(!карта){карта=L.map("rmap",{scrollWheelZoom:false});'+     'карта.attributionControl.setPrefix("Leaflet");'+     'L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,'+       'attribution:"&copy; OpenStreetMap"}).addTo(карта);слой=L.layerGroup().addTo(карта);}'+   'слой.clearLayers(); if(линия){карта.removeLayer(линия);линия=null;}'+   'var пути=[];'+   'Т.forEach(function(p,i){пути.push([p.lat,p.lng]);'+     'L.marker([p.lat,p.lng],{icon:L.divIcon({className:"",iconSize:[26,26],iconAnchor:[13,13],'+       'html:"<div class=\\"pin\\">"+(i+1)+"</div>"})}).bindTooltip(p.name).addTo(слой);});'+   'if(пути.length>1) линия=L.polyline(пути,{color:"#9a3412",weight:3,opacity:.7}).addTo(карта);'+   'setTimeout(function(){карта.invalidateSize();'+     'if(пути.length>1)карта.fitBounds(пути,{padding:[40,40]});else карта.setView(пути[0],13);},60);'+   'подорогам();}'+ 'var дорогаЗа = "", ПЕРЕГОНЫ = null;'+ 'function подписатьШаги(){if(!ПЕРЕГОНЫ)return;'
+    + '<a class="go2" id="rStay" href="/">Искать жильё на сутки →</a>'
+    + '<script>'
+    // Города, по которым сайт умеет искать жильё: нужны, чтобы понять,
+    // куда вести кнопку «Искать жильё» — маршрут по Гродно не должен
+    // открывать поиск по Минску.
+    + 'var ГОРОДА = ' + JSON.stringify(
+        Object.entries(REGIONS).flatMap(function(пара){
+          return (пара[1].cities || []).filter(function(г){ return TOWN_CENTERS[г]; })
+            .map(function(г){ return [г, пара[0], TOWN_CENTERS[г][0], TOWN_CENTERS[г][1]]; });
+        })) + ';'
+    + 'var СЕРВЕРНЫЕ = ' + JSON.stringify(точки) + ';'+ 'function прочитать(){try{var v=JSON.parse(localStorage.getItem("route")||"[]");'+   'return Array.isArray(v)?v.filter(function(p){return p&&p.lat&&p.lng;}):[];}catch(e){return [];}}'+ 'var ПО_ССЫЛКЕ = /[?&]p=/.test(location.search);'+ 'var МОЙ = прочитать();'+ 'var Т = ПО_ССЫЛКЕ ? СЕРВЕРНЫЕ : МОЙ;'+ 'if(ПО_ССЫЛКЕ && МОЙ.length > СЕРВЕРНЫЕ.length && СЕРВЕРНЫЕ.every(function(p){'+   'return МОЙ.some(function(x){return String(x.id)===String(p.id);});})) Т = МОЙ;'+ 'var карта = null, слой = null, линия = null;'+ 'function км(a,b){var t=Math.PI/180,x=(b.lat-a.lat)*t,y=(b.lng-a.lng)*t;'+   'var h=Math.sin(x/2)*Math.sin(x/2)+Math.cos(a.lat*t)*Math.cos(b.lat*t)*Math.sin(y/2)*Math.sin(y/2);'+   'return 6371*2*Math.asin(Math.sqrt(h));}'+ 'function esc(t){return String(t==null?"":t).replace(/[&<>"]/g,function(c){'+   'return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c];});}'+ 'function сохранить(){try{localStorage.setItem("route",JSON.stringify(Т));}catch(e){}'+   'var q = Т.length ? ("?p=" + Т.map(function(p){return p.id;}).join(",")) : "";'+   'history.replaceState(null, "", "/marshrut" + q);}'+ 'function убрать(id){Т = Т.filter(function(p){return String(p.id)!==String(id);});нарисовать();сохранить();}'+ 'function добавить(p){if(Т.some(function(x){return String(x.id)===String(p.id);}))return;'+   'Т = Т.concat([{id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}]);нарисовать();сохранить();}'+ 'function порядок(){if(Т.length<3)return;var left=Т.slice(1),out=[Т[0]];'+   'while(left.length){var c=out[out.length-1],bi=0,bd=Infinity;'+     'left.forEach(function(p,i){var d=км(c,p);if(d<bd){bd=d;bi=i;}});'+     'out.push(left.splice(bi,1)[0]);}Т=out;}'+ 'function нарисовать(){порядок();'+   'var сумма=0, строки="";'+   'Т.forEach(function(p,i){var шаг=i?км(Т[i-1],p):0;сумма+=шаг;'+     'строки += "<div class=\\"it\\"><span class=\\"n\\">"+(i+1)+"</span>"'+       '+"<span class=\\"t\\"><a href=\\"/mesto/"+p.id+"\\">"+esc(p.name)+"</a>"'+       '+(p.addr?("<small>"+esc(p.addr)+"</small>"):"")+"</span>"'+       '+"<span class=\\"km\\">"+(i?("+"+Math.round(шаг)+" км"):"старт")+"</span>"'+       '+"<button class=\\"x\\" type=\\"button\\" title=\\"убрать\\" data-id=\\""+p.id+"\\">×</button></div>";});'+   'document.getElementById("rlist").innerHTML = строки; подписатьШаги();'+   'document.getElementById("rsub").textContent = Т.length'+     '? (Т.length + " точек · около " + Math.round(сумма) + " км между ними")'+     ': "Пока пусто";'+   'var g = document.getElementById("rGo");'+   'g.href = "https://yandex.by/maps/?rtext=" + Т.map(function(p){return p.lat+","+p.lng;}).join("~") + "&rtt=auto";'+   'g.className = "go" + (Т.length ? "" : " off");'+   'кудаЗаЖильём();'
+    + '  document.getElementById("rEmpty").style.display = Т.length ? "none" : "";'+   'document.getElementById("rmap").style.display = Т.length ? "" : "none";'+   'рисоватьКарту();}'+ 'function рисоватьКарту(){if(!Т.length||typeof L==="undefined")return;'+   'if(!карта){карта=L.map("rmap",{scrollWheelZoom:false});'+     'карта.attributionControl.setPrefix("Leaflet");'+     'L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,'+       'attribution:"&copy; OpenStreetMap"}).addTo(карта);слой=L.layerGroup().addTo(карта);}'+   'слой.clearLayers(); if(линия){карта.removeLayer(линия);линия=null;}'+   'var пути=[];'+   'Т.forEach(function(p,i){пути.push([p.lat,p.lng]);'+     'L.marker([p.lat,p.lng],{icon:L.divIcon({className:"",iconSize:[26,26],iconAnchor:[13,13],'+       'html:"<div class=\\"pin\\">"+(i+1)+"</div>"})}).bindTooltip(p.name).addTo(слой);});'+   'if(пути.length>1) линия=L.polyline(пути,{color:"#9a3412",weight:3,opacity:.7}).addTo(карта);'+   'setTimeout(function(){карта.invalidateSize();'+     'if(пути.length>1)карта.fitBounds(пути,{padding:[40,40]});else карта.setView(пути[0],13);},60);'+   'подорогам();}'+ 'function кудаЗаЖильём(){var a=document.getElementById("rStay"); if(!a)return;'
+    + '  if(!Т.length){a.href="/";a.textContent="Искать жильё на сутки →";return;}'
+    // Берём город, который в среднем ближе всех к точкам маршрута: у поездки
+    // по одному городу это он сам, у длинной — та середина, откуда удобно
+    // ездить. Один и тот же город может быть в двух областях (Минск), но
+    // область к нему всегда своя, из этого же списка.
+    + '  var л=null,лд=1e9;'
+    + '  ГОРОДА.forEach(function(г){var с=0;'
+    + '    Т.forEach(function(p){с+=км({lat:г[2],lng:г[3]},p);});'
+    + '    с/=Т.length; if(с<лд){лд=с;л=г;}});'
+    + '  if(!л){a.href="/";return;}'
+    + '  a.href="/?region="+encodeURIComponent(л[1])+"&city="+encodeURIComponent(л[0]);'
+    + '  a.textContent="Искать жильё в городе "+л[0]+" →";}'
+    + 'var дорогаЗа = "", ПЕРЕГОНЫ = null;'+ 'function подписатьШаги(){if(!ПЕРЕГОНЫ)return;'
     + '  var э=document.querySelectorAll("#rlist .it .km");'
     + '  for(var i=1;i<э.length;i++){ var v=ПЕРЕГОНЫ[i-1];'
     + '    if(typeof v==="number") э[i].textContent="+"+Math.round(v)+" км"; }}'
@@ -2407,6 +2420,10 @@ h1 .accent{ color:var(--accent); }
 .mp-call{display:block;font-size:13px;font-weight:700;color:#141821;margin:2px 0}
 .mp-open{display:inline-block;margin-top:6px;font-weight:800;color:#9a3412;text-decoration:none}
 .mp-approx{color:#9098a6;font-size:11px;margin-top:5px}
+.mp-route{display:block;width:100%;margin-top:8px;font:inherit;font-size:13px;font-weight:700;
+  background:var(--surface-2);border:1px solid var(--line);border-radius:999px;
+  padding:8px 14px;cursor:pointer;color:var(--txt-2)}
+.mp-route.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 
 /* ---------- Card ---------- */
 .card{
@@ -4058,11 +4075,19 @@ async function plotPlaces(){
       + '<button class="mp-coord" type="button" data-c="' + coords + '" onclick="copyCoords(this)">'
       + '📍 ' + coords + '<span>копировать</span></button>'
       + '<a class="mp-open" href="https://yandex.by/maps/?rtext=~' + p.lat + ',' + p.lng + '&rtt=auto" target="_blank" rel="noopener">Проложить маршрут →</a>'
-      + ' <a class="mp-open" href="https://kudin.by/?point=' + p.id + '" target="_blank" rel="noopener">Подробнее →</a></div>',
+      // Своя страница места, а не чужой сайт: уводить человека с карты
+      // на другой проект незачем, у нас есть и описание, и жильё рядом.
+      + ' <a class="mp-open" href="/mesto/' + p.id + '-' + esc2(slugRu(p.name)) + '">Подробнее →</a>'
+      // Название пишем в атрибут, а не в onclick: в названиях встречаются
+      // кавычки, и строка внутри строки ломала бы разметку.
+      + '<button class="mp-route' + (inRoute(p.id) ? ' on' : '') + '" type="button"'
+      +   ' data-id="' + p.id + '" data-lat="' + p.lat + '" data-lng="' + p.lng + '"'
+      +   ' data-name="' + esc2(p.name) + '" onclick="pinRoute(this)">'
+      +   (inRoute(p.id) ? '✓ в маршруте' : '+ в маршрут') + '</button></div>',
       { maxWidth:300, minWidth:240 });
     // Описание тянем только когда окошко открыли: на карте бывает под тысячу
     // точек, грузить их описания заранее — тысяча лишних запросов.
-    mk.on('popupopen', function(){ loadMapText(p.id, i); });
+    mk.on('popupopen', function(){ loadMapText(p.id, i); syncPins(); });
     window.__mlayer.addLayer(mk);
     pts.push([p.lat, p.lng]);
   });
@@ -4116,6 +4141,12 @@ function inRoute(id){ return (window.__route || []).some(function(p){ return p.i
 
 function toggleRoute(i){
   const p = (window.__places || [])[i]; if(!p) return;
+  routeToggle(p);
+}
+
+// Точку добавляют и из ленты, и из окошка на карте. Номера там разные
+// (в ленте триста точек, на карте все), поэтому работаем по самой точке.
+function routeToggle(p){
   const было = inRoute(p.id);
   if(было) window.__route = window.__route.filter(function(x){ return x.id !== p.id; });
   else window.__route = window.__route.concat([{ id:p.id, name:p.name, lat:p.lat, lng:p.lng }]);
@@ -4123,8 +4154,23 @@ function toggleRoute(i){
   if(window.__T && !было) window.__T('route_add', {});
   // Перерисовываем одну кнопку, а не всю ленту: заново рисовать шесть десятков
   // карточек ради галочки — это перезагрузка всех снимков и рывок страницы.
-  markRoute(i, !было);
+  (window.__places || []).forEach(function(x, i){ if(x.id === p.id) markRoute(i, !было); });
+  syncPins();
   drawRoute();
+}
+
+function pinRoute(b){
+  routeToggle({ id: +b.dataset.id, name: b.dataset.name,
+                lat: +b.dataset.lat, lng: +b.dataset.lng });
+}
+
+// кнопки в открытых окошках на карте
+function syncPins(){
+  document.querySelectorAll('.mp-route').forEach(function(b){
+    const on = inRoute(+b.dataset.id);
+    b.classList.toggle('on', on);
+    b.textContent = on ? '✓ в маршруте' : '+ в маршрут';
+  });
 }
 
 // вид кнопки «в маршрут» у одной карточки
@@ -4140,6 +4186,7 @@ function clearRoute(){
   window.__route = [];
   try{ localStorage.removeItem('route'); }catch(e){}
   (window.__places || []).forEach(function(p, i){ if(были.indexOf(p.id) >= 0) markRoute(i, false); });
+  syncPins();
   drawRoute();
 }
 
@@ -4197,6 +4244,7 @@ function dropRoute(id){
   try{ localStorage.setItem('route', JSON.stringify(window.__route)); }catch(e){}
   // если эта точка сейчас видна в ленте — снимаем отметку с её кнопки
   (window.__places || []).forEach(function(p, i){ if(p.id === id) markRoute(i, false); });
+  syncPins();
   drawRoute();
 }
 
@@ -4271,9 +4319,8 @@ const HINT_PL = 'Раздел «Что посетить» — почти 800 д�
   + 'убрать лишнее и уже потом открыть весь маршрут в Яндекс.Картах.'
   + '<br><br>Страницу маршрута удобно держать в соседней вкладке: добавили точку здесь — она сразу '
   + 'появилась там. Адрес страницы меняется вместе с маршрутом, так что ссылкой можно поделиться.'
-  + '<br><br>Описания и фотографии взяты с нашего же сайта '
-  + '<a href="https://kudin.by" target="_blank" rel="noopener">kudin.by</a> — карты архитектурного '
-  + 'наследия Беларуси, ссылка «Подробнее» ведёт на полную страницу памятника.';
+  + '<br><br>Описания и фотографии — из нашего же справочника архитектурного наследия Беларуси; '
+  + 'кнопка «Подробнее» открывает полную страницу памятника здесь же.';
 
 const PRESETS = {
   cheap:   function(on){ $('#max').value = on ? '60' : ''; },

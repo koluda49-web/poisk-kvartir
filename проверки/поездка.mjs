@@ -244,6 +244,70 @@ try {
           цели.панель === '_blank' && цели.полоска === '_blank',
           'уходит из списка мест: панель «' + цели.панель + '», полоска «' + цели.полоска + '»');
   }
+
+  console.log('\n=== кнопка «в маршрут» в окошке на карте ===');
+  {
+    // На карте лежат все 798 точек, в ленте — первые 300. Кнопка не может
+    // работать по номеру карточки: номера расходятся, и в маршрут попадала
+    // бы не та точка, окно которой открыли.
+    await открыть('/?country=places');
+    await js(`(function(){ try{ localStorage.removeItem('route'); }catch(e){} window.__route=[]; })(); 1`);
+    await js(`(function(){const r=document.querySelector('#plRadius');r.value='0';
+      r.dispatchEvent(new Event('change'));})(); 1`);
+    await sleep(8000);
+    await js('setView("map"); 1');
+    await sleep(9000);
+    const цель = await js(`(async function(){
+      const ls=[]; window.__mlayer.eachLayer(function(l){ls.push(l);});
+      const m = ls[ls.length-1];
+      await new Promise(function(res){ if(window.__mlayer.zoomToShowLayer) window.__mlayer.zoomToShowLayer(m,res); else res(); });
+      await new Promise(function(r){setTimeout(r,1200);});
+      m.openPopup();
+      await new Promise(function(r){setTimeout(r,900);});
+      const b=document.querySelector('.leaflet-popup .mp-route');
+      return b ? JSON.stringify({id:b.dataset.id, name:b.dataset.name, текст:b.textContent}) : '';
+    })()`);
+    check('в окошке на карте есть кнопка «в маршрут»', !!цель, 'кнопки нет');
+    if (цель) {
+      const t = JSON.parse(цель);
+      const вЛенте = await js(`(window.__places||[]).some(function(p){return String(p.id)===${JSON.stringify(t.id)};})`);
+      await js(`document.querySelector('.leaflet-popup .mp-route').click(); 1`);
+      await sleep(1200);
+      const после = JSON.parse(await js(`JSON.stringify({
+        маршрут: (window.__route||[]).map(function(p){return {id:String(p.id),name:p.name};}),
+        хранилище: JSON.parse(localStorage.getItem('route')||'[]').map(function(p){return String(p.id);}),
+        кнопка: (document.querySelector('.leaflet-popup .mp-route')||{}).textContent })`));
+      check('в маршрут попала точка из окошка' + (вЛенте ? '' : ' (её нет в ленте)'),
+            после.маршрут.length === 1 && после.маршрут[0].id === t.id && после.маршрут[0].name === t.name,
+            'ждали «' + t.name + '», получили ' + JSON.stringify(после.маршрут));
+      check('маршрут сохранён', после.хранилище.length === 1 && после.хранилище[0] === t.id,
+            JSON.stringify(после.хранилище));
+      check('кнопка стала «✓ в маршруте»', /в маршруте/.test(после.кнопка || ''), после.кнопка);
+      await js(`document.querySelector('.leaflet-popup .mp-route').click(); 1`);
+      await sleep(1000);
+      check('повторное нажатие убирает точку',
+            (await js('(window.__route||[]).length')) === 0, 'точка осталась');
+    }
+  }
+
+  console.log('\n=== со страницы маршрута — в свой город ===');
+  {
+    // Маршрут по Гродно открывал поиск жилья по городу «по умолчанию»,
+    // то есть по Минску: человек видел не тот город, где стоят его точки.
+    await send('Page.navigate', { url: SITE + '/marshrut?p=900006,4215,4217,4216,4931,294,295,910023,5134,8367' });
+    for (let i = 0; i < 60; i++) { if (await js('!!document.getElementById("rStay")')) break; await sleep(500); }
+    await sleep(2500);
+    const a = JSON.parse(await js(`(function(){var a=document.getElementById('rStay');
+      return JSON.stringify({href:a.getAttribute('href'), текст:(a.textContent||'').trim()});})()`));
+    check('маршрут по Гродно ведёт искать жильё в Гродно',
+          /region=grodno/.test(a.href) && /city=%D0%93%D1%80%D0%BE%D0%B4%D0%BD%D0%BE/.test(a.href), a.href);
+    check('город назван прямо на кнопке', /Гродно/.test(a.текст), a.текст);
+
+    await send('Page.navigate', { url: SITE + '/marshrut' });
+    await sleep(2500);
+    const пусто = await js(`(document.getElementById('rStay')||{}).getAttribute('href')`);
+    check('у пустого маршрута кнопка ведёт в общий поиск', пусто === '/', пусто);
+  }
 } finally {
   console.log('\nИтог: успешно ' + passed + ', провалено ' + failed);
   try { ws.close(); } catch {}
