@@ -13,22 +13,33 @@
 
 const BASE = process.argv[2] || 'http://127.0.0.1:8080';
 
-const html = await (await fetch(BASE + '/')).text();
-const re = /<script([^>]*)>([\s\S]*?)<\/script>/g;
-let m, checked = 0, bad = 0;
+// Своим скриптом собирается не только главная: страница места и страница
+// маршрута — такие же строки, и экранирование в них рвётся так же легко.
+const СТРАНИЦЫ = [
+  ['главная',           '/'],
+  ['страница места',    '/mesto/244-nesvizhskij-zamok'],
+  ['страница маршрута', '/marshrut?p=2416,244'],
+];
 
-while ((m = re.exec(html))) {
-  const attrs = m[1] || '', code = m[2];
-  if (/\bsrc=/.test(attrs)) continue;                                // подключённый файл, не наш текст
-  if (/type=["'](?!text\/javascript|module)/.test(attrs)) continue;  // ld+json и прочее не код
-  checked++;
-  try { new Function(code); }
-  catch (e) { bad++; console.log('Сломан блок скрипта: ' + e.message); }
+let checked = 0, bad = 0;
+for (const [имя, путь] of СТРАНИЦЫ) {
+  const html = await (await fetch(BASE + путь)).text();
+  const re = /<script([^>]*)>([\s\S]*?)<\/script>/g;
+  let m, наСтранице = 0;
+  while ((m = re.exec(html))) {
+    const attrs = m[1] || '', code = m[2];
+    if (/\bsrc=/.test(attrs)) continue;                                // подключённый файл, не наш текст
+    if (/type=["'](?!text\/javascript|module)/.test(attrs)) continue;  // ld+json и прочее не код
+    checked++; наСтранице++;
+    try { new Function(code); }
+    catch (e) { bad++; console.log('Сломан блок скрипта (' + имя + '): ' + e.message); }
+  }
+  if (!наСтранице) { bad++; console.log('На странице «' + имя + '» не нашлось ни одного своего блока — проверять нечего?'); }
 }
 
 console.log(bad
   ? ('СЛОМАНО блоков: ' + bad + ' — страница у посетителя работать не будет')
-  : ('Скрипт страницы разбирается без ошибок (проверено блоков: ' + checked + ')'));
+  : ('Скрипты страниц разбираются без ошибок (проверено блоков: ' + checked + ')'));
 // Выходим через exitCode, а не process.exit: резкий выход не даёт node закрыть
 // сетевое соединение и на Windows роняет его с ошибкой libuv.
 process.exitCode = bad ? 1 : 0;

@@ -397,6 +397,15 @@ function approxCoord(town, regMain, seed){
 }
 
 // Типы: kw = слово для запроса Kufar, section = раздел Realt
+// Kufar фильтра по типу не имеет — только текстовый поиск, поэтому тип
+// приходится узнавать по заголовку объявления. Слова взяты из живых
+// заголовков: «Усадьба», «агроусадьба», «коттедж», «дом на сутки».
+const TYPE_RX = {
+  'flat':    /квартир|апартамент|студи|комнат/i,
+  'cottage': /коттедж|дом(?!ик\s*в\s*дерев)|дача|сруб|таунхаус/i,
+  'usadba':  /усадьб|агроусадьб|база\s*отдыха|хутор/i
+};
+
 const TYPES = {
   'flat':    {kw:'квартира', section:'flat-for-day'},
   'cottage': {kw:'коттедж дом', section:'cottage-for-day'},
@@ -645,13 +654,19 @@ async function flatbookRaw(regKey, center, type, rooms, amenFb){
                  || String(f.address||'').trim();
       const label = String(f.seoTitle || f.name || '').trim().slice(0,70);
       const img0 = f.generatedImagePath ? String(f.generatedImagePath).replace('/yandex_card_image/','/catalog_image/') : '';
+      // Город берём по координатам самого объявления, а не по тому,
+      // на каком поддомене мы его нашли: один и тот же дом приходит
+      // с нескольких, и раньше он подписывался то Минском, то Брестом.
+      const la = +f.latitude, lo = +f.longitude;
+      const рядом = (la > 50 && lo > 22) ? nearestTown(la, lo) : null;
+      const город = (рядом && рядом.km <= 35) ? рядом.town : center;
       return { src:'Flatbook', cur:'BYN', unit:'сутки',
-        price:+f.price_day||0, rooms:0, area:center, capacity:'',
-        title: [addr, label].filter(Boolean).join(' · ') || center,
+        price:+f.price_day||0, rooms:0, area:город, capacity:'',
+        title: [addr, label].filter(Boolean).join(' · ') || город,
         photos: img0 ? [img0] : [],
         rating:0, reviews:0, descId:null, phone, name:'',
-        lat:+f.latitude, lng:+f.longitude, approx:false,
-        chips: [center].concat(metro?['м. '+metro]:[]),
+        lat:la, lng:lo, approx:false,
+        chips: [город].concat(metro?['м. '+metro]:[]),
         // Часть объявлений отдаётся со ссылкой на тестовый сайт flatbook.
         // Те же страницы есть на основном домене, поэтому просто убираем
         // приставку: человека нельзя отправлять на тестовый стенд.
@@ -710,7 +725,8 @@ async function searchByName(name, type, maxP, minP){
   let rx=null; try{ rx=new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i'); }catch(e){}
   const kufarTask=(async()=>{
     try{
-      const url='https://api.kufar.by/search-api/v2/search/rendered-paginated?query='+encodeURIComponent(q+' на сутки')+'&size=42&lang=ru';
+      const слово = (TYPES[type] && type !== 'any') ? (TYPES[type].kw + ' ') : '';
+      const url='https://api.kufar.by/search-api/v2/search/rendered-paginated?query='+encodeURIComponent(слово+q+' на сутки')+'&size=42&lang=ru';
       const k=await (await fetch(url, ждём({headers:{'User-Agent':UA}}))).json();
       const g=(a,n)=>(a.ad_parameters||[]).find(y=>y.p===n);
       return (k.ads||[]).map(a=>{
@@ -722,17 +738,27 @@ async function searchByName(name, type, maxP, minP){
           area, region:g(a,'region')?.vl||'', capacity:g(a,'house_rent_couchettes')?.vl||'',
           title:a.subject||'', photos:(a.images||[]).map(im=>'https://rms.kufar.by/v1/gallery/'+im.path),
           rating:0,reviews:0,descId:a.ad_id,phone:'',name:'',lat,lng,approx,link:a.ad_link||'' };
-      }).filter(x=> x.price>0 && (!maxP||x.price<=maxP) && (!minP||x.price>=minP) && (!rx||rx.test(x.title)) && !KUFAR_JUNK.test(x.title));
+      }).filter(x=> x.price>0 && (!maxP||x.price<=maxP) && (!minP||x.price>=minP) && (!rx||rx.test(x.title)) && !KUFAR_JUNK.test(x.title)
+                 // Kufar ищет по смыслу и на «усадьбу» охотно отдаёт квартиры.
+                 // Подсовывать не то, что просили, нельзя: лучше пустая выдача.
+                 && (type === 'any' || !TYPE_RX[type] || TYPE_RX[type].test(x.title)));
     }catch(e){ console.error('Kufar name:', e.message); return []; }
   })();
+  const типы = type === 'any' ? STAY_TYPES : [type];
   const fbTask=(async()=>{
-    try{ const items=await fromFlatbook('any','',type,maxP); return items.filter(x=> !rx || rx.test(x.title)); }
+    try{
+      const части = await Promise.all(типы.map(t => fromFlatbook('any','',t,maxP)));
+      return [].concat(...части).filter(x=> !rx || rx.test(x.title));
+    }
     catch(e){ return []; }
   })();
-  const realtTask=(async()=>{ try{ return await fromRealtByName(rx, type, maxP); }catch(e){ return []; } })();
+  const realtTask=(async()=>{ try{
+    const части = await Promise.all(типы.map(t => fromRealtByName(rx, t, maxP)));
+    return [].concat(...части);
+  }catch(e){ return []; } })();
   const [ka,ra,fa]=await Promise.all([kufarTask,realtTask,fbTask]);
   const seen=new Set();
-  const all=[...ka,...ra,...fa].filter(x=>{ if(seen.has(x.link))return false; seen.add(x.link); return true; })
+  const all=[...ka,...ra,...fa].filter(x=>{ const k=ключОбъявления(x); if(seen.has(k))return false; seen.add(k); return true; })
                          .sort((a,b)=>a.price-b.price);
   return { total:all.length, kufar:all.filter(x=>x.src==='Kufar').length,
            realt:all.filter(x=>x.src==='Realt').length,
@@ -751,20 +777,29 @@ async function search(regKey, city, type, rooms, maxP, guests, source, amen, min
   // поэтому при заданном числе гостей Flatbook не участвует — так же, как Realt
   // не участвует при выборе удобств.
   const useF = (source==='both' || source==='flatbook') && !guests;
+  // «любой» — это все три вида сразу: у источников общего запроса нет,
+  // поэтому спрашиваем каждый вид отдельно и складываем. Повторы уберёт
+  // отбор по ссылке ниже.
+  const типы = type === 'any' ? STAY_TYPES : [type];
   const tasks = [];
   keys.forEach(key=>{
     const reg = REGIONS[key];
-    if(useK) tasks.push(fromKufar(reg,city,type,rooms,maxP,guests,minP));
-    if(useR) tasks.push(fromRealt(reg,city,type,rooms,maxP,guests,minP));
+    типы.forEach(t=>{
+      if(useK) tasks.push(fromKufar(reg,city,t,rooms,maxP,guests,minP));
+      if(useR) tasks.push(fromRealt(reg,city,t,rooms,maxP,guests,minP));
+    });
   });
-  if(useF) tasks.push(fromFlatbook(regKey,city,type,maxP,rooms, amenList.map(a=>a.fb).filter(Boolean), minP));   // flatbook: комнаты + удобства (apartment_comfort)
+  if(useF) типы.forEach(t=>
+    tasks.push(fromFlatbook(regKey,city,t,maxP,rooms, amenList.map(a=>a.fb).filter(Boolean), minP)));   // flatbook: комнаты + удобства (apartment_comfort)
   const arrs = await Promise.all(tasks);
   let all = [].concat(...arrs);
   // фильтр удобств для Kufar по тексту удобств (Flatbook уже отфильтрован на своей стороне)
   if(hasAmen) all = all.filter(x=> x.src!=='Kufar' || amenList.every(a=> a.rx.test(x.amenText||'')));
-  // убрать дубли по ссылке (Kufar при 'любой области' может повторяться)
+  // Убираем повторы. Ссылки мало: Flatbook отдаёт одно и то же объявление
+  // с разных поддоменов (mogilev.flatbook.by и flatbook.by), адреса разные,
+  // а дом один — в ленте он показывался дважды, да ещё с разными городами.
   const seen = new Set();
-  all = all.filter(x=>{ if(seen.has(x.link)) return false; seen.add(x.link); return true; })
+  all = all.filter(x=>{ const k = ключОбъявления(x); if(seen.has(k)) return false; seen.add(k); return true; })
            .sort((a,b)=>a.price-b.price)
            // Отдаём наружу полегче: шестнадцать снимков в карточке никто
            // не листает, а список удобств нужен был только что выше, при отборе.
@@ -1449,6 +1484,26 @@ function townsNear(lat, lng, maxKm, limit){
   return out.sort((a, b) => a.km - b.km).slice(0, limit || 5);
 }
 
+// Разряд точки: чем меньше число, тем выше в списке. Раскладка по группам
+// справочника, а не по отдельным категориям — групп восемь, и они не растут.
+const РАЗРЯД = {
+  'Храмы': 0, 'Дворцы и усадьбы': 0, 'Укрепления': 0,
+  'Строения': 1, 'Военные': 1, 'Ландшафтные': 1, 'Разное': 1,
+  'Культурные': 2               // памятники и музеи — их и просили убрать вниз
+};
+// Наши собственные точки идут отдельной группой «Из маршрутов», и среди
+// них есть и костёлы, и скульптуры. Для них смотрим на категорию.
+const КАТ_ВЕРХ = /костёл|костел|церк|храм|часовн|собор|кирха|синагог|монастыр|дворец|усадьб|замок|крепост/i;
+const КАТ_НИЗ  = /скульптур|арт-объект|памятник|музей|скамейк|мурал|граффити/i;
+function разряд(p){
+  const г = РАЗРЯД[p.group];
+  if(г !== undefined) return г;
+  const к = String(p.cat || '');
+  if(КАТ_ВЕРХ.test(к)) return 0;
+  if(КАТ_НИЗ.test(к))  return 2;
+  return 1;
+}
+
 function nearestTown(lat, lng){
   return townsNear(lat, lng, 1e9, 1)[0] || null;
 }
@@ -1463,6 +1518,19 @@ function nearestRegion(lat, lng){
   // вокруг Минска жильё чаще лежит в области, а не в городе
   if(best === 'minsk' && bd > 18) return 'minsk-obl';
   return best;
+}
+
+// Чем считать два объявления одним. Ссылка не годится: Flatbook отдаёт
+// один и тот же дом с разных поддоменов, и адреса выходят разными.
+// Убираем поддомен, а для верности сверяем ещё телефон и цену.
+function ключОбъявления(x){
+  const ссылка = String(x.link || '')
+    .replace(/^https?:\/\//, '')
+    .replace(/^[a-z0-9-]+\.(flatbook\.by)/, '$1')
+    .replace(/[?#].*$/, '')
+    .replace(/\/+$/, '');
+  if(ссылка) return x.src + '|' + ссылка;
+  return x.src + '|' + (x.phone||'') + '|' + (x.price||'') + '|' + (x.title||'');
 }
 
 function distKm(a1, o1, a2, o2){
@@ -1841,7 +1909,7 @@ async function mestoPageBuild(id){
     +   '.c,.facts a,.facts span,.near a,.back{background:#1d1916;border-color:#332c25;color:#f6f2ed}'
     +   '.noimg{background:#2b251f}.where,.c .m span{color:#c2b7ab}a{color:#e2703a}}'
     + '</style></head><body><div class="w">'
-    + '<a class="back" href="/?country=places">← Ко всем местам</a>'
+    + '<a class="back" id="back" href="/?country=places">← Ко всем местам</a>'
     + '<h1>' + esc(p.name) + '</h1>'
     + (где ? ('<p class="where">' + esc(где) + '</p>') : '')
     + снимки
@@ -1873,6 +1941,20 @@ async function mestoPageBuild(id){
     + 'с Kufar, Realt и Flatbook. Перед поездкой уточняйте детали у собственника.</p>'
     + '<p><a href="/?country=places">Все ' + list.length + ' мест на карте →</a></p></footer>'
     + '</div>'
+    + '<script>'
+    // Откуда пришли — самый честный ответ. Если по ссылке со стороны,
+    // берём последний список, который человек собирал сам.
+    + '(function(){var a=document.getElementById("back");if(!a)return;'
+    + 'var свой=false, куда="";'
+    + 'try{ var r=document.referrer;'
+    + '  var п=r.slice(location.origin.length); if(r && r.indexOf(location.origin)===0 && /^\\/(\\?|$)/.test(п)){ куда=r; свой=true; }'
+    + '  else { var с=localStorage.getItem("backTo");'
+    + '         if(с && с.charAt(0)==="/") куда=с; } }catch(e){}'
+    + 'if(куда) a.href=куда;'
+    // Возврат «назад» по истории сохраняет ещё и место прокрутки:
+    // человек оказывается на той же карточке, а не в начале ленты.
+    + 'if(свой) a.addEventListener("click",function(e){e.preventDefault();history.back();});'
+    + '})();</script>'
     + (кадры.length > 1 ? ('<script>'
       + '(function(){var к=document.getElementById("ph");if(!к)return;'
       + 'var с=к.querySelectorAll(".hero"), н=0, ном=document.getElementById("phn");'
@@ -1988,7 +2070,7 @@ async function marshrutPage(ids){
     + '<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></' + 'script>'
     + '<style>' + '*{box-sizing:border-box}'+ 'body{margin:0;font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#faf7f3;color:#1c1917}'+ '.w{max-width:900px;margin:0 auto;padding:20px 16px 60px}'+ 'a{color:#9a3412}'+ '.back{display:inline-block;margin:0 0 14px;padding:9px 17px;background:#fff;border:1px solid #e9e2d8;'+   'border-radius:999px;text-decoration:none;color:#1c1917;font-size:14.5px;font-weight:600}'+ 'h1{font-size:clamp(22px,4.4vw,32px);line-height:1.15;margin:0 0 4px;letter-spacing:-.02em}'+ '.sub{color:#57534e;margin:0 0 8px}'+ '.how{color:#57534e;font-size:14.5px;margin:0 0 16px;max-width:70ch}'+ '#rmap{height:min(58vh,440px);border-radius:14px;overflow:hidden;margin:0 0 16px;border:1px solid #e9e2d8}'+ '.pin{width:26px;height:26px;border-radius:50%;background:#9a3412;color:#fff;font-weight:700;font-size:13px;'+   'display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)}'+ '.it{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid #e9e2d8}'+ '.it:first-child{border-top:0}'+ '.it .n{width:24px;height:24px;flex:none;border-radius:50%;background:#9a3412;color:#fff;font-size:12.5px;'+   'font-weight:700;display:inline-flex;align-items:center;justify-content:center}'+ '.it .t{display:flex;flex-direction:column;line-height:1.25;min-width:0}'+ '.it .t a{text-decoration:none;font-weight:600;color:#1c1917}'+ '.it .t small{color:#9c948c;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'+ '.it .km{margin-left:auto;color:#9c948c;font-size:13px;white-space:nowrap}'+ '.it .x{font:inherit;font-size:22px;line-height:1;background:none;border:0;color:#9c948c;cursor:pointer;padding:0 4px}'+ '.it .x:hover{color:#9a3412}'+ '.add{margin:16px 0 0;position:relative}'+ '.add input{width:100%;font:inherit;padding:12px 14px;border:1px solid #e9e2d8;border-radius:10px;background:#fff;color:inherit}'+ '.sug{position:absolute;left:0;right:0;top:100%;background:#fff;border:1px solid #e9e2d8;border-radius:10px;'+   'margin-top:4px;max-height:270px;overflow:auto;z-index:5;display:none;box-shadow:0 8px 24px rgba(41,32,24,.12)}'+ '.sug button{display:block;width:100%;text-align:left;font:inherit;background:none;border:0;padding:9px 13px;cursor:pointer}'+ '.sug button:hover{background:#f8f4ef}'+ '.sug small{color:#9c948c;display:block;font-size:12.5px}'+ '.go{display:inline-block;margin-top:18px;background:#9a3412;color:#fff;text-decoration:none;font-weight:700;'+   'padding:14px 22px;border-radius:11px}'+ '.go.off{opacity:.4;pointer-events:none}'
 + '.go2{display:inline-block;margin:18px 0 0 10px;background:#fff;border:1px solid #e9e2d8;color:#1c1917;'+   'text-decoration:none;font-weight:700;padding:13px 21px;border-radius:11px}'+ '.go2:hover{border-color:#9a3412;color:#9a3412}'+ '@media (max-width:520px){.go,.go2{display:block;margin-left:0;text-align:center}}'+ '.empty{background:#fff;border:1px dashed #d9cec0;border-radius:14px;padding:22px;color:#57534e;margin-bottom:8px}'+ '@media (prefers-color-scheme:dark){body{background:#14110e;color:#f6f2ed}'+   '.back,.add input,.sug,.empty{background:#1d1916;border-color:#332c25;color:#f6f2ed}'+ '.how{color:#c2b7ab}'+   '.it{border-color:#332c25}.it .t a{color:#f6f2ed}.sub,.it .t small,.it .km{color:#c2b7ab}'+   '.sug button:hover{background:#241f1a}a{color:#e2703a}#rmap{border-color:#332c25}}' + '</style></head><body><div class="w">'
-    + '<a class="back" href="/?country=places">← Ко всем местам</a>'
+    + '<a class="back" id="back" href="/?country=places">← Ко всем местам</a>'
     + '<h1>Маршрут на день</h1>'
     + '<p class="how">Порядок объезда посчитан сам: от первой точки к ближайшей. '
     +   'Линия и километраж — по настоящим дорогам, не по прямой. Точку можно доложить '
@@ -2035,7 +2117,7 @@ async function marshrutPage(ids){
     + '  for(var i=1;i<э.length;i++){ var v=ПЕРЕГОНЫ[i-1];'
     + '    if(typeof v==="number") э[i].textContent="+"+Math.round(v)+" км"; }}'
     + 'async function подорогам(){if(Т.length<2){ПЕРЕГОНЫ=null;return;}'+   'var к = Т.map(function(p){return p.lat+","+p.lng;}).join(";");'+   'if(к===дорогаЗа)return; дорогаЗа=к;'+   'try{var d=await (await fetch("/api/route?p="+encodeURIComponent(к))).json();'+     'if(!d.ok||к!==дорогаЗа)return;'+     'if(линия){карта.removeLayer(линия);}'+     'линия=L.polyline(d.line,{color:"#9a3412",weight:4,opacity:.75}).addTo(карта);'+     'карта.fitBounds(линия.getBounds(),{padding:[40,40]});'+     'ПЕРЕГОНЫ = d.legs || null; подписатьШаги();'
-    + '     var ч=Math.floor(d.minutes/60), м=d.minutes%60;'+     'document.getElementById("rsub").textContent = Т.length+" точек · "+d.km'+       '+" км по дорогам · за рулём около "+(ч?(ч+" ч "+м+" мин"):(м+" мин"));'+   '}catch(e){}}'+ 'var поле=document.getElementById("rAdd"), список=document.getElementById("rSug"), таймер=null;'+ 'поле.addEventListener("input", function(){clearTimeout(таймер);таймер=setTimeout(искать,400);});'+ 'async function искать(){var q=поле.value.trim();'+   'if(q.length<2){список.style.display="none";return;}'+   'try{var d=await (await fetch("/api/places?q="+encodeURIComponent(q))).json();'+     'var найдено=(d.items||[]).slice(0,8);'+     'if(!найдено.length){список.style.display="none";return;}'+     'список.innerHTML=найдено.map(function(p){return "<button type=\\"button\\" data-p=\\""'+       '+esc(JSON.stringify({id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}))+"\\">"'+       '+esc(p.name)+"<small>"+esc(p.addr||"")+"</small></button>";}).join("");'+     'список.style.display="";}catch(e){список.style.display="none";}}'+ 'document.addEventListener("click", function(e){'+   'var x=e.target.closest(".it .x"); if(x){убрать(x.getAttribute("data-id"));return;}'+   'var b=e.target.closest(".sug button");'+   'if(b){try{добавить(JSON.parse(b.getAttribute("data-p")));}catch(err){}'+     'поле.value="";список.style.display="none";return;}'+   'if(!e.target.closest(".add")) список.style.display="none";});'+ 'нарисовать();'+ 'window.addEventListener("storage", function(e){if(e.key && e.key!=="route")return;'+   'var н=прочитать(); if(!н.length && Т.length) return; Т=н; нарисовать();});'+ 'document.addEventListener("visibilitychange", function(){'+   'if(document.visibilityState!=="visible")return; var н=прочитать();'+   'if(н.length!==Т.length){Т=н;нарисовать();}});' + '</' + 'script>'
+    + '     var ч=Math.floor(d.minutes/60), м=d.minutes%60;'+     'document.getElementById("rsub").textContent = Т.length+" точек · "+d.km'+       '+" км по дорогам · за рулём около "+(ч?(ч+" ч "+м+" мин"):(м+" мин"));'+   '}catch(e){}}'+ 'var поле=document.getElementById("rAdd"), список=document.getElementById("rSug"), таймер=null;'+ 'поле.addEventListener("input", function(){clearTimeout(таймер);таймер=setTimeout(искать,400);});'+ 'async function искать(){var q=поле.value.trim();'+   'if(q.length<2){список.style.display="none";return;}'+   'try{var d=await (await fetch("/api/places?q="+encodeURIComponent(q))).json();'+     'var найдено=(d.items||[]).slice(0,8);'+     'if(!найдено.length){список.style.display="none";return;}'+     'список.innerHTML=найдено.map(function(p){return "<button type=\\"button\\" data-p=\\""'+       '+esc(JSON.stringify({id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}))+"\\">"'+       '+esc(p.name)+"<small>"+esc(p.addr||"")+"</small></button>";}).join("");'+     'список.style.display="";}catch(e){список.style.display="none";}}'+ 'document.addEventListener("click", function(e){'+   'var x=e.target.closest(".it .x"); if(x){убрать(x.getAttribute("data-id"));return;}'+   'var b=e.target.closest(".sug button");'+   'if(b){try{добавить(JSON.parse(b.getAttribute("data-p")));}catch(err){}'+     'поле.value="";список.style.display="none";return;}'+   'if(!e.target.closest(".add")) список.style.display="none";});'+ 'нарисовать();'+ '(function(){var a=document.getElementById("back");if(!a)return;'+ 'try{ var r=document.referrer, с=localStorage.getItem("backTo");'+ '  if(r && r.indexOf(location.origin)===0 && /^\\/(\\?|$)/.test(r.slice(location.origin.length))) a.href=r;'+ '  else if(с && с.charAt(0)==="/") a.href=с; }catch(e){}})();'+ 'window.addEventListener("storage", function(e){if(e.key && e.key!=="route")return;'+   'var н=прочитать(); if(!н.length && Т.length) return; Т=н; нарисовать();});'+ 'document.addEventListener("visibilitychange", function(){'+   'if(document.visibilityState!=="visible")return; var н=прочитать();'+   'if(н.length!==Т.length){Т=н;нарисовать();}});' + '</' + 'script>'
     + '</div></body></html>';
 }
 
@@ -2830,6 +2912,17 @@ h1 .accent{ color:var(--accent); }
   overflow:hidden;display:flex;flex-direction:column;box-shadow:var(--shadow-sm)}
 .plc .ph{position:relative;aspect-ratio:16/10;background:var(--surface-3)}
 .plc .ph img{width:100%;height:100%;object-fit:cover;display:block}
+.mp-ph1{width:100%;height:120px;object-fit:cover;border-radius:8px;display:block;margin-bottom:8px}
+.mp-ph{position:relative}
+.mp-ph .mp-ph1{display:none}
+.mp-ph .mp-ph1.on{display:block}
+.mp-ph-b{position:absolute;top:52px;transform:translateY(-50%);width:28px;height:28px;border:0;
+  border-radius:999px;background:rgba(28,25,23,.55);color:#fff;font-size:19px;line-height:1;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.mp-ph-b:hover{background:rgba(28,25,23,.82)}
+.mp-ph-l{left:6px}.mp-ph-r{right:6px}
+.mp-ph-n{position:absolute;right:8px;top:92px;background:rgba(28,25,23,.6);color:#fff;
+  font-size:11px;padding:2px 7px;border-radius:999px}
 .mp-pl .mp-pic-box:empty{display:none}
 .mp-pl .mp-pic{width:100%;height:130px;object-fit:cover;border-radius:10px;margin-bottom:8px;display:block}
 .mp-pl .mp-tx:empty{display:none}
@@ -2872,6 +2965,8 @@ h1 .accent{ color:var(--accent); }
 .plc .toroute{font:inherit;font-size:13.5px;font-weight:600;background:var(--surface-2);
   border:1px solid var(--line);border-radius:999px;padding:7px 14px;cursor:pointer;color:var(--txt-2)}
 .plc .toroute.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.empty-go{display:block;margin:12px auto 0;font:inherit;font-weight:700;background:var(--accent);color:var(--accent-ink);border:0;border-radius:11px;padding:12px 20px;cursor:pointer}
+.empty-go:hover{filter:brightness(1.07)}
 .fld.off{opacity:.45}
 .fld.off select{cursor:not-allowed}
 .plc .nopic{width:100%;height:100%;display:flex;align-items:center;justify-content:center;
@@ -3025,6 +3120,7 @@ h1 .accent{ color:var(--accent); }
     <label class="fld">
       <span>Тип жилья</span>
       <select id="type">
+        <option value="any">любой</option>
         <option value="flat">Квартира</option>
         <option value="cottage">Коттедж / дом</option>
         <option value="usadba">Усадьба</option>
@@ -3356,7 +3452,7 @@ async function runRF(){
       city:cityName||$('#rfCity').value, type:$('#rfType').value||'любой', total:d.total });
     window.__firstRun = 0;
     window.__all=d.items||[]; applyPhotoFilter(); window.__page=1;
-    if(!window.__items.length){ $('#grid').innerHTML='<div class="empty">Ничего не найдено. Смягчите фильтры.</div>'; if(window.__view==='map') plotMap(true); return; }
+    if(!window.__items.length){ $('#grid').innerHTML=пустоТекст(); if(window.__view==='map') plotMap(true); return; }
     sortItems();
     if(window.__view==='map') plotMap(true); else renderCards();
   }catch(e){ $('#stat').textContent='Ошибка: '+e.message; }
@@ -3405,7 +3501,7 @@ async function run(){
       const parts=[]; if(d.kufar)parts.push('Kufar '+d.kufar); if(d.realt)parts.push('Realt '+d.realt); if(d.flatbook)parts.push('Flatbook '+d.flatbook);
       $('#stat').textContent='Найдено '+d.total+(parts.length?(' ('+parts.join(' + ')+')'):'')+tail;
       window.__all=d.items||[]; applyPhotoFilter();
-      if(!window.__items.length){ $('#grid').innerHTML='<div class="empty">Ничего не найдено. Смягчите фильтры.</div>'; if(window.__view==='map') plotMap(true); }
+      if(!window.__items.length){ $('#grid').innerHTML=пустоТекст(); if(window.__view==='map') plotMap(true); }
       else draw();
       if(window.__T) window.__T('search', { c:'by', auto:auto, region:$('#region').value,
         city:$('#city').value.trim(), type:$('#type').value, rooms:$('#rooms').value||'любое',
@@ -3443,7 +3539,7 @@ async function run(){
   if(!window.__items.length){
     $('#grid').innerHTML = failed===sources.length
       ? '<div class="empty">Источники не ответили. Попробуйте ещё раз через минуту.</div>'
-      : '<div class="empty">Ничего не найдено. Смягчите фильтры.</div>';
+      : пустоТекст();
     $('#stat').textContent = failed===sources.length ? 'Ошибка загрузки' : ('Найдено 0'+tail);
     if(window.__view==='map') plotMap(true);
   }
@@ -3567,7 +3663,7 @@ function setView(v){
 }
 // карта Leaflet: цена на метке, тултип при наведении, карточка в попапе
 function popupHtml(x){
-  const img=x.photos&&x.photos[0]? '<img src="'+x.photos[0]+'" style="width:100%;height:120px;object-fit:cover;border-radius:8px;display:block;margin-bottom:8px" alt="">':'';
+  const img = снимкиОкошка(x.photos);
   if(x.chips){   // отель 101hotels / flatbook (карточка по чипам)
     const unit=x.unit||(x.src==='H101'?'ночь':'сутки');
     const rate=(x.reviews>0&&x.rating>0)? '<div style="font-size:12px;color:#e6a400;font-weight:700;margin:2px 0">★ '+x.rating.toFixed(1)+' · '+x.reviews+' отз.</div>':'';
@@ -3585,6 +3681,38 @@ function popupHtml(x){
     +img+call
     +'<a class="mp-open" href="'+x.link+'" target="_blank" rel="noopener">Открыть на '+x.src+' →</a>'+ap+'</div>';
 }
+// Первый кадр с адресом, остальные — с пометкой: пока человек не листает,
+// браузер их не трогает. Иначе открытие метки тянуло бы восемь снимков.
+function снимкиОкошка(photos){
+  const с = (photos || []).filter(Boolean).slice(0, 8);
+  if(!с.length) return '';
+  if(с.length === 1)
+    return '<img class="mp-ph1" src="' + с[0] + '" alt="">';
+  return '<div class="mp-ph">'
+    + с.map(function(u, i){
+        return '<img class="mp-ph1' + (i ? '' : ' on') + '"'
+             + (i ? (' data-src="' + u + '"') : (' src="' + u + '"')) + ' alt="">';
+      }).join('')
+    + '<button class="mp-ph-b mp-ph-l" type="button" onclick="окошкоЛистать(this,-1)">‹</button>'
+    + '<button class="mp-ph-b mp-ph-r" type="button" onclick="окошкоЛистать(this,1)">›</button>'
+    + '<span class="mp-ph-n">1/' + с.length + '</span></div>';
+}
+
+function окошкоЛистать(кн, шаг){
+  const к = кн.parentNode;
+  const с = к.querySelectorAll('.mp-ph1');
+  let н = 0;
+  for(let i = 0; i < с.length; i++) if(с[i].classList.contains('on')) н = i;
+  с[н].classList.remove('on');
+  н = (н + шаг + с.length) % с.length;
+  // подставляем адрес показываемому и соседним, чтобы листалось без пауз
+  [н, (н + 1) % с.length, (н - 1 + с.length) % с.length].forEach(function(i){
+    const э = с[i]; if(э && !э.getAttribute('src') && э.dataset.src) э.src = э.dataset.src;
+  });
+  с[н].classList.add('on');
+  к.querySelector('.mp-ph-n').textContent = (н + 1) + '/' + с.length;
+}
+
 function plotMap(fit){
   if(typeof L==='undefined'){ $('#map').innerHTML='<div style="padding:24px;color:var(--txt-2)">Карта не загрузилась (нет связи с картографическим сервисом).</div>'; return; }
   if(!window.__map){
@@ -3925,6 +4053,46 @@ const PL_CITIES = [
 window.__places = [];
 
 // переход «от жилья к местам»: показываем, что посмотреть вокруг этой квартиры
+// Ноль по фильтру — не тупик: чаще всего дело в одном поле. Если по типу
+// пусто, а «любой» что-то находит, честно скажем об этом и предложим кнопку.
+function пустоТекст(){
+  const t = $('#type') ? $('#type').value : 'any';
+  if(t === 'any') return '<div class="empty">Ничего не найдено. Смягчите фильтры.</div>';
+  setTimeout(естьДругоеЖильё, 0);
+  return '<div class="empty" id="empt">Ничего не найдено по выбранному типу жилья. '
+       + 'Смягчите фильтры.</div>';
+}
+
+async function естьДругоеЖильё(){
+  const блок = document.getElementById('empt'); if(!блок) return;
+  const t = $('#type').value; if(t === 'any') return;
+  try{
+    // тот же запрос, но без ограничения по типу
+    const p = new URLSearchParams();
+    const nm = $('#qname').value.trim();
+    if(nm) p.set('name', nm); else {
+      p.set('region', $('#region').value);
+      if($('#city').value) p.set('city', $('#city').value.trim());
+    }
+    p.set('type', 'any');
+    ['rooms','guests','min','max','source'].forEach(function(k){
+      const v = $('#'+k).value; if(v && v !== URL_DEFAULTS[k]) p.set(k, v);
+    });
+    const d = await (await fetch('/api/search?' + p.toString())).json();
+    const n = d.total || 0;
+    if(!n || !document.getElementById('empt')) return;
+    const вид = $('#type').options[$('#type').selectedIndex].textContent.toLowerCase();
+    блок.innerHTML = 'По типу «' + вид + '» здесь ничего не сдаётся. '
+      + 'Другого жилья рядом — <b>' + n + '</b>.'
+      + '<button class="empty-go" type="button" onclick="показатьЛюбой()">Показать любой тип →</button>';
+  }catch(e){}
+}
+
+function показатьЛюбой(){
+  $('#type').value = 'any';
+  if(typeof run === 'function') run(); else document.getElementById('go').click();
+}
+
 function placesNear(idx){
   const x = (window.__view==='fav' ? FAVS : (window.__items||[]))[idx];
   if(!x || !x.lat || !x.lng) return;
@@ -4432,6 +4600,9 @@ function syncUrl(){
       if($('#plQ').value.trim()) p.set('q', $('#plQ').value.trim());
       if($('#from').value) p.set('from', $('#from').value);
       if($('#to').value)   p.set('to',   $('#to').value);
+      // Страница места одна на всех и отдаётся из кэша, поэтому адрес
+      // возврата она берёт отсюда: иначе «назад» уводит в город
+      // по умолчанию и человек настраивает список заново.
     } else if(window.__mode==='ru'){
       p.set('country','ru');
       p.set('city', $('#rfCity').value);
@@ -4460,6 +4631,13 @@ function syncUrl(){
     }
     const q=p.toString();
     history.replaceState(null, '', q ? ('/?'+q) : '/');
+    // Куда возвращаться со страницы места или маршрута — и что подставить
+    // в поиск жилья, если человек ушёл со страницы и вернулся.
+    try{
+      localStorage.setItem('backTo', q ? ('/?'+q) : '/');
+      if(window.__mode !== 'places' && window.__mode !== 'ru')
+        localStorage.setItem('byFilters', q);
+    }catch(e){}
   }catch(e){}
 }
 // разобрать адрес при открытии и подставить в форму (поиск запустится сам)
@@ -4537,6 +4715,39 @@ function applyUrl(){
     clearTimeout(plTimer); plTimer = setTimeout(runPlaces, 400);   // ждём, пока допечатают
   });
   $('#plGroup').addEventListener('change', runPlaces);
+})();
+
+// Вернулись со своей же страницы (места или маршрута) — возвращаем и
+// настройки поиска жилья: иначе они молча сбрасывались на значения
+// по умолчанию, и человек искал заново.
+(function(){
+  try{
+    const r = document.referrer;
+    if(!r || r.indexOf(location.origin) !== 0) return;
+    const откуда = r.slice(location.origin.length);
+    if(!/^\\/(mesto|marshrut)\\b/.test(откуда)) return;
+    const свои = new URLSearchParams(location.search);
+    // Если в адресе уже стоят настройки жилья, они главнее. При этом
+    // «city» на вкладке мест — это город мест, а не жилья, поэтому
+    // на вкладках «Что посетить» и «Россия» смотреть на адрес не нужно.
+    const чужаяВкладка = свои.get('country') === 'places' || свои.get('country') === 'ru';
+    if(!чужаяВкладка && ['region','city','type','name','rooms','guests','min','max','source','sort']
+        .some(function(k){ return свои.get(k) !== null; })) return;
+    const сохр = localStorage.getItem('byFilters');
+    if(!сохр) return;
+    const q = new URLSearchParams(сохр);
+    ['region','city','type','rooms','guests','min','max','source','sort'].forEach(function(k){
+      const v = q.get(k), el = $('#'+k); if(v !== null && el) el.value = v;
+    });
+    if(q.get('name')) $('#qname').value = q.get('name');
+    if(q.get('from')) $('#from').value = q.get('from');
+    if(q.get('to'))   $('#to').value   = q.get('to');
+    if(q.get('photo') === '1') $('#onlyPhoto').checked = true;
+    (q.get('amen')||'').split(',').filter(Boolean).forEach(function(v){
+      const cb = document.querySelector('#bar .rb-amen-cb[value="'+v+'"]'); if(cb) cb.checked = true;
+    });
+    window.__вернулся = true;
+  }catch(e){}
 })();
 
 applyUrl();
@@ -4785,9 +4996,11 @@ http.createServer(async (req,res)=>{
     if(lat && lng && r){
       list = list.map(p => Object.assign({}, p, { km: Math.round(distKm(lat, lng, p.lat, p.lng) * 10) / 10 }))
                  .filter(p => p.km <= r)
-                 .sort((a, b) => a.km - b.km);
+                 // Сначала разряд, потом расстояние: в городе первым должен
+                 // стоять костёл или усадьба, а не ближайший памятник.
+                 .sort((a, b) => разряд(a) - разряд(b) || a.km - b.km);
     } else if(!q){
-      list = list.slice().sort((a, b) => b.rating - a.rating);
+      list = list.slice().sort((a, b) => разряд(a) - разряд(b) || b.rating - a.rating);
     }
     // Для карты нужен весь список, но без ссылок на снимки: они занимают
     // три четверти веса ответа, а на карте не показываются до открытия точки.
