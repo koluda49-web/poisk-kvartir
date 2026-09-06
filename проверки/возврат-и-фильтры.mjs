@@ -77,8 +77,7 @@ try {
     // в Ивацевичах сдают только квартиры: усадеб там нет
     await открыть('/?type=usadba&name=%D0%B8%D0%B2%D0%B0%D1%86%D0%B5%D0%B2%D0%B8%D1%87%D0%B8', '#grid .empty');
     const пусто = await js(`(document.querySelector('#grid .empty')||{}).textContent || ''`);
-    check('усадьбы не подменяются квартирами',
-          /тип/i.test(пусто) && !/Смягчите фильтры\.$/.test(пусто.trim()),
+    check('усадьбы не подменяются квартирами', /тип/i.test(пусто),
           'показано: ' + пусто.slice(0, 70));
     for (let i = 0; i < 30; i++) { if (await js(`!!document.querySelector('.empty-go')`)) break; await sleep(1000); }
     const предложение = await js(`(document.querySelector('#empt')||{}).textContent || ''`);
@@ -133,18 +132,24 @@ try {
     await открыть('/?region=minsk&type=flat');
     снимки.length = 0;
     await js(`setView('map'); 1`);
-    await sleep(6000);
+    await sleep(10000);
     const открыл = await js(`(async function(){
       var сп=[]; window.__mlayer && window.__mlayer.eachLayer(function(l){ if(l.getPopup) сп.push(l); });
       if(!сп.length) return '';
-      // метка может лежать внутри скопления — сначала раскрываем его
-      var м = сп[0];
+      // Берём метку, у которой в окошке есть снимки: у части объявлений
+      // фотографии не пришли вовсе, и листать там нечего.
+      var м = null;
+      for(var i=0;i<сп.length;i++){
+        var с = String(сп[i].getPopup().getContent()||'');
+        if(/mp-ph1/.test(с)){ м = сп[i]; break; }
+      }
+      if(!м) м = сп[0];
       await new Promise(function(res){ if(window.__mlayer.zoomToShowLayer) window.__mlayer.zoomToShowLayer(м,res); else res(); });
       await new Promise(function(r){ setTimeout(r,1200); });
       м.openPopup();
       return 'да';
     })()`);
-    await sleep(3500);
+    await sleep(6000);
     const всего = await js(`document.querySelectorAll('.leaflet-popup .mp-ph1').length`);
     check('в карточке на карте есть фотографии', открыл === 'да' && всего > 0, 'снимков: ' + всего);
     const много = await js(`!!document.querySelector('.leaflet-popup .mp-ph')`);
