@@ -492,7 +492,17 @@ async function fromKufar(reg, city, type, rooms, maxP, guests, minP){
   try{
     const list = await kufarRaw(reg, city, type);
     return list.filter(x=>
-         (city ? сравнимо(x.area).includes(сравнимо(city)) : сравнимо(x.region)===сравнимо(reg.oblast))
+         // Kufar по запросу «квартира на сутки» подмешивает услуги: вывоз
+         // мусора за 2 рубля выходил первой строкой, потому что дешевле
+         // любой квартиры. Отсев был написан, но применялся только в поиске
+         // по названию.
+         !KUFAR_JUNK.test(x.title||'')
+         // У Минска Kufar пишет в поле города район («Октябрьский»), а сам
+         // Минск — в поле области. Поэтому город ищем в обоих полях, иначе
+         // выбор «Минск» выбрасывал весь Kufar разом.
+      && (city ? (сравнимо(x.area).includes(сравнимо(city))
+                  || сравнимо(x.region).includes(сравнимо(city)))
+               : сравнимо(x.region)===сравнимо(reg.oblast))
       && (!rooms||x.rooms==rooms) && (!maxP||x.price<=maxP) && (!minP||x.price>=minP)
       && (!guests|| (+x.capacity||0)>=guests));
   }catch(e){ console.error('Kufar:', e.message); return []; }
@@ -706,12 +716,31 @@ async function fromFlatbook(regKey, city, type, maxP, rooms, amenFb, minP){
     return center && (!city || сравнимо(center).includes(сравнимо(city)));
   }).map(k=> fromFlatbookCity(k, REGIONS[k].main, type, maxP, rooms, amenFb, minP));
   const arrs = await Promise.all(tasks);
-  return [].concat(...arrs);
+  let итог = [].concat(...arrs);
+
+  // Главный домен Flatbook отдаёт жильё по всей стране, а не по выбранному
+  // краю. Пока верили домену, при выборе Минска показывались Быхов, Борисов
+  // и Берёза. Координаты у объявлений есть — по ним и отбираем.
+  const центр = city ? TOWN_CENTERS[Object.keys(TOWN_CENTERS)
+      .find(k => сравнимо(k) === сравнимо(city)) || ''] : null;
+  if(центр){
+    итог = итог.filter(x => !(x.lat && x.lng)
+                          || distKm(центр[0], центр[1], x.lat, x.lng) <= 35);
+  } else if(regKey !== 'any' && REGIONS[regKey]){
+    итог = итог.filter(x => {
+      if(!(x.lat && x.lng)) return true;
+      const к = nearestRegion(x.lat, x.lng);
+      if(regKey === 'minsk')     return к === 'minsk';        // сам город
+      if(regKey === 'minsk-obl') return к === 'minsk' || к === 'minsk-obl';
+      return к === regKey;
+    });
+  }
+  return итог;
 }
 
 // Поиск по НАЗВАНИЮ по всей Беларуси (когда известно название, но не место), по всем трём источникам.
 // Kufar — полнотекстовый поиск; Flatbook — по всем городам; Realt — по тексту списка (title/адрес/город).
-const KUFAR_JUNK = /прокат|пароочистит|пылесос|karcher|керхер|электроинструмент|генератор|виброплит|отбойн|перфоратор|\bдрель|бетоно|шлифов|аппарат|моющий|химчистк|фотозон|аренда авто|прицеп/i;
+const KUFAR_JUNK = /прокат|пароочистит|пылесос|karcher|керхер|электроинструмент|генератор|виброплит|отбойн|перфоратор|\bдрель|бетоно|шлифов|аппарат|моющий|химчистк|фотозон|аренда авто|прицеп|вывоз мусора|грузчик|грузопере|уборк|клининг|манипулятор|эвакуатор|такси|洗/i;
 // Realt по названию: перебираем разделы всех областей и матчим по тексту списка
 // (title/headline/адрес/город). Имена в глубоком описании тут не видны — только то, что в списке.
 const RB_REALT_KEYS = ['minsk','brest','gomel','grodno','vitebsk','mogilev'];   // minsk-obl = тот же глобальный список, что minsk
