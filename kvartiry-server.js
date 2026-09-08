@@ -2438,12 +2438,23 @@ async function маршрутPage(slug){
   for(const т of опорные){
     try{
       const d = await stayNearPoint(т.lat, т.lng, 30, '');
-      const ц = (d.items || []).map(function(x){ return x.price; }).filter(function(p){ return p > 0; });
-      if((d.items || []).length >= 3){
-        ночлег.push({ имя: т.имя, всего: (d.items || []).length,
-                      от: ц.length ? Math.min.apply(null, ц) : 0,
-                      lat: т.lat, lng: т.lng });
-      }
+      const ц = (d.items || []).map(function(x){ return x.price; })
+                  .filter(function(p){ return p > 0; }).sort(function(a, b){ return a - b; });
+      if((d.items || []).length < 3) continue;
+      // Подписываем городом, а не названием объекта: «Межевой знак:
+      // 390 вариантов» человек не понимает, «Брест» — понимает сразу.
+      const рядом = nearestTown(т.lat, т.lng);
+      const город = (рядом && рядом.km <= 35) ? рядом.town : т.имя;
+      if(ночлег.some(function(н){ return н.город === город; })) continue;
+      const обл = nearestRegion(т.lat, т.lng);
+      const свои = (REGIONS[обл] && REGIONS[обл].cities) || [];
+      const ссылка = '/?region=' + обл + '&type=any'
+                   + (свои.indexOf(город) >= 0 ? ('&city=' + encodeURIComponent(город)) : '');
+      // Показываем обычную цену, а не «от»: в самом низу попадаются
+      // почасовые ставки, случайно записанные как суточные, и «от 14 BYN»
+      // обещало бы то, чего нет.
+      ночлег.push({ город: город, всего: (d.items || []).length,
+                    обычно: ц.length ? ц[Math.floor(ц.length / 2)] : 0, ссылка: ссылка });
     }catch(e){}
   }
 
@@ -2476,12 +2487,13 @@ async function маршрутPage(slug){
 
   const где = ночлег.length
     ? '<h2>Где переночевать на маршруте</h2>'
-      + '<p class="lead">Что сдаётся в тридцати километрах от опорных точек. Цены живые, '
-      +   'из объявлений Kufar, Realt и Flatbook.</p>'
+      + '<p class="lead">Что сдаётся в тридцати километрах от начала, середины и конца пути. '
+      +   'Цена — обычная для города: половина вариантов дешевле, половина дороже. '
+      +   'Считается из живых объявлений Kufar, Realt и Flatbook.</p>'
       + '<div class="others">'
       + ночлег.map(function(н){
-          return '<a href="/?country=places">' + esc(н.имя) + ': ' + вариантов(н.всего)
-               + (н.от ? (' <small>от ' + н.от + ' BYN</small>') : '') + '</a>';
+          return '<a href="' + esc(н.ссылка) + '">' + esc(н.город) + ': ' + вариантов(н.всего)
+               + (н.обычно ? (' <small>обычно ' + н.обычно + ' BYN</small>') : '') + '</a>';
         }).join('')
       + '</div>'
     : '';
