@@ -2018,6 +2018,20 @@ const CITY_PAGES = {
 };
 
 const esc = t => String(t==null?'':t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// Хлебные крошки: в выдаче поисковик показывает путь вместо голого адреса,
+// и человек понимает, куда попадёт, ещё до нажатия. Звенья — пары
+// [название, адрес]; у последнего адрес можно не давать.
+function крошки(звенья){
+  return '<script type="application/ld+json">' + JSON.stringify({
+    '@context':'https://schema.org', '@type':'BreadcrumbList',
+    itemListElement: звенья.map(function(з, i){
+      const э = { '@type':'ListItem', position: i + 1, name: з[0] };
+      if(з[1]) э.item = SITE_URL + з[1];
+      return э;
+    })
+  }) + '</' + 'script>';
+}
 const SRC_TITLE = { Kufar:'Kufar', Realt:'Realt', Flatbook:'Flatbook', H101:'101Hotels' };
 const srcTitle = v => SRC_TITLE[v] || v || 'источнике';
 
@@ -2165,6 +2179,7 @@ async function mestoPageBuild(id){
         geo: { '@type':'GeoCoordinates', latitude: p.lat, longitude: p.lng },
         url: адрес }).replace(/</g,'\\u003c')
     + '</' + 'script>'
+    + крошки([['Главная', '/'], ['Что посетить', '/?country=places'], [p.name]])
     + '<style>'
     + '*{box-sizing:border-box}'
     + 'body{margin:0;font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#faf7f3;color:#1c1917}'
@@ -2583,6 +2598,7 @@ async function маршрутСобрать(slug){
     + '<meta property="og:title" content="' + esc(title) + '">'
     + '<meta property="og:description" content="' + esc(desc) + '">'
     + '<script type="application/ld+json">' + JSON.stringify(ld) + '</script>'
+    + крошки([['Главная', '/'], ['Маршруты', '/?country=places'], [м.заголовок]])
     + '<style>' + СТИЛЬ_СПИСКА
     +   'h2{font-size:22px;margin:32px 0 10px;letter-spacing:-.01em}'
     +   '.facts{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 22px}'
@@ -2778,6 +2794,7 @@ async function гидPage(slug){
     + '<meta property="og:description" content="' + esc(desc) + '">'
     + '<meta property="og:url" content="' + SITE_URL + '/' + slug + '">'
     + '<script type="application/ld+json">' + JSON.stringify(ld) + '</script>'
+    + крошки([['Главная', '/'], ['Города', '/minsk'], ['Где остановиться ' + z.где]])
     + '<style>' + СТИЛЬ_СПИСКА
     +   '.t{width:100%;border-collapse:collapse;margin:0 0 22px;font-size:15px;background:#fff;'
     +     'border:1px solid #e2e5ea;border-radius:14px;overflow:hidden}'
@@ -2970,6 +2987,7 @@ async function спросPage(slug){
     + '<meta property="og:description" content="' + esc(desc) + '">'
     + '<meta property="og:url" content="' + SITE_URL + '/' + slug + '">'
     + '<script type="application/ld+json">' + JSON.stringify(ld) + '</script>'
+    + крошки([['Главная', '/'], ['Жильё на сутки', '/minsk'], [что + ' ' + z.где]])
     + '<style>' + СТИЛЬ_СПИСКА + '</style></head><body><div class="w">'
     + '<h1>' + esc(что) + ' ' + esc(z.где) + '</h1>'
     + '<p class="lead">Объявления частников с <b>Kufar</b>, <b>Realt</b> и <b>Flatbook</b> в одном списке. '
@@ -3087,6 +3105,7 @@ async function cityPage(slug, kind){
     + '<meta property="og:description" content="' + esc(desc) + '">'
     + '<meta property="og:url" content="' + SITE_URL + '/' + slug + (kind ? ('-' + kind) : '') + '">'
     + '<script type="application/ld+json">' + JSON.stringify(ld) + '</script>'
+    + крошки([['Главная', '/'], [k.what + ' ' + c.where]])
     + '<style>' + СТИЛЬ_СПИСКА
     + '</style></head><body><div class="w">'
     + '<h1>' + esc(k.what) + ' ' + esc(c.where) + esc(k.extra) + '</h1>'
@@ -3139,9 +3158,35 @@ const PAGE = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
 <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <script type="application/ld+json">
-{"@context":"https://schema.org","@type":"WebSite","name":"Поиск жилья на сутки","url":"${SITE_URL}/","inLanguage":"ru-BY","description":"${META_DESC}",
- "potentialAction":{"@type":"SearchAction","target":{"@type":"EntryPoint","urlTemplate":"${SITE_URL}/?country=places&q={search_term_string}"},"query-input":"required name=search_term_string"}}
-</script>
+{"@context":"https://schema.org","@graph":[
+{"@type":"WebSite","@id":"https://poisk-kvartir.onrender.com/#sajt",
+ "url":"https://poisk-kvartir.onrender.com/",
+ "name":"Поиск жилья на сутки",
+ "inLanguage":"ru",
+ "description":"Квартиры, коттеджи и усадьбы на сутки по Беларуси из Kufar, Realt и Flatbook в одной выдаче, отели России с 101Hotels и 798 достопримечательностей с подбором жилья рядом.",
+ "publisher":{"@id":"https://poisk-kvartir.onrender.com/#кто"},
+ "potentialAction":{"@type":"SearchAction",
+  "target":{"@type":"EntryPoint","urlTemplate":"https://poisk-kvartir.onrender.com/?name={search_term_string}"},
+  "query-input":"required name=search_term_string"}},
+{"@type":"Organization","@id":"https://poisk-kvartir.onrender.com/#кто",
+ "name":"Поиск жилья на сутки",
+ "url":"https://poisk-kvartir.onrender.com/",
+ "areaServed":[{"@type":"Country","name":"Беларусь"},{"@type":"Country","name":"Россия"}],
+ "description":"Собираем объявления посуточного жилья с Kufar, Realt и Flatbook в одну выдачу. Комиссию не берём и жильё сами не сдаём."},
+{"@type":"FAQPage",
+ "mainEntity":[
+  {"@type":"Question","name":"Сколько стоит снять жильё на сутки в Беларуси?",
+   "acceptedAnswer":{"@type":"Answer","text":"Обычная цена ночи в областном центре — от 90 до 130 рублей: дешевле всего в Витебске и Могилёве, дороже всего в Минске. Комнату или койку в хостеле можно найти за 30-40 рублей, дом на компанию обойдётся дороже."}},
+  {"@type":"Question","name":"Берёте ли вы комиссию?",
+   "acceptedAnswer":{"@type":"Answer","text":"Нет. Мы ничего не сдаём сами и комиссию не берём: показываем объявления с Kufar, Realt и Flatbook и отправляем напрямую к хозяину."}},
+  {"@type":"Question","name":"Как разместить своё объявление?",
+   "acceptedAnswer":{"@type":"Answer","text":"Самый быстрый способ — выложить объявление на Kufar, Realt или Flatbook: оттуда оно подтянется само, обычно в течение получаса, и платить нам не нужно. Своей базы объявлений пока нет, но если наберутся желающие размещаться напрямую — сделаем."}},
+  {"@type":"Question","name":"Откуда берутся цены и наличие?",
+   "acceptedAnswer":{"@type":"Answer","text":"Из самих объявлений Kufar, Realt и Flatbook в реальном времени, а по России — с 101hotels.com. Повторы убираем, места в выдаче не продаём: сортировка одна для всех, по цене."}},
+  {"@type":"Question","name":"Что такое раздел «Что посетить»?",
+   "acceptedAnswer":{"@type":"Answer","text":"Почти 800 достопримечательностей Беларуси с фотографией, описанием и координатами. У каждой кнопка «Жильё рядом» — подбирает варианты в 30 километрах, а несколько точек складываются в маршрут на день с километражом по настоящим дорогам."}}
+ ]}
+]}</script>
 <style>
 :root{
   --bg:#faf7f3;
@@ -4229,13 +4274,15 @@ h1 .accent{ color:var(--accent); }
   </div>
 
     <div class="sub-box">
-    <h3>Сдаёте жильё?</h3>
-    <p>Разместить объявление прямо у нас нельзя — мы ничего не сдаём сами и показываем то,
-       что уже опубликовано на <b>Kufar</b>, <b>Realt</b> и <b>Flatbook</b>. Выложите объявление
-       на любой из этих площадок, и оно появится здесь само, обычно в течение получаса.
-       Нам платить не нужно: комиссию мы не берём и места в выдаче не продаём — сортировка
-       у всех одна, по цене.</p>
-    <p>Объявление есть, а у нас его не видно? Напишите, разберёмся: иногда площадка
+    <h3>Хотите разместить объявление?</h3>
+    <p>Самый быстрый способ попасть к нам — выложить объявление на <b>Kufar</b>, <b>Realt</b>
+       или <b>Flatbook</b>: оттуда оно подтянется само, обычно в течение получаса.
+       Нам платить не нужно — комиссию мы не берём и места в выдаче не продаём,
+       сортировка у всех одна, по цене.</p>
+    <p>Хотите разместиться напрямую у нас, без площадок? Своей базы объявлений пока нет,
+       но если наберутся желающие — сделаем. Напишите, и я посчитаю, сколько вас:
+       ради одного человека такое не строят, ради двадцати — стоит.</p>
+    <p>Объявление есть, а у нас его не видно? Тоже напишите, разберёмся: иногда площадка
        не отдаёт координаты или прячет объявление от поиска.</p>
   </div>
 

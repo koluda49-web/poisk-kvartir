@@ -421,5 +421,44 @@ console.log('\n=== выключатель источника ===');
   check('Realt вернулся (' + назад.realt + ')', назад.realt > 0, 'не включается обратно');
 }
 
+// ── разметка для поисковика ─────────────────────────
+// Битый JSON тут хуже, чем его отсутствие: поисковик снимает разметку
+// целиком. Собирается она строками, поэтому ломается незаметно.
+console.log('\n=== разметка для поисковика ===');
+{
+  const СТРАНИЦЫ = [
+    ['/', ['WebSite', 'Organization', 'FAQPage']],
+    ['/minsk', ['ItemList', 'BreadcrumbList']],
+    ['/gde-ostanovitsya-grodno', ['FAQPage', 'BreadcrumbList']],
+    ['/marshrut-minsk-brest', ['ItemList', 'BreadcrumbList']],
+    ['/braslav', ['ItemList', 'BreadcrumbList']],
+    ['/mesto/2416-mirskij-zamok', ['TouristAttraction', 'BreadcrumbList']],
+  ];
+  for (const [адрес, ждём] of СТРАНИЦЫ) {
+    const h = await (await fetch(BASE + адрес)).text();
+    const блоки = [...h.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map(m => m[1]);
+    check(адрес + ': разметка есть', блоки.length > 0, 'ни одного блока');
+    let типы = [], битых = 0;
+    for (const б of блоки) {
+      try {
+        const j = JSON.parse(б.replace(/\\u003c/g, '<'));
+        типы = типы.concat((JSON.stringify(j).match(/"@type":"[^"]*"/g) || []).map(x => x.split('"')[3]));
+      } catch (e) { битых++; }
+    }
+    check(адрес + ': разметка разбирается', битых === 0,
+          'битых блоков ' + битых + ' — поисковик снимет её целиком');
+    for (const т of ждём) check(адрес + ': есть ' + т, типы.includes(т), 'нашли: ' + типы.join(', '));
+  }
+
+  // Вопросы в разметке должны иметь ответ на самой странице: за выдуманные
+  // поисковики наказывают, снимая разметку со всего сайта.
+  const главная = await (await fetch(BASE + '/')).text();
+  const видно = главная.replace(/<script[\s\S]*?<\/script>/g, ' ').replace(/<[^>]+>/g, ' ');
+  check('на странице виден ответ про комиссию', /комиссию мы не берём/i.test(видно),
+        'вопрос в разметке есть, а ответа на странице нет');
+  check('на странице виден ответ про размещение', /Kufar/.test(видно) && /подтянется сам/i.test(видно),
+        'вопрос про размещение не подкреплён текстом');
+}
+
 console.log('\nИтог: успешно ' + passed + ', провалено ' + failed);
 process.exitCode = failed ? 1 : 0;
