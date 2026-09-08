@@ -2344,7 +2344,7 @@ async function marshrutPage(ids){
             .map(function(г){ return [г, пара[0], TOWN_CENTERS[г][0], TOWN_CENTERS[г][1]]; });
         })) + ';'
     + 'var СЕРВЕРНЫЕ = ' + JSON.stringify(точки) + ';'+ 'function прочитать(){try{var v=JSON.parse(localStorage.getItem("route")||"[]");'+   'return Array.isArray(v)?v.filter(function(p){return p&&p.lat&&p.lng;}):[];}catch(e){return [];}}'+ 'var ПО_ССЫЛКЕ = /[?&]p=/.test(location.search);'+ 'var МОЙ = прочитать();'+ 'var Т = ПО_ССЫЛКЕ ? СЕРВЕРНЫЕ : МОЙ;'+ 'if(ПО_ССЫЛКЕ && МОЙ.length > СЕРВЕРНЫЕ.length && СЕРВЕРНЫЕ.every(function(p){'+   'return МОЙ.some(function(x){return String(x.id)===String(p.id);});})) Т = МОЙ;'+ 'var карта = null, слой = null, линия = null;'+ 'function км(a,b){var t=Math.PI/180,x=(b.lat-a.lat)*t,y=(b.lng-a.lng)*t;'+   'var h=Math.sin(x/2)*Math.sin(x/2)+Math.cos(a.lat*t)*Math.cos(b.lat*t)*Math.sin(y/2)*Math.sin(y/2);'+   'return 6371*2*Math.asin(Math.sqrt(h));}'+ 'function esc(t){return String(t==null?"":t).replace(/[&<>"]/g,function(c){'+   'return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c];});}'+ 'function сохранить(){try{localStorage.setItem("route",JSON.stringify(Т));}catch(e){}'+   'var q = Т.length ? ("?p=" + Т.map(function(p){return p.id;}).join(",")) : "";'+   'history.replaceState(null, "", "/marshrut" + q);}'+ 'function убрать(id){Т = Т.filter(function(p){return String(p.id)!==String(id);});нарисовать();сохранить();}'+ 'function добавить(p){if(Т.some(function(x){return String(x.id)===String(p.id);}))return;'+   'Т = Т.concat([{id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}]);нарисовать();сохранить();}'+ 'function порядок(){if(Т.length<3)return;var left=Т.slice(1),out=[Т[0]];'+   'while(left.length){var c=out[out.length-1],bi=0,bd=Infinity;'+     'left.forEach(function(p,i){var d=км(c,p);if(d<bd){bd=d;bi=i;}});'+     'out.push(left.splice(bi,1)[0]);}Т=out;}'+ 'function нарисовать(){порядок();'+   'var сумма=0, строки="";'+   'Т.forEach(function(p,i){var шаг=i?км(Т[i-1],p):0;сумма+=шаг;'+     'строки += "<div class=\\"it\\"><span class=\\"n\\">"+(i+1)+"</span>"'+       '+"<span class=\\"t\\"><a href=\\"/mesto/"+p.id+"\\">"+esc(p.name)+"</a>"'+       '+(p.addr?("<small>"+esc(p.addr)+"</small>"):"")+"</span>"'+       '+"<span class=\\"km\\">"+(i?("+"+Math.round(шаг)+" км"):"старт")+"</span>"'+       '+"<button class=\\"x\\" type=\\"button\\" title=\\"убрать\\" data-id=\\""+p.id+"\\">×</button></div>";});'+   'document.getElementById("rlist").innerHTML = строки; подписатьШаги();'+   'document.getElementById("rsub").textContent = Т.length'+     '? (Т.length + " точек · около " + Math.round(сумма) + " км между ними")'+     ': "Пока пусто";'+   'var g = document.getElementById("rGo");'+   'g.href = "https://yandex.by/maps/?rtext=" + Т.map(function(p){return p.lat+","+p.lng;}).join("~") + "&rtt=auto";'+   'g.className = "go" + (Т.length ? "" : " off");'+   'кудаЗаЖильём();'
-    + '  document.getElementById("rEmpty").style.display = Т.length ? "none" : "";'+   'document.getElementById("rmap").style.display = Т.length ? "" : "none";'+   'рисоватьКарту();}'+ 'function рисоватьКарту(){if(!Т.length||typeof L==="undefined")return;'+   'if(!карта){карта=L.map("rmap",{scrollWheelZoom:false});'+     'карта.attributionControl.setPrefix("Leaflet");'+     'L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,'+       'attribution:"&copy; OpenStreetMap"}).addTo(карта);слой=L.layerGroup().addTo(карта);}'+   'слой.clearLayers(); if(линия){карта.removeLayer(линия);линия=null;}'+   'var пути=[];'+   'Т.forEach(function(p,i){пути.push([p.lat,p.lng]);'+     'L.marker([p.lat,p.lng],{icon:L.divIcon({className:"",iconSize:[26,26],iconAnchor:[13,13],'+       'html:"<div class=\\"pin\\">"+(i+1)+"</div>"})}).bindTooltip(p.name).addTo(слой);});'+   'if(пути.length>1) линия=L.polyline(пути,{color:"#9a3412",weight:3,opacity:.7}).addTo(карта);'+   'setTimeout(function(){карта.invalidateSize();'+     'if(пути.length>1)карта.fitBounds(пути,{padding:[40,40]});else карта.setView(пути[0],13);},60);'+   'подорогам();}'+ 'function кудаЗаЖильём(){var a=document.getElementById("rStay"); if(!a)return;'
+    + '  document.getElementById("rEmpty").style.display = Т.length ? "none" : "";'+   'document.getElementById("rmap").style.display = Т.length ? "" : "none";'+   'рисоватьКарту();}'+ 'function рисоватьКарту(){if(!Т.length||typeof L==="undefined")return;'+   'if(!карта){карта=L.map("rmap",{scrollWheelZoom:false});'+     'карта.attributionControl.setPrefix("");'+     'L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,'+       'attribution:"&copy; OpenStreetMap"}).addTo(карта);слой=L.layerGroup().addTo(карта);}'+   'слой.clearLayers(); if(линия){карта.removeLayer(линия);линия=null;}'+   'var пути=[];'+   'Т.forEach(function(p,i){пути.push([p.lat,p.lng]);'+     'L.marker([p.lat,p.lng],{icon:L.divIcon({className:"",iconSize:[26,26],iconAnchor:[13,13],'+       'html:"<div class=\\"pin\\">"+(i+1)+"</div>"})}).bindTooltip(p.name).addTo(слой);});'+   'if(пути.length>1) линия=L.polyline(пути,{color:"#9a3412",weight:3,opacity:.7}).addTo(карта);'+   'setTimeout(function(){карта.invalidateSize();'+     'if(пути.length>1)карта.fitBounds(пути,{padding:[40,40]});else карта.setView(пути[0],13);},60);'+   'подорогам();}'+ 'function кудаЗаЖильём(){var a=document.getElementById("rStay"); if(!a)return;'
     + '  if(!Т.length){a.href="/";a.textContent="Искать жильё на сутки →";return;}'
     // Берём город, который в среднем ближе всех к точкам маршрута: у поездки
     // по одному городу это он сам, у длинной — та середина, откуда удобно
@@ -3212,6 +3212,10 @@ h1 .accent{ color:var(--accent); }
 .plc .toroute.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .empty-go{display:block;margin:12px auto 0;font:inherit;font-weight:700;background:var(--accent);color:var(--accent-ink);border:0;border-radius:11px;padding:12px 20px;cursor:pointer}
 .empty-go:hover{filter:brightness(1.07)}
+.seo{max-width:820px;margin:34px auto 0;padding:0 4px;color:var(--txt-2);font-size:14.5px;line-height:1.65}
+.seo h2{font-size:19px;color:var(--txt);margin:0 0 10px;letter-spacing:-.01em}
+.seo p{margin:0 0 10px}
+.seo b{color:var(--txt);font-weight:600}
 .fld.off{opacity:.45}
 .fld.off select{cursor:not-allowed}
 .plc .nopic{width:100%;height:100%;display:flex;align-items:center;justify-content:center;
@@ -3568,6 +3572,8 @@ h1 .accent{ color:var(--accent); }
   <nav class="cities" aria-label="Города">Квартиры на сутки по городам: <a href="/minsk">Минск</a><a href="/brest">Брест</a><a href="/gomel">Гомель</a><a href="/grodno">Гродно</a><a href="/vitebsk">Витебск</a><a href="/mogilev">Могилёв</a><a href="/minsk-obl">Минская область</a></nav>
   <p class="hint" id="hint">Цены и наличие подтягиваются напрямую из объявлений Kufar, Realt и Flatbook в режиме реального времени. На карте цена показана прямо на метке: <b style="color:var(--kufar)">синие</b> — Kufar, <b style="color:var(--realt)">оранжевые</b> — Realt, <b style="color:#0a9d70">зелёные</b> — Flatbook (областные центры, квартиры и усадьбы). Точные координаты подтягиваются из объявления; пока адрес уточняется, метка стоит у центра города (значок ≈ в подсказке). Итоговая стоимость за весь период рассчитывается по датам заезда и выезда. Перед бронированием уточняйте детали у собственника.</p>
 
+  <section class="seo" id="seo"><h2>Жильё на сутки в Беларуси</h2><p>Здесь собраны посуточные квартиры, коттеджи и усадьбы по всей стране: <b>Минск</b>, <b>Брест</b>, <b>Гродно</b>, <b>Витебск</b>, <b>Могилёв</b>, <b>Гомель</b>, а также Барановичи, Пинск, Бобруйск, Орша, Полоцк, Лида, Мозырь, Солигорск, Молодечно и другие города — всего семь областей.</p><p>Объявления берутся сразу из трёх источников — Kufar, Realt и Flatbook — и показываются одним списком, без повторов. Обычная цена ночи в областном центре сейчас от 90 до 130 рублей: дешевле всего в Витебске и Могилёве, дороже всего в Минске. Комнату или койку в хостеле можно найти и за 30–40 рублей, дом на компанию обойдётся дороже.</p><p>Искать можно по области и городу, по числу комнат и гостей, по цене, по удобствам (Wi-Fi, стиральная машина, холодильник) и по названию — если знаете, как называется усадьба или посёлок. Есть даты заезда и выезда: стоимость сразу считается за весь срок. Найденное показывается списком или на карте, где цена написана прямо на метке.</p><p>Квартиры на сутки чаще всего берут в командировку и на выходные, коттеджи и усадьбы — компанией на день рождения или на праздники. У каждого варианта есть кнопка «Что посмотреть рядом»: она покажет замки, костёлы и усадьбы поблизости — из тех почти 800 мест, что собраны в разделе «Что посетить».</p></section>
+
   <div class="foot">
     <div class="foot-h">Нашли неточность или хотите что-то добавить?</div>
     <div class="sub-box" id="subBox">
@@ -3620,6 +3626,20 @@ window.__mode = 'by';   // 'by' = Беларусь (Kufar+Realt+Flatbook), 'ru' 
 function srcName(s){ return s==='H101' ? '101Hotels' : s; }
 function curOf(x){ return (x && x.cur) ? x.cur : 'BYN'; }
 const FB_TO = 'a29sdWRhNDlAZ21haWwuY29t';   // адрес обратной связи в base64 (не открытым текстом)
+const SEO_RU = '<h2>Отели и жильё в России</h2><p>Раздел показывает отели, апартаменты, гостевые дома, хостелы и базы отдыха в сорока городах и курортах: <b>Москва</b>, <b>Санкт-Петербург</b>, <b>Казань</b>, <b>Сочи</b>, Адлер, Анапа, Геленджик, Туапсе, Новороссийск, а также Крым — Ялта, Алушта, Евпатория, Севастополь, Феодосия, Судак, Керчь, Гурзуф. Из горных мест — Домбай, Шерегеш, Абзаково, Кировск в Мурманской области; из курортов — Пятигорск, Байкальск, Хвалынск.</p><p>Данные берутся с 101hotels.com в реальном времени. Цена «от» за ночь видна прямо на метке карты, координаты точные. Отбирать можно по типу размещения, звёздам, цене, рейтингу и отзывам, по удобствам и по возможности оплатить при заселении — последнее удобно, когда карта не проходит.</p><p>Бронирование и оплата происходят на стороне 101hotels: мы только показываем, что есть и почём. Перед поездкой проверяйте на их сайте даты, условия отмены и что входит в цену.</p>';
+
+const SEO_PL = '<h2>Что посетить в Беларуси</h2>'
+  + '<p>Почти 800 достопримечательностей по всей стране: замки, костёлы, церкви, дворцы, '
+  +   'усадьбы, часовни-усыпальницы, форты и доты, старые мельницы, брамы, бровары и валуны. '
+  +   'Среди них Мирский и Несвижский замки, Лидский и Гольшанский, Брестская крепость, '
+  +   'Коссовский дворец, дворец в Ружанах, Коложская церковь в Гродно.</p>'
+  + '<p>У каждой точки фотография, короткое описание, координаты и кнопка «Жильё рядом» — '
+  +   'она подбирает квартиры и усадьбы на сутки в 30 километрах. Несколько точек '
+  +   'складываются в маршрут на день: порядок объезда считается сам, километраж и время '
+  +   'за рулём — по настоящим дорогам.</p>'
+  + '<p>Описания и фотографии взяты с нашего же сайта kudin.by — карты архитектурного '
+  +   'наследия Беларуси.</p>';
+
 const HINT_RU = 'Отели и жильё России с 101hotels.com в реальном времени. Цена «от» за ночь показана прямо на метке карты (<b style="color:#7c3aed">фиолетовые</b> — 101Hotels, координаты точные). Доступны фильтры по типу размещения, звёздам, цене, рейтингу, удобствам и оплате при заселении. Список и карта; перед бронированием проверяйте даты и условия на 101hotels.com.';
 
 // переключение Беларусь / Россия
@@ -3644,6 +3664,13 @@ function setCountry(c, quiet){
   const ft = $('#fToggle'); if(ft) ft.style.display = (ru || pl) ? 'none' : '';
   if(!window.__hintBY) window.__hintBY = $('#hint').innerHTML;
   $('#hint').innerHTML = pl ? HINT_PL : (ru ? HINT_RU : window.__hintBY);
+  // Описание внизу — своё для каждой вкладки: человек читает, что тут
+  // вообще есть, а поисковик получает живые слова вместо голого списка.
+  const описание = $('#seo');
+  if(описание){
+    if(!window.__seoBY) window.__seoBY = описание.innerHTML;
+    описание.innerHTML = pl ? SEO_PL : (ru ? SEO_RU : window.__seoBY);
+  }
   window.__page = 1;
   if(!quiet) run();
 }
@@ -3964,7 +3991,7 @@ function plotMap(fit){
   if(typeof L==='undefined'){ $('#map').innerHTML='<div style="padding:24px;color:var(--txt-2)">Карта не загрузилась (нет связи с картографическим сервисом).</div>'; return; }
   if(!window.__map){
     window.__map=L.map('map',{scrollWheelZoom:true}).setView([53.70,27.95],6);
-    window.__map.attributionControl.setPrefix('Leaflet');
+    window.__map.attributionControl.setPrefix('');
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(window.__map);
     // Метки в центре города наваливаются друг на друга сотнями и карта
     // становится нечитаемой. Близкие собираем в кружок с числом.

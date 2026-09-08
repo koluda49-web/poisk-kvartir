@@ -169,6 +169,35 @@ console.log('\n=== кнопка «показать все варианты» ===
   }
 }
 
+// ── описание внизу — своё на каждой вкладке ─────────
+{
+  console.log('\n=== описание страницы ===');
+  await send('Page.navigate', { url: SITE + '/' });
+  for (let i = 0; i < 60; i++) { if (await js("!!document.querySelector('#seo')")) break; await sleep(500); }
+  const текст = async () => (await js("(document.querySelector('#seo')||{}).textContent") || '').slice(0, 4000);
+
+  const by = await текст();
+  check('на вкладке Беларуси описание про Беларусь',
+        /Жильё на сутки в Беларуси/.test(by) && /Kufar/.test(by), by.slice(0, 70));
+  check('в описании названы города', /Гродно/.test(by) && /Могил/.test(by), 'городов нет');
+
+  await js("setCountry('ru'); 1"); await sleep(1200);
+  const ru = await текст();
+  check('на вкладке России описание про Россию',
+        /Отели и жильё в России/.test(ru) && /101hotels/.test(ru), ru.slice(0, 70));
+  check('текст Беларуси не остался', !/Kufar/.test(ru), 'на вкладке России видно Kufar');
+
+  await js("setCountry('places'); 1"); await sleep(1200);
+  const pl = await текст();
+  check('на вкладке мест описание про места',
+        /Что посетить в Беларуси/.test(pl) && /kudin\.by/.test(pl), pl.slice(0, 70));
+
+  await js("setCountry('by'); 1"); await sleep(1200);
+  const снова = await текст();
+  check('вернулись — описание Беларуси на месте', /Жильё на сутки в Беларуси/.test(снова),
+        снова.slice(0, 70));
+}
+
 console.log('\nИтог: успешно ' + passed + ', провалено ' + failed);
 ws.close(); chrome.kill();
 process.exit(failed ? 1 : 0);
