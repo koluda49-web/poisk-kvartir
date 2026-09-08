@@ -283,9 +283,25 @@ function statsPage(){
     '.log td{border-top:1px solid #eef0f4;padding:5px 6px;vertical-align:top}' +
     '.log .raw{color:#8b93a3;font-size:12px;word-break:break-all}' +
     '.none{color:#8b93a3;font-size:14px;margin:4px 0}' +
-    '.warn{background:#fff4ee;border:1px solid #ffd3bd;border-radius:12px;padding:12px 14px;font-size:14px;margin-top:10px}' +
+    '.warn{background:#fff4ee;border:1px solid #ffd3bd;border-radius:12px;padding:12px 14px;font-size:14px;margin-top:10px}.istoch{background:#fff;border:1px solid #e2e5ea;border-radius:14px;padding:12px 16px;margin:10px 0 16px;font-size:14px}.istoch span{display:inline-block;padding:2px 10px;border-radius:999px;font-size:13px;margin-right:6px}.istoch span.on{background:#e8f5ee;color:#1a7f4b}.istoch span.off{background:#fdeceb;color:#b3261e;font-weight:700}.istoch a{display:inline-block;margin:8px 8px 0 0;padding:6px 13px;border:1px solid #e2e5ea;border-radius:999px;text-decoration:none;color:#141821;font-size:13px}.istoch a:hover{border-color:#9a3412;color:#9a3412}.istoch .note{color:#8b93a3;font-size:12.5px;margin-top:8px}' +
     '</style></head><body><div class="wrap">' +
-    '<h1>Статистика сайта</h1>' +
+    '<h1>Статистика сайта</h1>'
+    + '<div class="istoch">'
+    +   '<b>Источники сейчас:</b> '
+    +   ['kufar','realt','flatbook'].map(function(и){
+          return '<span class="' + (ИСТОЧНИКИ[и] ? 'on' : 'off') + '">' + и
+               + (ИСТОЧНИКИ[и] ? '' : ' — скрыт') + '</span>';
+        }).join(' ')
+    +   '<div class="note">Если с площадки придёт письмо, источник убирается '
+    +     'по ссылке — сразу, без обновления сайта. Обратно тем же адресом с on.</div>'
+    +   ['kufar','realt','flatbook'].map(function(и){
+          return '<a href="/istochnik?key=' + encodeURIComponent(STATS_KEY) + '&' + и
+               + '=' + (ИСТОЧНИКИ[и] ? 'off' : 'on') + '">'
+               + (ИСТОЧНИКИ[и] ? 'скрыть ' : 'вернуть ') + и + '</a>';
+        }).join('')
+    +   '<div class="note">Чтобы осталось после перезапуска, поставьте в Render '
+    +     'настройку REALT=off (или KUFAR / FLATBOOK) и перезапустите.</div>'
+    + '</div>' +
     '<p class="sub">Событий в памяти: ' + STATS.length +
       (first ? (' · с ' + first.toLocaleString('ru-RU')) : '') +
       ' · данные лежат в файле на сервере и теряются при передеплое</p>' +
@@ -1721,18 +1737,34 @@ function cacheKey(u){
 // мог просто не ответить один раз — держать после этого «источника нет»
 // восемь минут значит показывать всем пустую выдачу на ровном месте.
 const EMPTY_TTL = 45 * 1000;
+// Дальше 45 секунд ждать не будем без причины, но если источник молчит
+// раз за разом, пауза растёт: 45 с → 1,5 мин → 3 → 6 → 12 → 24, дальше
+// потолок в полчаса. Площадки ограничивают по частоте, и упорство здесь
+// работает против нас: под ограничением надо переждать, а не стучаться
+// чаще. Как только ответ пришёл — счётчик обнуляется.
+const EMPTY_MAX = 30 * 60 * 1000;
+const ПУСТЫЕ_ПОДРЯД = new Map();   // ключ -> сколько раз подряд пусто
+
+function пауза(key){
+  const n = ПУСТЫЕ_ПОДРЯД.get(key) || 0;
+  return Math.min(EMPTY_TTL * Math.pow(2, Math.max(0, n - 1)), EMPTY_MAX);
+}
+
 const isEmpty = d => Array.isArray(d) ? d.length === 0
                    : (d && Array.isArray(d.items) ? d.items.length === 0 : false);
 
 async function cached(key, fn, ttl){
   const life = ttl || CACHE_TTL;
   const hit = SEARCH_CACHE.get(key);
-  if(hit && Date.now() - hit.at <= (isEmpty(hit.data) ? Math.min(EMPTY_TTL, life) : life)) return hit.data;
+  if(hit && Date.now() - hit.at <= (isEmpty(hit.data) ? Math.min(пауза(key), life) : life)) return hit.data;
   if(hit) SEARCH_CACHE.delete(key);
   if(INFLIGHT.has(key)) return INFLIGHT.get(key);
   const p = (async ()=>{
     try{
       const data = await fn();
+      // Считаем неудачи подряд: по ним растёт пауза перед следующей попыткой.
+      if(isEmpty(data)) ПУСТЫЕ_ПОДРЯД.set(key, (ПУСТЫЕ_ПОДРЯД.get(key) || 0) + 1);
+      else ПУСТЫЕ_ПОДРЯД.delete(key);
       SEARCH_CACHE.set(key, { at: Date.now(), data });
       if(SEARCH_CACHE.size > CACHE_MAX){
         let oldK = null, oldT = Infinity;
