@@ -363,5 +363,40 @@ console.log('\n=== гиды «где остановиться» ===');
         'поисковик о них не узнает');
 }
 
+// ── готовые маршруты ────────────────────────────────
+// Три маршрута собраны вручную, точки лежат в файле, а связь с нашими
+// местами считается по координатам. Разъедется — страница обеднеет молча.
+console.log('\n=== готовые маршруты ===');
+{
+  const МАРШРУТЫ = [
+    ['marshrut-minsk-brest', 13, 10],
+    ['marshrut-minsk-brest-grodno', 29, 20],
+    ['marshrut-braslavshchina', 25, 18],
+  ];
+  for (const [адрес, точек, ссылок] of МАРШРУТЫ) {
+    const r = await fetch(BASE + '/' + адрес);
+    const h = await r.text();
+    check('/' + адрес + ' отвечает', r.status === 200, 'код ' + r.status);
+    if (r.status !== 200) continue;
+    const n = (h.match(/class="tn">/g) || []).length;
+    check('/' + адрес + ': точек ' + n + ' (ждём ' + точек + ')', n === точек,
+          'точки потерялись при разборе файла');
+    const м = (h.match(/href="\/mesto\//g) || []).length;
+    check('/' + адрес + ': ссылок на места ' + м + ' (ждём от ' + ссылок + ')', м >= ссылок,
+          'точки перестали совпадать с нашим справочником');
+    check('/' + адрес + ': есть где переночевать', /Где переночевать на маршруте/.test(h),
+          'пропал раздел с жильём — а это единственное, чем мы отличаемся от блогов');
+    check('/' + адрес + ': есть ссылка на карту', /marshrut\?p=\d/.test(h));
+    check('/' + адрес + ': есть файлы для навигатора', /marshrut-fajl\//.test(h));
+  }
+  const ф = await fetch(BASE + '/marshrut-fajl/' + encodeURIComponent('Браславщина - все точки.kml'));
+  check('файл KML отдаётся', ф.status === 200, 'код ' + ф.status);
+  const чужой = await fetch(BASE + '/marshrut-fajl/' + encodeURIComponent('../kvartiry-server.js'));
+  check('чужой файл по этому адресу не отдаётся', чужой.status === 404, 'код ' + чужой.status);
+
+  const карта = await (await fetch(BASE + '/sitemap.xml')).text();
+  check('маршруты есть в карте сайта', карта.includes('/marshrut-minsk-brest</loc>'));
+}
+
 console.log('\nИтог: успешно ' + passed + ', провалено ' + failed);
 process.exitCode = failed ? 1 : 0;

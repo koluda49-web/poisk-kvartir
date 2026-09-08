@@ -2379,6 +2379,189 @@ async function marshrutPage(ids){
     + '</div></body></html>';
 }
 
+// ── Готовые маршруты ──────────────────────────────────────────────────────
+// Три маршрута, собранные вручную: точки, описания, координаты. Лежали
+// папкой на компьютере — теперь отвечают на запрос «что посмотреть
+// по дороге из Минска в Брест», который люди действительно набирают.
+const path = require('path');
+const МАРШРУТЫ_ФАЙЛ = path.join(__dirname, 'маршруты.json');
+let МАРШРУТЫ = [];
+try{ МАРШРУТЫ = JSON.parse(fs.readFileSync(МАРШРУТЫ_ФАЙЛ, 'utf8')); }
+catch(e){ console.error('маршруты не прочитались:', e.message); }
+
+const МАРШРУТ_ПО = {};
+МАРШРУТЫ.forEach(function(м){ МАРШРУТ_ПО['marshrut-' + м.ключ] = м; });
+
+// Файлы для maps.me: их кладут в приложение и берут в поездку без интернета.
+const МАРШРУТ_ФАЙЛЫ = {
+  'minsk-brest':        [['Маршрут и города без военных.kml', 'KML для maps.me и Google Earth'],
+                         ['Маршрут и города без военных.gpx', 'GPX для навигаторов']],
+  'minsk-brest-grodno': [['Все точки маршрута.kml', 'KML со всеми точками'],
+                         ['Маршрут и города без военных.gpx', 'GPX для навигаторов']],
+  'braslavshchina':     [['Браславщина - все точки.kml', 'KML для maps.me и Google Earth'],
+                         ['Браславщина - все точки.gpx', 'GPX для навигаторов']],
+};
+
+// Сводим точку маршрута с нашим местом по координатам: названия написаны
+// по-разному («Дворцовый комплекс Сапег» и «Дворец в Ружанах»), а координаты
+// совпадают. Полтора километра — это тот же объект, а не соседний.
+async function маршрутСМестами(м){
+  let наши = [];
+  try{ наши = await placesRaw(); }catch(e){}
+  return м.точки.map(function(т){
+    if(!т.lat) return Object.assign({}, т, { место: null });
+    let л = null, д = Infinity;
+    наши.forEach(function(p){
+      const d = distKm(т.lat, т.lng, p.lat, p.lng);
+      if(d < д){ д = d; л = p; }
+    });
+    return Object.assign({}, т, { место: (д <= 1.2 && л) ? л : null });
+  });
+}
+
+async function маршрутPage(slug){
+  const м = МАРШРУТ_ПО[slug];
+  if(!м) return '';
+  const точки = await маршрутСМестами(м);
+  const ид = точки.filter(function(т){ return т.место; }).map(function(т){ return т.место.id; });
+
+  // Где переночевать: берём начало, середину и конец маршрута и смотрим,
+  // что сдаётся рядом. Это то, чего нет в статьях-конкурентах: они
+  // рассказывают, куда ехать, но не отвечают, где спать.
+  const опорные = [];
+  const скоорд = точки.filter(function(т){ return т.lat; });
+  [0, Math.floor(скоорд.length / 2), скоорд.length - 1].forEach(function(i){
+    const т = скоорд[i];
+    if(т && опорные.indexOf(т) === -1) опорные.push(т);
+  });
+  const ночлег = [];
+  for(const т of опорные){
+    try{
+      const d = await stayNearPoint(т.lat, т.lng, 30, '');
+      const ц = (d.items || []).map(function(x){ return x.price; }).filter(function(p){ return p > 0; });
+      if((d.items || []).length >= 3){
+        ночлег.push({ имя: т.имя, всего: (d.items || []).length,
+                      от: ц.length ? Math.min.apply(null, ц) : 0,
+                      lat: т.lat, lng: т.lng });
+      }
+    }catch(e){}
+  }
+
+  const название = м.заголовок.replace(/^Маршрут\s*/, '');
+  const title = 'Маршрут ' + название + ': что посмотреть по дороге';
+  const первый = (м.факты[0] || {}).знач || '';
+  const desc = 'Маршрут ' + название + ' — ' + м.точки.length + ' точек с описаниями и координатами'
+    + (первый ? (', ' + первый) : '') + '. Замки, дворцы и усадьбы по дороге, карта и жильё на ночь рядом.';
+
+  const факты = м.факты.map(function(ф){
+    return '<div class="fact"><b>' + esc(ф.знач) + '</b><span>' + esc(ф.подпись) + '</span></div>';
+  }).join('');
+
+  const список = точки.map(function(т, i){
+    const имя = т.место
+      ? ('<a href="/mesto/' + т.место.id + '-' + slugify(т.место.name) + '">' + esc(т.имя) + '</a>')
+      : esc(т.имя);
+    const коорд = т.lat
+      ? ('<div class="tk"><span>' + т.lat.toFixed(5) + ', ' + т.lng.toFixed(5) + '</span>'
+         + '<a href="https://yandex.by/maps/?rtext=~' + т.lat + ',' + т.lng + '&rtt=auto" '
+         + 'target="_blank" rel="noopener">Навигатор →</a></div>')
+      : '';
+    return '<li class="t"><div class="tn">' + (i + 1) + '</div><div class="tb">'
+      + (т.вид ? ('<div class="tt">' + esc(т.вид) + '</div>') : '')
+      + '<h3>' + имя + '</h3>'
+      + (т.адрес ? ('<div class="ta">' + esc(т.адрес) + '</div>') : '')
+      + (т.текст ? ('<p>' + esc(т.текст) + '</p>') : '')
+      + коорд + '</div></li>';
+  }).join('');
+
+  const где = ночлег.length
+    ? '<h2>Где переночевать на маршруте</h2>'
+      + '<p class="lead">Что сдаётся в тридцати километрах от опорных точек. Цены живые, '
+      +   'из объявлений Kufar, Realt и Flatbook.</p>'
+      + '<div class="others">'
+      + ночлег.map(function(н){
+          return '<a href="/?country=places">' + esc(н.имя) + ': ' + вариантов(н.всего)
+               + (н.от ? (' <small>от ' + н.от + ' BYN</small>') : '') + '</a>';
+        }).join('')
+      + '</div>'
+    : '';
+
+  const файлы = (МАРШРУТ_ФАЙЛЫ[м.ключ] || []).map(function(п){
+    return '<a href="/marshrut-fajl/' + encodeURIComponent(п[0]) + '">' + esc(п[1]) + '</a>';
+  }).join('');
+
+  const другие = МАРШРУТЫ.filter(function(x){ return x.ключ !== м.ключ; }).map(function(x){
+    return '<a href="/marshrut-' + x.ключ + '">' + esc(x.заголовок.replace(/^Маршрут\s*/, '')) + '</a>';
+  }).join('');
+
+  const ld = {
+    '@context':'https://schema.org', '@type':'ItemList', name: title,
+    numberOfItems: точки.length,
+    itemListElement: точки.slice(0, 20).map(function(т, i){
+      return { '@type':'ListItem', position: i + 1, name: т.имя };
+    })
+  };
+
+  return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<title>' + esc(title) + '</title>'
+    + '<meta name="description" content="' + esc(desc) + '">'
+    + '<meta name="robots" content="index,follow">'
+    + '<meta name="theme-color" content="#9a3412">'
+    + '<link rel="canonical" href="' + SITE_URL + '/' + slug + '">'
+    + '<meta property="og:type" content="article">'
+    + '<meta property="og:title" content="' + esc(title) + '">'
+    + '<meta property="og:description" content="' + esc(desc) + '">'
+    + '<script type="application/ld+json">' + JSON.stringify(ld) + '</script>'
+    + '<style>' + СТИЛЬ_СПИСКА
+    +   'h2{font-size:22px;margin:32px 0 10px;letter-spacing:-.01em}'
+    +   '.facts{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 22px}'
+    +   '.fact{background:#fff;border:1px solid #e2e5ea;border-radius:12px;padding:10px 15px;line-height:1.3}'
+    +   '.fact b{display:block;font-size:17px}'
+    +   '.fact span{font-size:12.5px;color:#8b93a3}'
+    +   '.tl{list-style:none;padding:0;margin:0}'
+    +   '.t{display:flex;gap:14px;padding:16px 0;border-top:1px solid #e2e5ea}'
+    +   '.t:first-child{border-top:0}'
+    +   '.tn{flex:none;width:30px;height:30px;border-radius:50%;background:#9a3412;color:#fff;'
+    +     'font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center}'
+    +   '.tb{min-width:0}'
+    +   '.tt{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#8b93a3;margin-bottom:2px}'
+    +   '.tb h3{margin:0 0 4px;font-size:18px}'
+    +   '.tb h3 a{color:#141821}'
+    +   '.ta{font-size:13.5px;color:#8b93a3;margin-bottom:5px}'
+    +   '.tb p{margin:0 0 8px;color:#4a5160;max-width:70ch}'
+    +   '.tk{display:flex;flex-wrap:wrap;gap:12px;font-size:13px;color:#8b93a3}'
+    +   '.others small{color:#8b93a3}'
+    +   '@media (prefers-color-scheme:dark){.fact{background:#1d1916;border-color:#332c25}'
+    +     '.t{border-color:#332c25}.tb h3 a{color:#f6f2ed}.tb p{color:#c2b7ab}}'
+    + '</style></head><body><div class="w">'
+    + '<h1>' + esc(м.заголовок) + '</h1>'
+    + '<div class="facts">' + факты + '</div>'
+    + '<p class="lead">Все точки с описаниями и координатами. Каждую можно открыть в навигаторе, '
+    +   'а совпавшие с нашим справочником — посмотреть отдельной страницей с фотографией '
+    +   'и жильём рядом.</p>'
+    + (ид.length > 1
+        ? ('<a class="cta" href="/marshrut?p=' + ид.slice(0, 12).join(',') + '">'
+           + 'Открыть маршрут на карте →</a>')
+        : '')
+    + '<h2>Точки маршрута</h2>'
+    + '<ol class="tl">' + список + '</ol>'
+    + где
+    + (файлы ? ('<h2>Забрать в телефон</h2>'
+        + '<p class="lead">Файлы для maps.me, Organic Maps и навигаторов: точки открываются '
+        +   'без интернета, что в дороге важнее всего.</p>'
+        + '<div class="others">' + файлы + '</div>') : '')
+    + '<h2>Другие маршруты</h2><div class="others">' + другие + '</div>'
+    + '<footer><p>Описания и координаты точек — с нашего сайта '
+    +   '<a href="https://kudin.by" target="_blank" rel="noopener">kudin.by</a>, карты '
+    +   'архитектурного наследия Беларуси. Жильё подтягивается из объявлений Kufar, Realt '
+    +   'и Flatbook в реальном времени.</p>'
+    +   '<p><a href="/?country=places">Все 798 мест на карте →</a> · '
+    +   '<a href="/">Поиск жилья на сутки →</a></p></footer>'
+    + '</div></body></html>';
+}
+
+
 // ── Гиды «где остановиться» ───────────────────────────────────────────────
 // Отдельный кластер запросов: человек ещё не выбирает квартиру, а хочет
 // понять цену, район и что рядом. Города взяты те, по которым подсказки
@@ -5553,6 +5736,30 @@ http.createServer(async (req,res)=>{
     res.end(statsPage()); return;
   }
   // страницы под поиск: /minsk, /brest, /minsk-nedorogo, /brest-usadby …
+  // Готовые маршруты: что посмотреть по дороге.
+  if(МАРШРУТ_ПО[u.pathname.slice(1)]){
+    const html = await маршрутPage(u.pathname.slice(1));
+    if(html){
+      res.writeHead(200, {'Content-Type':'text/html; charset=utf-8',
+                          'Cache-Control':'public, max-age=900'});
+      res.end(html); return;
+    }
+  }
+  // Файлы маршрутов для maps.me и навигаторов.
+  if(u.pathname.startsWith('/marshrut-fajl/')){
+    const имя = decodeURIComponent(u.pathname.slice('/marshrut-fajl/'.length));
+    if(!/^[0-9A-Za-zА-Яа-яЁё _.()-]+\.(kml|gpx)$/.test(имя) || имя.indexOf('..') >= 0){
+      res.writeHead(404); res.end(); return;
+    }
+    try{
+      const тело = fs.readFileSync(path.join(__dirname, 'маршруты-файлы', имя));
+      res.writeHead(200, {
+        'Content-Type': имя.endsWith('.kml') ? 'application/vnd.google-earth.kml+xml' : 'application/gpx+xml',
+        'Content-Disposition': 'attachment; filename*=UTF-8\'\'' + encodeURIComponent(имя),
+        'Cache-Control':'public, max-age=86400' });
+      res.end(тело); return;
+    }catch(e){ res.writeHead(404); res.end(); return; }
+  }
   // Гиды «где остановиться»: отвечают на вопрос до выбора квартиры.
   if(ГИДЫ[u.pathname.slice(1)]){
     const html = await гидPage(u.pathname.slice(1));
@@ -5792,6 +5999,9 @@ http.createServer(async (req,res)=>{
           return '<url><loc>'+SITE_URL+'/'+city+'-'+kind+'</loc><changefreq>daily</changefreq><priority>0.6</priority></url>';
         });
       })));
+    urls.push.apply(urls, Object.keys(МАРШРУТ_ПО).map(function(k){
+      return '<url><loc>'+SITE_URL+'/'+k+'</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>';
+    }));
     urls.push.apply(urls, Object.keys(ГИДЫ).map(function(k){
       return '<url><loc>'+SITE_URL+'/'+k+'</loc><changefreq>daily</changefreq><priority>0.7</priority></url>';
     }));
