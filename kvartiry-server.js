@@ -2017,12 +2017,25 @@ function slugify(name){
 // источникам жилья.
 const MESTO_HTML = new Map();
 const MESTO_TTL = 10 * 60 * 1000;
+const MESTO_MAX = 300;   // потолок по памяти: примерно 45 МБ готовых страниц
 async function mestoPage(id){
   const было = MESTO_HTML.get(String(id));
   if(было && Date.now() - было.at < MESTO_TTL) return было.html;
   const html = await mestoPageBuild(id);
   if(html){
-    if(MESTO_HTML.size > 900) MESTO_HTML.clear();
+    // Мест около восьмисот, а порог сброса стоял на девятистах: до него
+    // никогда не доходило, и все страницы висели в памяти навсегда. Обход
+    // поисковиком добавлял к памяти сто с лишним мегабайт и не отдавал их
+    // обратно. Держим не больше трёхсот страниц: сначала выбрасываем
+    // просроченные, потом самые давние. Триста самых ходовых покрывают
+    // живых посетителей, а робот и на построенной с нуля странице ждёт
+    // четверть секунды.
+    if(MESTO_HTML.size >= MESTO_MAX){
+      const сейчас = Date.now();
+      for(const [k, v] of MESTO_HTML) if(сейчас - v.at >= MESTO_TTL) MESTO_HTML.delete(k);
+      // Map хранит ключи в порядке добавления, поэтому самые давние идут первыми
+      while(MESTO_HTML.size >= MESTO_MAX) MESTO_HTML.delete(MESTO_HTML.keys().next().value);
+    }
     MESTO_HTML.set(String(id), { at: Date.now(), html });
   }
   return html;
@@ -2366,6 +2379,199 @@ async function marshrutPage(ids){
     + '</div></body></html>';
 }
 
+// ── Страницы под живой поисковый спрос ────────────────────────────────────
+// Что именно сюда попало, решали подсказки Google и Яндекса, а не наши
+// предположения. Мест с достопримечательностями здесь нет: по названиям
+// замков люди спрашивают время работы и билеты, а не ночлег — подсказок
+// «жильё рядом с …» нет ни в одном движке. Зато у озёр «снять домик»
+// стоит третьей подсказкой, поэтому курорты в списке есть.
+// Каждая страница проверена на наполнение: пустых не заводим.
+const СПРОС = {
+  // районные города — подсказки есть у каждого, объявлений от двадцати
+  'baranovichi': { обл:'brest',     город:'Барановичи', где:'в Барановичах' },
+  'pinsk':       { обл:'brest',     город:'Пинск',      где:'в Пинске' },
+  'kobrin':      { обл:'brest',     город:'Кобрин',     где:'в Кобрине' },
+  'lida':        { обл:'grodno',    город:'Лида',       где:'в Лиде' },
+  'volkovysk':   { обл:'grodno',    город:'Волковыск',  где:'в Волковыске' },
+  'slonim':      { обл:'grodno',    город:'Слоним',     где:'в Слониме' },
+  'bobruisk':    { обл:'mogilev',   город:'Бобруйск',   где:'в Бобруйске' },
+  'mozyr':       { обл:'gomel',     город:'Мозырь',     где:'в Мозыре' },
+  'zhlobin':     { обл:'gomel',     город:'Жлобин',     где:'в Жлобине' },
+  'polotsk':     { обл:'vitebsk',   город:'Полоцк',     где:'в Полоцке' },
+  'novopolotsk': { обл:'vitebsk',   город:'Новополоцк', где:'в Новополоцке' },
+  'orsha':       { обл:'vitebsk',   город:'Орша',       где:'в Орше' },
+  'borisov':     { обл:'minsk-obl', город:'Борисов',    где:'в Борисове' },
+  'soligorsk':   { обл:'minsk-obl', город:'Солигорск',  где:'в Солигорске' },
+  'molodechno':  { обл:'minsk-obl', город:'Молодечно',  где:'в Молодечно' },
+  'slutsk':      { обл:'minsk-obl', город:'Слуцк',      где:'в Слуцке' },
+  'zhodino':     { обл:'minsk-obl', город:'Жодино',     где:'в Жодино' },
+
+  // уточнения внутри Минска — самый заметный кластер после самих городов
+  'minsk-mir':      { обл:'minsk', город:'Минск', слово:'минск.?мир',
+                      что:'Квартиры на сутки', где:'в районе Минск Мир' },
+  'minsk-centr':    { обл:'minsk', город:'Минск', слово:'центр|немиг|независимост|победител',
+                      что:'Квартиры на сутки', где:'в центре Минска' },
+  'minsk-vokzal':   { обл:'minsk', город:'Минск', слово:'вокзал',
+                      что:'Квартиры на сутки', где:'у железнодорожного вокзала в Минске' },
+  'minsk-kamennaya-gorka': { обл:'minsk', город:'Минск', слово:'каменн',
+                      что:'Квартиры на сутки', где:'на Каменной Горке в Минске' },
+  'minsk-uruchie':  { обл:'minsk', город:'Минск', слово:'уруч',
+                      что:'Квартиры на сутки', где:'в Уручье в Минске' },
+  'minsk-dzhakuzi': { обл:'minsk', город:'Минск', слово:'джакуз',
+                      что:'Квартиры на сутки с джакузи', где:'в Минске' },
+
+  // дома и усадьбы с баней — подсказка есть у каждого районного города
+  'dom-s-banej':    { обл:'minsk-obl', тип:'any', слово:'бан[ья]|саун',
+                      что:'Дома и усадьбы на сутки с баней', где:'под Минском' },
+
+  // курортные места: тут ищут «снять домик», а не «жильё рядом с объектом»
+  'braslav':      { точка:[55.6333, 27.05],  радиус:25,
+                    что:'Домики и квартиры на сутки', где:'на Браславских озёрах' },
+  'naroch':       { точка:[54.8833, 26.75],  радиус:25,
+                    что:'Жильё на сутки', где:'на Нарочи' },
+  'minskoe-more': { точка:[54.0167, 27.40],  радиус:12,
+                    что:'Домики и квартиры на сутки', где:'на Минском море' },
+  'logoisk':      { точка:[54.2000, 27.85],  радиус:12,
+                    что:'Жильё на сутки', где:'в Логойске' },
+  'svityaz':      { точка:[53.5333, 25.8833], радиус:25,
+                    что:'Домики на сутки', где:'на озере Свитязь' },
+  'golubye-ozera':{ точка:[55.0500, 26.60],  радиус:25,
+                    что:'Жильё на сутки', где:'у Голубых озёр' },
+};
+
+// Сколько вариантов должно набраться, чтобы страницу вообще показывать.
+// Меньше — это не выдача, а разочарование: человек пришёл по запросу
+// и увидел два объявления.
+const СПРОС_МИНИМУМ = 5;
+
+async function спросДанные(z){
+  if(z.точка){
+    const d = await stayNearPoint(z.точка[0], z.точка[1], z.радиус || 25, '');
+    return { items: d.items || [], total: (d.items || []).length };
+  }
+  const п = new URL('/api/search?region=' + (z.обл || 'minsk') +
+                    '&city=' + encodeURIComponent(z.город || '') +
+                    '&type=' + (z.тип || 'any') + '&source=both', 'http://localhost');
+  const d = await runSearchQuery(п.searchParams);
+  let items = d.items || [];
+  if(z.слово){
+    // Название района в объявлении пишут по-разному: то в заголовке, то
+    // в поле города. Смотрим оба, ё приравниваем к е.
+    const rx = new RegExp(z.слово, 'i');
+    const мягко = t => String(t || '').toLowerCase().replace(/ё/g, 'е');
+    items = items.filter(x => rx.test(мягко(x.title)) || rx.test(мягко(x.area)));
+  }
+  return { items: items, total: items.length };
+}
+
+async function спросPage(slug){
+  const z = СПРОС[slug];
+  if(!z) return '';
+  let d = { items: [], total: 0 };
+  try{ d = await спросДанные(z); }catch(e){}
+  if(d.total < СПРОС_МИНИМУМ) return '';   // нечем наполнить — страницы нет
+
+  const что = z.что || 'Квартиры на сутки';
+  const items = (d.items || []).slice(0, 30);
+  const цены = (d.items || []).map(x => x.price).filter(p => p > 0).sort((a, b) => a - b);
+  const мин = цены.length ? цены[0] : 0;
+  const сред = цены.length ? цены[Math.floor(цены.length / 2)] : 0;
+
+  const title = что + ' ' + z.где + ' — снять посуточно';
+  const desc = что + ' ' + z.где + ': ' + вариантов(d.total)
+    + ' с Kufar, Realt и Flatbook в одном списке'
+    + (мин ? (', цены от ' + мин + ' BYN за сутки') : '') + '. Фото, цены и телефоны хозяев.';
+
+  const карточки = items.map(function(x){
+    const img = (x.photos && x.photos[0])
+      ? '<img src="' + esc(x.photos[0]) + '" loading="lazy" alt="' + esc(что + ' ' + z.где) + '">'
+      : '<div class="noimg">фото у источника</div>';
+    const мета = [x.area, (x.rooms ? x.rooms + '-комн' : ''),
+                  x.capacity ? ('до ' + x.capacity + ' гостей') : '',
+                  (typeof x.km === 'number' ? (x.km + ' км') : '')]
+      .filter(Boolean).map(function(m){ return '<span>' + esc(m) + '</span>'; }).join('');
+    return '<article class="c"><a href="' + esc(x.link) + '" target="_blank" rel="noopener nofollow">' + img + '</a>'
+      + '<div class="b"><div class="p">' + x.price + ' BYN <small>/ сутки</small></div>'
+      + '<div class="m">' + мета + '</div>'
+      + '<h3>' + esc(x.title || (что + ' ' + z.где)) + '</h3>'
+      + '<a class="go" href="' + esc(x.link) + '" target="_blank" rel="noopener nofollow">Открыть на '
+      + esc(srcTitle(x.src)) + '</a></div></article>';
+  }).join('');
+
+  const куда = z.точка
+    ? ('/?country=places')
+    : ('/?region=' + (z.обл || 'minsk') + (z.город ? ('&city=' + encodeURIComponent(z.город)) : '') + '&type=' + (z.тип || 'any'));
+
+  const рядом = Object.keys(СПРОС).filter(function(k){ return k !== slug; }).slice(0, 12)
+    .map(function(k){ return '<a href="/' + k + '">' + esc((СПРОС[k].что || 'Жильё') + ' ' + СПРОС[k].где) + '</a>'; }).join('');
+
+  const ld = {
+    '@context':'https://schema.org', '@type':'ItemList',
+    name: title, numberOfItems: items.length,
+    itemListElement: items.slice(0, 10).map(function(x, i){
+      return { '@type':'ListItem', position: i + 1, name: (x.title || (что + ' ' + z.где)), url: x.link };
+    })
+  };
+
+  return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<title>' + esc(title) + '</title>'
+    + '<meta name="description" content="' + esc(desc) + '">'
+    + '<meta name="robots" content="index,follow">'
+    + '<meta name="theme-color" content="#9a3412">'
+    + '<link rel="canonical" href="' + SITE_URL + '/' + slug + '">'
+    + '<link rel="manifest" href="/manifest.webmanifest">'
+    + '<meta property="og:type" content="website">'
+    + '<meta property="og:title" content="' + esc(title) + '">'
+    + '<meta property="og:description" content="' + esc(desc) + '">'
+    + '<meta property="og:url" content="' + SITE_URL + '/' + slug + '">'
+    + '<script type="application/ld+json">' + JSON.stringify(ld) + '</script>'
+    + '<style>' + СТИЛЬ_СПИСКА + '</style></head><body><div class="w">'
+    + '<h1>' + esc(что) + ' ' + esc(z.где) + '</h1>'
+    + '<p class="lead">Объявления частников с <b>Kufar</b>, <b>Realt</b> и <b>Flatbook</b> в одном списке. '
+    +   'Сейчас доступно <b>' + d.total + '</b> ' + скл(d.total, 'вариант', 'варианта', 'вариантов')
+    +   (мин ? (', самый дешёвый — <b>' + мин + ' BYN</b> за сутки, обычная цена около <b>' + сред + ' BYN</b>') : '')
+    +   (z.точка ? '. Показываем то, что сдаётся в радиусе ' + (z.радиус || 25) + ' километров' : '')
+    +   '. Цены подтягиваются из объявлений в реальном времени.</p>'
+    + '<a class="cta" href="' + куда + '">Открыть поиск с фильтрами и картой →</a>'
+    + '<div class="grid">' + карточки + '</div>'
+    + '<div class="others">' + рядом + '</div>'
+    + '<footer><p>Мы не сдаём жильё сами и не берём комиссию: показываем объявления с Kufar, Realt '
+    +   'и Flatbook и отправляем напрямую к хозяину. Перед оплатой проверяйте условия и не переводите '
+    +   'предоплату незнакомым людям.</p>'
+    +   '<p><a href="/">Все города и карта с ценами →</a></p></footer>'
+    + '</div></body></html>';
+}
+
+
+// Стили страниц под поисковые запросы: города, районы, курорты.
+// Один набор на все — иначе правка в одном месте разъезжается с другим.
+const СТИЛЬ_СПИСКА = ':root{color-scheme:light dark}'
+  + 'body{margin:0;background:#f4f5f7;color:#141821;font:16px/1.55 -apple-system,Segoe UI,Roboto,sans-serif}'
+  + '.w{max-width:1080px;margin:0 auto;padding:24px 16px 60px}'
+  + 'h1{font-size:clamp(26px,5vw,38px);line-height:1.15;margin:0 0 10px;letter-spacing:-.02em}'
+  + '.lead{color:#4a5160;margin:0 0 18px;max-width:70ch}'
+  + '.cta{display:inline-block;background:#9a3412;color:#fff;text-decoration:none;'
+  + 'font-weight:700;padding:14px 26px;border-radius:12px;margin-bottom:26px;box-shadow:0 8px 22px -6px rgba(255,90,31,.6)}'
+  + '.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}'
+  + '.c{background:#fff;border:1px solid #e2e5ea;border-radius:16px;overflow:hidden;display:flex;flex-direction:column}'
+  + '.c img{width:100%;height:180px;object-fit:cover;display:block}'
+  + '.noimg{height:180px;display:flex;align-items:center;justify-content:center;background:#eef0f4;color:#8b93a3;font-size:13px}'
+  + '.c .b{padding:12px 14px 14px;display:flex;flex-direction:column;gap:6px;flex:1}'
+  + '.c .p{font-size:22px;font-weight:800}.c .p small{font-size:13px;font-weight:600;color:#8b93a3}'
+  + '.c .m{display:flex;flex-wrap:wrap;gap:6px}'
+  + '.c .m span{font-size:12.5px;background:#f7f8fa;border:1px solid #eef0f4;border-radius:999px;padding:3px 9px;color:#4a5160}'
+  + '.c h3{font-size:14.5px;font-weight:600;margin:2px 0 0;color:#141821}'
+  + '.c .go{margin-top:auto;padding-top:8px;color:#9a3412;font-weight:700;text-decoration:none;font-size:14px}'
+  + '.others{margin:34px 0 0;display:flex;flex-wrap:wrap;gap:10px}'
+  + '.others a{background:#fff;border:1px solid #e2e5ea;border-radius:999px;padding:8px 16px;text-decoration:none;color:#141821;font-size:14px}'
+  + 'footer{margin-top:34px;color:#8b93a3;font-size:13.5px;max-width:75ch}'
+  + 'footer a{color:#9a3412}'
+  + '@media (prefers-color-scheme:dark){body{background:#14110e;color:#f6f2ed}.lead{color:#c2b7ab}'
+  + '.c{background:#1d1916;border-color:#332c25}.c h3{color:#f6f2ed}.noimg{background:#2b251f}'
+  + '.c .m span{background:#241f1a;border-color:#332c25;color:#c2b7ab}'
+  + '.others a{background:#1d1916;border-color:#332c25;color:#f6f2ed}}';
+
 async function cityPage(slug, kind){
   const c = CITY_PAGES[slug];
   const base = PAGE_KINDS[kind || ''];
@@ -2437,32 +2643,7 @@ async function cityPage(slug, kind){
     + '<meta property="og:description" content="' + esc(desc) + '">'
     + '<meta property="og:url" content="' + SITE_URL + '/' + slug + (kind ? ('-' + kind) : '') + '">'
     + '<script type="application/ld+json">' + JSON.stringify(ld) + '</script>'
-    + '<style>'
-    + ':root{color-scheme:light dark}'
-    + 'body{margin:0;background:#f4f5f7;color:#141821;font:16px/1.55 -apple-system,Segoe UI,Roboto,sans-serif}'
-    + '.w{max-width:1080px;margin:0 auto;padding:24px 16px 60px}'
-    + 'h1{font-size:clamp(26px,5vw,38px);line-height:1.15;margin:0 0 10px;letter-spacing:-.02em}'
-    + '.lead{color:#4a5160;margin:0 0 18px;max-width:70ch}'
-    + '.cta{display:inline-block;background:#9a3412;color:#fff;text-decoration:none;'
-    +   'font-weight:700;padding:14px 26px;border-radius:12px;margin-bottom:26px;box-shadow:0 8px 22px -6px rgba(255,90,31,.6)}'
-    + '.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}'
-    + '.c{background:#fff;border:1px solid #e2e5ea;border-radius:16px;overflow:hidden;display:flex;flex-direction:column}'
-    + '.c img{width:100%;height:180px;object-fit:cover;display:block}'
-    + '.noimg{height:180px;display:flex;align-items:center;justify-content:center;background:#eef0f4;color:#8b93a3;font-size:13px}'
-    + '.c .b{padding:12px 14px 14px;display:flex;flex-direction:column;gap:6px;flex:1}'
-    + '.c .p{font-size:22px;font-weight:800}.c .p small{font-size:13px;font-weight:600;color:#8b93a3}'
-    + '.c .m{display:flex;flex-wrap:wrap;gap:6px}'
-    + '.c .m span{font-size:12.5px;background:#f7f8fa;border:1px solid #eef0f4;border-radius:999px;padding:3px 9px;color:#4a5160}'
-    + '.c h3{font-size:14.5px;font-weight:600;margin:2px 0 0;color:#141821}'
-    + '.c .go{margin-top:auto;padding-top:8px;color:#9a3412;font-weight:700;text-decoration:none;font-size:14px}'
-    + '.others{margin:34px 0 0;display:flex;flex-wrap:wrap;gap:10px}'
-    + '.others a{background:#fff;border:1px solid #e2e5ea;border-radius:999px;padding:8px 16px;text-decoration:none;color:#141821;font-size:14px}'
-    + 'footer{margin-top:34px;color:#8b93a3;font-size:13.5px;max-width:75ch}'
-    + 'footer a{color:#9a3412}'
-    + '@media (prefers-color-scheme:dark){body{background:#14110e;color:#f6f2ed}.lead{color:#c2b7ab}'
-    +   '.c{background:#1d1916;border-color:#332c25}.c h3{color:#f6f2ed}.noimg{background:#2b251f}'
-    +   '.c .m span{background:#241f1a;border-color:#332c25;color:#c2b7ab}'
-    +   '.others a{background:#1d1916;border-color:#332c25;color:#f6f2ed}}'
+    + '<style>' + СТИЛЬ_СПИСКА
     + '</style></head><body><div class="w">'
     + '<h1>' + esc(k.what) + ' ' + esc(c.where) + esc(k.extra) + '</h1>'
     + '<p class="lead">Собрали объявления частников с <b>Kufar</b>, <b>Realt</b> и <b>Flatbook</b> в один список — '
@@ -5181,6 +5362,17 @@ http.createServer(async (req,res)=>{
     res.end(statsPage()); return;
   }
   // страницы под поиск: /minsk, /brest, /minsk-nedorogo, /brest-usadby …
+  // Страницы под живой поисковый спрос: районные города, районы Минска,
+  // курортные места. Отдаём их раньше городских — пересечений по адресам нет.
+  if(СПРОС[u.pathname.slice(1)]){
+    const html = await спросPage(u.pathname.slice(1));
+    if(html){
+      res.writeHead(200, {'Content-Type':'text/html; charset=utf-8',
+                          'Cache-Control':'public, max-age=600'});
+      res.end(html); return;
+    }
+    // наполнить нечем — пусть будет честное «нет такой страницы»
+  }
   const cityHit = parseCitySlug(u.pathname.slice(1));
   if(cityHit){
     try{
@@ -5400,6 +5592,10 @@ http.createServer(async (req,res)=>{
           return '<url><loc>'+SITE_URL+'/'+city+'-'+kind+'</loc><changefreq>daily</changefreq><priority>0.6</priority></url>';
         });
       })));
+    // Страницы под живой спрос — в карту сайта наравне с городскими.
+    urls.push.apply(urls, Object.keys(СПРОС).map(function(k){
+      return '<url><loc>'+SITE_URL+'/'+k+'</loc><changefreq>daily</changefreq><priority>0.7</priority></url>';
+    }));
     // Места — самая большая часть карты сайта: их ищут по названию, а не
     // по слову «квартира». Без карты поисковик о них не узнает.
     let места = [];
