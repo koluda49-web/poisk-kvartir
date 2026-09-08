@@ -4017,7 +4017,7 @@ h1 .accent{ color:var(--accent); }
     <button id="cbPL" type="button" onclick="setCountry('places')">🏰 Что посетить</button>
   </div>
 
-  <a class="knizu" href="#foot" id="knizu">Сдаёте жильё? Нашли ошибку? Напишите нам ↓</a>
+  <a class="knizu" href="#foot" id="knizu">Сдаёте жильё или есть пожелания? Напишите нам ↓</a>
 
   <button id="fToggle" class="ftoggle" type="button" aria-expanded="true"><span>⚙️ Фильтры</span><span class="sum" id="fSum"></span></button>
   <form class="bar" id="bar" onsubmit="return false">
