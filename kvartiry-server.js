@@ -2419,7 +2419,21 @@ async function маршрутСМестами(м){
   });
 }
 
+// Собранную страницу держим четверть часа: точки не меняются вовсе,
+// а сверка 25 точек с 798 местами — это двадцать тысяч расчётов
+// расстояния на каждый запрос, и страница выходила самой медленной.
+const МАРШРУТ_HTML = new Map();
+const МАРШРУТ_TTL = 15 * 60 * 1000;
+
 async function маршрутPage(slug){
+  const было = МАРШРУТ_HTML.get(slug);
+  if(было && Date.now() - было.at < МАРШРУТ_TTL) return было.html;
+  const html = await маршрутСобрать(slug);
+  if(html) МАРШРУТ_HTML.set(slug, { at: Date.now(), html });
+  return html;
+}
+
+async function маршрутСобрать(slug){
   const м = МАРШРУТ_ПО[slug];
   if(!м) return '';
   const точки = await маршрутСМестами(м);
