@@ -398,5 +398,28 @@ console.log('\n=== готовые маршруты ===');
   check('маршруты есть в карте сайта', карта.includes('/marshrut-minsk-brest</loc>'));
 }
 
+// ── выключатель источника ───────────────────────────
+// Нужен на случай письма с площадки: скрыть источник надо за минуту.
+// Сломанный выключатель обнаружится в самый неподходящий момент, поэтому
+// проверяем и что скрывает, и что без ключа не срабатывает.
+console.log('\n=== выключатель источника ===');
+{
+  const без = await fetch(BASE + '/istochnik?realt=off');
+  check('без ключа выключатель не работает', без.status === 403, 'код ' + без.status);
+
+  const до = await (await fetch(BASE + '/api/search?region=brest&type=flat')).json();
+  check('Realt в выдаче есть (' + до.realt + ')', до.realt > 0, 'нечего выключать');
+
+  await fetch(BASE + '/istochnik?key=poisk2026&realt=off');
+  const после = await (await fetch(BASE + '/api/search?region=brest&type=flat')).json();
+  check('после выключения Realt исчез', после.realt === 0, 'осталось ' + после.realt);
+  check('остальные источники на месте', после.kufar > 0 || после.flatbook > 0,
+        'выключили лишнее');
+
+  await fetch(BASE + '/istochnik?key=poisk2026&realt=on');
+  const назад = await (await fetch(BASE + '/api/search?region=brest&type=flat')).json();
+  check('Realt вернулся (' + назад.realt + ')', назад.realt > 0, 'не включается обратно');
+}
+
 console.log('\nИтог: успешно ' + passed + ', провалено ' + failed);
 process.exitCode = failed ? 1 : 0;

@@ -20,6 +20,16 @@ const SITE_URL = 'https://poisk-kvartir.onrender.com';
 const fs = require('fs');
 const STATS_FILE = process.env.STATS_FILE || (__dirname + '/stats-data.json');
 const STATS_KEY  = process.env.STATS_KEY  || 'poisk2026';   // страница /stats?key=…
+
+// Какие источники сейчас показываем. Выключить можно двумя способами:
+// настройкой в Render (KUFAR=off, REALT=off, FLATBOOK=off) — переживает
+// перезапуск; и ссылкой /istochnik?key=…&realt=off — действует сразу,
+// но до перезапуска. Первое надёжнее, второе быстрее.
+const ИСТОЧНИКИ = {
+  kufar:    process.env.KUFAR    !== 'off',
+  realt:    process.env.REALT    !== 'off',
+  flatbook: process.env.FLATBOOK !== 'off',
+};
 const STATS_MAX  = 60000;                                   // сколько событий держим в памяти
 let STATS = [], statsDirty = false;
 const ЗАПУЩЕН = Date.now();
@@ -774,6 +784,7 @@ async function searchByName(name, type, maxP, minP){
   if(!q) return {total:0,kufar:0,realt:0,flatbook:0,items:[]};
   let rx=null; try{ rx=new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i'); }catch(e){}
   const kufarTask=(async()=>{
+    if(!ИСТОЧНИКИ.kufar) return [];
     try{
       const слово = (TYPES[type] && type !== 'any') ? (TYPES[type].kw + ' ') : '';
       const url='https://api.kufar.by/search-api/v2/search/rendered-paginated?query='+encodeURIComponent(слово+q+' на сутки')+'&size=42&lang=ru';
@@ -796,13 +807,14 @@ async function searchByName(name, type, maxP, minP){
   })();
   const типы = type === 'any' ? STAY_TYPES : [type];
   const fbTask=(async()=>{
+    if(!ИСТОЧНИКИ.flatbook) return [];
     try{
       const части = await Promise.all(типы.map(t => fromFlatbook('any','',t,maxP)));
       return [].concat(...части).filter(x=> !rx || rx.test(x.title));
     }
     catch(e){ return []; }
   })();
-  const realtTask=(async()=>{ try{
+  const realtTask=(async()=>{ if(!ИСТОЧНИКИ.realt) return []; try{
     const части = await Promise.all(типы.map(t => fromRealtByName(rx, t, maxP)));
     return [].concat(...части);
   }catch(e){ return []; } })();
@@ -819,14 +831,14 @@ async function search(regKey, city, type, rooms, maxP, guests, source, amen, min
   const amenList = (amen||[]).map(k=>RB_AMEN_BY_KEY[k]).filter(Boolean);
   const hasAmen = amenList.length>0;
   const keys = regKey==='any' ? Object.keys(REGIONS) : [ REGIONS[regKey] ? regKey : 'brest' ];
-  const useK = source==='both' || source==='kufar';
-  const useR = (source==='both' || source==='realt') && !hasAmen;   // у Realt нет данных удобств в списке → при фильтре удобств не участвует
+  const useK = (source==='both' || source==='kufar') && ИСТОЧНИКИ.kufar;
+  const useR = (source==='both' || source==='realt') && !hasAmen && ИСТОЧНИКИ.realt;   // у Realt нет данных удобств в списке → при фильтре удобств не участвует
   // Flatbook вместимость не передаёт вообще — ни в одном объявлении. Раньше при
   // запросе «на 6+ гостей» все его варианты проходили насквозь, и человек, просивший
   // дом на компанию, получал в том числе жильё на двоих. Фильтр обязан фильтровать,
   // поэтому при заданном числе гостей Flatbook не участвует — так же, как Realt
   // не участвует при выборе удобств.
-  const useF = (source==='both' || source==='flatbook') && !guests;
+  const useF = (source==='both' || source==='flatbook') && !guests && ИСТОЧНИКИ.flatbook;
   // «любой» — это все три вида сразу: у источников общего запроса нет,
   // поэтому спрашиваем каждый вид отдельно и складываем. Повторы уберёт
   // отбор по ссылке ниже.
@@ -5752,6 +5764,38 @@ http.createServer(async (req,res)=>{
                        авиакомпания:{error:'нет связи'}, вВоздухе:false, сел:false }; }
     res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
     res.end(рейсPage(свод)); return;
+  }
+  // Выключатель источника: /istochnik?key=…&realt=off
+  // Действует сразу, но до перезапуска — постоянный запрет ставится
+  // настройкой REALT=off в Render.
+  if(u.pathname === '/istochnik'){
+    if(u.searchParams.get('key') !== STATS_KEY){
+      res.writeHead(403, {'Content-Type':'text/plain; charset=utf-8'});
+      res.end('Нужен ключ: /istochnik?key=…'); return;
+    }
+    const менялось = [];
+    ['kufar','realt','flatbook'].forEach(function(имя){
+      const v = u.searchParams.get(имя);
+      if(v === 'off' || v === 'on'){
+        ИСТОЧНИКИ[имя] = (v === 'on');
+        менялось.push(имя + ' → ' + (v === 'on' ? 'показываем' : 'скрыт'));
+      }
+    });
+    // Выдача лежит в памяти до восьми минут: без сброса выключённый
+    // источник ещё продолжал бы показываться.
+    if(менялось.length) SEARCH_CACHE.clear();
+    res.writeHead(200, {'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'});
+    res.end('Сейчас:\n'
+      + ['kufar','realt','flatbook'].map(function(и){
+          return '  ' + и.padEnd(9) + (ИСТОЧНИКИ[и] ? 'показываем' : 'СКРЫТ');
+        }).join('\n')
+      + (менялось.length ? ('\n\nИзменено: ' + менялось.join(', ')
+          + '\nВыдача из памяти сброшена.'
+          + '\n\nЭто действует до перезапуска сервера. Чтобы осталось навсегда,'
+          + '\nпоставьте в Render настройку ' + менялось.map(function(м){
+              return м.split(' ')[0].toUpperCase() + '=' + (м.indexOf('скрыт') > 0 ? 'off' : 'on');
+            }).join(', ') + ' и перезапустите.')
+        : '\n\nЧтобы скрыть: /istochnik?key=…&realt=off\nЧтобы вернуть: …&realt=on')); return;
   }
   if(u.pathname === '/stats'){
     if(u.searchParams.get('key') !== STATS_KEY){
