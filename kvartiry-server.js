@@ -3719,7 +3719,7 @@ h1 .accent{ color:var(--accent); }
   transition:transform .12s, box-shadow .15s, filter .15s;
   display:inline-flex;align-items:center;gap:9px;
 }
-.fb-open:hover{filter:brightness(1.05);box-shadow:0 14px 30px -6px color-mix(in srgb,var(--accent) 80%,transparent)}
+.fb-open{transition:filter .16s ease, box-shadow .16s ease, transform .16s ease}.fb-open:hover{filter:brightness(1.1);transform:translateY(-1px);box-shadow:0 14px 30px -6px color-mix(in srgb,var(--accent) 80%,transparent)}
 .fb-open:active{transform:translateY(1px)}
 .fb-overlay{
   position:fixed;inset:0;z-index:1400;
@@ -3892,8 +3892,14 @@ h1 .accent{ color:var(--accent); }
 .knizu{display:block;width:max-content;margin:4px auto 16px;font-size:13px;
   color:rgba(255,255,255,.93);text-decoration:none;background:rgba(28,25,23,.5);
   border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:6px 15px;
-  backdrop-filter:blur(3px)}
-.knizu:hover{background:rgba(154,52,18,.85);border-color:rgba(255,255,255,.3)}
+  backdrop-filter:blur(3px);cursor:pointer;
+  /* Переход был мгновенный, и подсветка не читалась как отклик на наведение:
+     глаз замечает движение, а не смену цвета за один кадр. */
+  transition:background .16s ease, border-color .16s ease, transform .16s ease, box-shadow .16s ease}
+.knizu:hover,.knizu:focus-visible{background:var(--accent);color:#fff;
+  border-color:rgba(255,255,255,.45);transform:translateY(-1px);
+  box-shadow:0 6px 16px -4px rgba(154,52,18,.55)}
+.knizu:active{transform:translateY(0);box-shadow:none}
 .fld.off{opacity:.45}
 .fld.off select{cursor:not-allowed}
 .plc .nopic{width:100%;height:100%;display:flex;align-items:center;justify-content:center;
