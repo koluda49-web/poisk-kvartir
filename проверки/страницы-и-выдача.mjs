@@ -333,5 +333,35 @@ console.log('\n=== страницы под спрос ===');
   }
 }
 
+// ── гиды «где остановиться» ─────────────────────────
+// Гид должен оставаться гидом: таблица цен, совет по бронированию,
+// а у крупных городов — районы и что посмотреть рядом. Без этого он
+// превращается в дубль обычной городской страницы.
+console.log('\n=== гиды «где остановиться» ===');
+{
+  for (const город of ['minsk', 'grodno', 'brest', 'baranovichi', 'polotsk']) {
+    const адрес = '/gde-ostanovitsya-' + город;
+    const r = await fetch(BASE + адрес);
+    const h = await r.text();
+    check(адрес + ' отвечает', r.status === 200, 'код ' + r.status);
+    if (r.status !== 200) continue;
+    const всего = +((h.match(/сдаётся <b>(\d+)<\/b>/) || [])[1] || 0);
+    check(адрес + ': вариантов ' + всего, всего >= 50, 'слишком пусто для гида');
+    check(адрес + ': есть таблица цен',
+          /<h2>Сколько стоит<\/h2>/.test(h) && /<table class="t">/.test(h));
+    check(адрес + ': есть совет по бронированию', /На что смотреть при бронировании/.test(h));
+    check(адрес + ': есть карточки жилья', /class="c"/.test(h));
+  }
+  const минск = await (await fetch(BASE + '/gde-ostanovitsya-minsk')).text();
+  check('в гиде по Минску есть разбивка по районам', /<h2>По районам<\/h2>/.test(минск),
+        'районы пропали — а это то, ради чего человек открывает гид');
+  const гродно = await (await fetch(BASE + '/gde-ostanovitsya-grodno')).text();
+  check('в гиде по Гродно есть «что посмотреть рядом»', /<h2>Что посмотреть рядом<\/h2>/.test(гродно));
+
+  const карта = await (await fetch(BASE + '/sitemap.xml')).text();
+  check('гиды есть в карте сайта', карта.includes('/gde-ostanovitsya-minsk</loc>'),
+        'поисковик о них не узнает');
+}
+
 console.log('\nИтог: успешно ' + passed + ', провалено ' + failed);
 process.exitCode = failed ? 1 : 0;

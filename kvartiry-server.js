@@ -2379,6 +2379,197 @@ async function marshrutPage(ids){
     + '</div></body></html>';
 }
 
+// ── Гиды «где остановиться» ───────────────────────────────────────────────
+// Отдельный кластер запросов: человек ещё не выбирает квартиру, а хочет
+// понять цену, район и что рядом. Города взяты те, по которым подсказки
+// «где остановиться в …» есть в обоих поисковиках.
+const ГИДЫ = {
+  'gde-ostanovitsya-minsk':      { город:'Минск',      обл:'minsk',     где:'в Минске',      точка:[53.9020, 27.5615] },
+  'gde-ostanovitsya-grodno':     { город:'Гродно',     обл:'grodno',    где:'в Гродно',      точка:[53.6884, 23.8258] },
+  'gde-ostanovitsya-brest':      { город:'Брест',      обл:'brest',     где:'в Бресте',      точка:[52.0976, 23.7341] },
+  'gde-ostanovitsya-vitebsk':    { город:'Витебск',    обл:'vitebsk',   где:'в Витебске',    точка:[55.1904, 30.2049] },
+  'gde-ostanovitsya-mogilev':    { город:'Могилёв',    обл:'mogilev',   где:'в Могилёве',    точка:[53.8940, 30.3310] },
+  'gde-ostanovitsya-gomel':      { город:'Гомель',     обл:'gomel',     где:'в Гомеле',      точка:[52.4345, 30.9754] },
+  'gde-ostanovitsya-polotsk':    { город:'Полоцк',     обл:'vitebsk',   где:'в Полоцке',     точка:[55.4856, 28.7856] },
+  'gde-ostanovitsya-baranovichi':{ город:'Барановичи', обл:'brest',     где:'в Барановичах', точка:[53.1327, 26.0139] },
+  'gde-ostanovitsya-lida':       { город:'Лида',       обл:'grodno',    где:'в Лиде',        точка:[53.8886, 25.2999] },
+  'gde-ostanovitsya-pinsk':      { город:'Пинск',      обл:'brest',     где:'в Пинске',      точка:[52.1211, 26.0966] },
+  'gde-ostanovitsya-bobruisk':   { город:'Бобруйск',   обл:'mogilev',   где:'в Бобруйске',   точка:[53.1384, 29.2214] },
+};
+
+const ВИДЫ = [
+  { код:'flat',    имя:'Квартира',        мн:'Квартиры' },
+  { код:'usadba',  имя:'Усадьба',         мн:'Усадьбы' },
+  { код:'cottage', имя:'Коттедж или дом', мн:'Коттеджи и дома' },
+];
+
+async function гидДанные(z){
+  const по = {};
+  for(const в of ВИДЫ){
+    const п = new URL('/api/search?region=' + z.обл + '&city=' + encodeURIComponent(z.город) +
+                      '&type=' + в.код + '&source=both', 'http://localhost');
+    let d = { items: [], total: 0 };
+    try{ d = await runSearchQuery(п.searchParams); }catch(e){}
+    const ц = (d.items || []).map(x => x.price).filter(p => p > 0).sort((a, b) => a - b);
+    по[в.код] = { всего: d.total || 0, от: ц[0] || 0,
+                  обычно: ц.length ? ц[Math.floor(ц.length / 2)] : 0,
+                  items: d.items || [] };
+  }
+  // районы: у Kufar в поле города для крупных городов стоит район
+  const районы = {};
+  (по.flat.items || []).forEach(function(x){
+    const a = String(x.area || '').trim();
+    if(!a || a === z.город || x.price <= 0) return;
+    (районы[a] = районы[a] || []).push(x.price);
+  });
+  const список = Object.keys(районы).map(function(k){
+    const ц = районы[k].slice().sort(function(a, b){ return a - b; });
+    return { имя:k, всего:ц.length, от:ц[0], обычно:ц[Math.floor(ц.length / 2)] };
+  }).filter(function(r){ return r.всего >= 3; }).sort(function(a, b){ return b.всего - a.всего; }).slice(0, 8);
+
+  // что посмотреть рядом
+  let места = [];
+  try{
+    места = (await placesRaw())
+      .map(function(p){ return Object.assign({}, p, { км: Math.round(distKm(z.точка[0], z.точка[1], p.lat, p.lng)) }); })
+      .filter(function(p){ return p.км <= 30; })
+      .sort(function(a, b){ return (b.rating || 0) - (a.rating || 0) || a.км - b.км; })
+      .slice(0, 8);
+  }catch(e){}
+
+  return { по: по, районы: список, места: места };
+}
+
+async function гидPage(slug){
+  const z = ГИДЫ[slug];
+  if(!z) return '';
+  let d;
+  try{ d = await гидДанные(z); }catch(e){ return ''; }
+  const всего = ВИДЫ.reduce(function(n, в){ return n + d.по[в.код].всего; }, 0);
+  if(всего < 20) return '';
+
+  const кв = d.по.flat;
+  const title = 'Где остановиться ' + z.где + ': цены на жильё посуточно';
+  const desc = 'Где остановиться ' + z.где + ' — ' + вариантов(всего) + ' посуточно: квартиры от '
+    + (кв.от || '—') + ' BYN, обычная цена ' + (кв.обычно || '—') + ' BYN за сутки. Районы, цены '
+    + 'и что посмотреть рядом. Kufar, Realt и Flatbook в одном списке.';
+
+  const строкиВидов = ВИДЫ.filter(function(в){ return d.по[в.код].всего > 0; }).map(function(в){
+    const т = d.по[в.код];
+    return '<tr><td>' + esc(в.мн) + '</td><td><b>' + т.всего + '</b></td><td>'
+      + (т.от ? (т.от + ' BYN') : '—') + '</td><td>' + (т.обычно ? (т.обычно + ' BYN') : '—') + '</td></tr>';
+  }).join('');
+
+  const районы = d.районы.length >= 3
+    ? '<h2>По районам</h2>'
+      + '<p class="lead">Районы взяты из самих объявлений, поэтому здесь только те, где сдают '
+      +   'достаточно часто. Разброс цен внутри района бывает больше, чем между районами.</p>'
+      + '<table class="t"><thead><tr><th>Район</th><th>Вариантов</th><th>От</th><th>Обычно</th></tr></thead><tbody>'
+      + d.районы.map(function(r){
+          return '<tr><td>' + esc(r.имя) + '</td><td><b>' + r.всего + '</b></td><td>' + r.от
+               + ' BYN</td><td>' + r.обычно + ' BYN</td></tr>';
+        }).join('')
+      + '</tbody></table>'
+    : '';
+
+  const места = d.места.length >= 3
+    ? '<h2>Что посмотреть рядом</h2>'
+      + '<p class="lead">Достопримечательности в тридцати километрах от центра — из нашего '
+      +   'справочника на ' + '<a href="/?country=places">почти 800 мест</a>.</p>'
+      + '<div class="others">'
+      + d.места.map(function(p){
+          return '<a href="/mesto/' + p.id + '-' + slugify(p.name) + '">' + esc(p.name)
+               + ' <small>' + p.км + ' км</small></a>';
+        }).join('')
+      + '</div>'
+    : '';
+
+  const карточки = (кв.items || []).slice(0, 12).map(function(x){
+    const img = (x.photos && x.photos[0])
+      ? '<img src="' + esc(x.photos[0]) + '" loading="lazy" alt="' + esc('Жильё посуточно ' + z.где) + '">'
+      : '<div class="noimg">фото у источника</div>';
+    const мета = [x.area, (x.rooms ? x.rooms + '-комн' : ''), x.capacity ? ('до ' + x.capacity + ' гостей') : '']
+      .filter(Boolean).map(function(m){ return '<span>' + esc(m) + '</span>'; }).join('');
+    return '<article class="c"><a href="' + esc(x.link) + '" target="_blank" rel="noopener nofollow">' + img + '</a>'
+      + '<div class="b"><div class="p">' + x.price + ' BYN <small>/ сутки</small></div>'
+      + '<div class="m">' + мета + '</div><h3>' + esc(x.title || ('Жильё ' + z.где)) + '</h3>'
+      + '<a class="go" href="' + esc(x.link) + '" target="_blank" rel="noopener nofollow">Открыть на '
+      + esc(srcTitle(x.src)) + '</a></div></article>';
+  }).join('');
+
+  const другие = Object.keys(ГИДЫ).filter(function(k){ return k !== slug; })
+    .map(function(k){ return '<a href="/' + k + '">Где остановиться ' + esc(ГИДЫ[k].где) + '</a>'; }).join('');
+
+  const ld = {
+    '@context':'https://schema.org', '@type':'FAQPage',
+    mainEntity: [
+      { '@type':'Question', name:'Сколько стоит снять жильё на сутки ' + z.где + '?',
+        acceptedAnswer:{ '@type':'Answer', text:'Квартира — от ' + (кв.от || '—') + ' BYN за сутки, '
+          + 'обычная цена около ' + (кв.обычно || '—') + ' BYN. Всего сейчас ' + вариантов(всего) + '.' } },
+      { '@type':'Question', name:'Нужно ли платить комиссию?',
+        acceptedAnswer:{ '@type':'Answer', text:'Нет. Мы показываем объявления с Kufar, Realt и Flatbook '
+          + 'и отправляем напрямую к хозяину — комиссию не берём.' } }
+    ]
+  };
+
+  return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<title>' + esc(title) + '</title>'
+    + '<meta name="description" content="' + esc(desc) + '">'
+    + '<meta name="robots" content="index,follow">'
+    + '<meta name="theme-color" content="#9a3412">'
+    + '<link rel="canonical" href="' + SITE_URL + '/' + slug + '">'
+    + '<link rel="manifest" href="/manifest.webmanifest">'
+    + '<meta property="og:type" content="article">'
+    + '<meta property="og:title" content="' + esc(title) + '">'
+    + '<meta property="og:description" content="' + esc(desc) + '">'
+    + '<meta property="og:url" content="' + SITE_URL + '/' + slug + '">'
+    + '<script type="application/ld+json">' + JSON.stringify(ld) + '</script>'
+    + '<style>' + СТИЛЬ_СПИСКА
+    +   '.t{width:100%;border-collapse:collapse;margin:0 0 22px;font-size:15px;background:#fff;'
+    +     'border:1px solid #e2e5ea;border-radius:14px;overflow:hidden}'
+    +   '.t th{text-align:left;font-size:12.5px;text-transform:uppercase;letter-spacing:.04em;'
+    +     'color:#8b93a3;font-weight:600;padding:10px 14px;background:#f7f8fa}'
+    +   '.t td{padding:10px 14px;border-top:1px solid #eef0f4}'
+    +   'h2{font-size:22px;margin:30px 0 10px;letter-spacing:-.01em}'
+    +   '.others small{color:#8b93a3;font-size:12.5px}'
+    +   '@media (prefers-color-scheme:dark){.t{background:#1d1916;border-color:#332c25}'
+    +     '.t th{background:#241f1a;color:#c2b7ab}.t td{border-color:#332c25}}'
+    + '</style></head><body><div class="w">'
+    + '<h1>Где остановиться ' + esc(z.где) + '</h1>'
+    + '<p class="lead">Сейчас ' + z.где + ' сдаётся <b>' + всего + '</b> '
+    +   скл(всего, 'вариант', 'варианта', 'вариантов') + ' посуточно'
+    +   (кв.от ? (': квартиры от <b>' + кв.от + ' BYN</b> за сутки, обычная цена около <b>'
+    +             + кв.обычно + ' BYN</b>') : '')
+    +   '. Всё собрано с Kufar, Realt и Flatbook — три площадки в одном списке. '
+    +   'Цифры на этой странице считаются из живой выдачи и меняются вместе с ней.</p>'
+    + '<a class="cta" href="/?region=' + z.обл + '&city=' + encodeURIComponent(z.город) + '&type=any">'
+    +   'Открыть поиск с фильтрами и картой →</a>'
+    + '<h2>Сколько стоит</h2>'
+    + '<table class="t"><thead><tr><th>Вид жилья</th><th>Вариантов</th><th>От</th><th>Обычно</th></tr></thead>'
+    +   '<tbody>' + строкиВидов + '</tbody></table>'
+    + '<p class="lead">«Обычно» — это середина: половина вариантов дешевле, половина дороже. '
+    +   'Она честнее, чем цена «от»: самые дешёвые предложения обычно оказываются комнатой '
+    +   'или местом в хостеле.</p>'
+    + районы
+    + места
+    + '<h2>На что смотреть при бронировании</h2>'
+    + '<p class="lead">Мы не сдаём жильё и не берём комиссию — отправляем напрямую к хозяину. '
+    +   'Поэтому договариваетесь вы с ним, и несколько вещей стоит уточнить заранее: '
+    +   'нужен ли залог и возвращают ли его; берут ли предоплату и каким способом; '
+    +   'дадут ли документы, если жильё для командировки; во сколько заселение и выезд. '
+    +   'Предоплату по номеру карты незнакомому человеку лучше не переводить — '
+    +   'это самый частый способ обмана при посуточной аренде.</p>'
+    + '<h2>Свежие варианты ' + esc(z.где) + '</h2>'
+    + '<div class="grid">' + карточки + '</div>'
+    + '<div class="others">' + другие + '</div>'
+    + '<footer><p>Цены и наличие подтягиваются из объявлений Kufar, Realt и Flatbook '
+    +   'в реальном времени. Мы ничего не сдаём сами и комиссию не берём.</p>'
+    +   '<p><a href="/">Все города и карта с ценами →</a></p></footer>'
+    + '</div></body></html>';
+}
+
+
 // ── Страницы под живой поисковый спрос ────────────────────────────────────
 // Что именно сюда попало, решали подсказки Google и Яндекса, а не наши
 // предположения. Мест с достопримечательностями здесь нет: по названиям
@@ -5362,6 +5553,15 @@ http.createServer(async (req,res)=>{
     res.end(statsPage()); return;
   }
   // страницы под поиск: /minsk, /brest, /minsk-nedorogo, /brest-usadby …
+  // Гиды «где остановиться»: отвечают на вопрос до выбора квартиры.
+  if(ГИДЫ[u.pathname.slice(1)]){
+    const html = await гидPage(u.pathname.slice(1));
+    if(html){
+      res.writeHead(200, {'Content-Type':'text/html; charset=utf-8',
+                          'Cache-Control':'public, max-age=600'});
+      res.end(html); return;
+    }
+  }
   // Страницы под живой поисковый спрос: районные города, районы Минска,
   // курортные места. Отдаём их раньше городских — пересечений по адресам нет.
   if(СПРОС[u.pathname.slice(1)]){
@@ -5592,6 +5792,9 @@ http.createServer(async (req,res)=>{
           return '<url><loc>'+SITE_URL+'/'+city+'-'+kind+'</loc><changefreq>daily</changefreq><priority>0.6</priority></url>';
         });
       })));
+    urls.push.apply(urls, Object.keys(ГИДЫ).map(function(k){
+      return '<url><loc>'+SITE_URL+'/'+k+'</loc><changefreq>daily</changefreq><priority>0.7</priority></url>';
+    }));
     // Страницы под живой спрос — в карту сайта наравне с городскими.
     urls.push.apply(urls, Object.keys(СПРОС).map(function(k){
       return '<url><loc>'+SITE_URL+'/'+k+'</loc><changefreq>daily</changefreq><priority>0.7</priority></url>';
