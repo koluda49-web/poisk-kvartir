@@ -3473,6 +3473,9 @@ h1 .accent{ color:var(--accent); }
 .mp-price small{font-weight:500;color:#888;font-size:12px}
 .mp-meta{font-size:12.5px;color:#555;margin:2px 0 8px}
 .mp-call{display:block;font-size:13px;font-weight:700;color:#141821;margin:2px 0}
+button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
+  background:none;border:0;padding:0;cursor:pointer;color:#9a3412;
+  border-bottom:1px dashed #9a3412}
 .mp-open{display:inline-block;margin-top:6px;font-weight:800;color:#9a3412;text-decoration:none}
 .mp-approx{color:#9098a6;font-size:11px;margin-top:5px}
 .mp-route{display:block;width:100%;margin-top:8px;font:inherit;font-size:13px;font-weight:700;
@@ -3631,7 +3634,8 @@ h1 .accent{ color:var(--accent); }
   display:flex;gap:9px;flex-wrap:wrap;
   margin-top:auto;padding-top:6px;
 }
-.act a{
+.act a, .act button{
+  font:inherit;cursor:pointer;
   flex:1 1 auto;
   text-align:center;
   text-decoration:none;
@@ -3645,15 +3649,15 @@ h1 .accent{ color:var(--accent); }
   display:inline-flex;align-items:center;justify-content:center;gap:7px;
   transition:background .15s, border-color .15s, transform .1s, color .15s;
 }
-.act a:hover{background:var(--surface-3);border-color:var(--txt-3)}
-.act a:active{transform:translateY(1px)}
-.act a.call{
+.act a:hover, .act button:hover{background:var(--surface-3);border-color:var(--txt-3)}
+.act a:active, .act button:active{transform:translateY(1px)}
+.act a.call, .act button.call{
   color:var(--accent-ink);
   background:linear-gradient(120deg,var(--accent),var(--accent-2));
   border-color:transparent;
   box-shadow:0 6px 16px -6px color-mix(in srgb,var(--accent) 70%,transparent);
 }
-.act a.call:hover{filter:brightness(1.05);background:linear-gradient(120deg,var(--accent),var(--accent-2))}
+.act a.call:hover, .act button.call:hover{filter:brightness(1.05);background:linear-gradient(120deg,var(--accent),var(--accent-2))}
 
 /* ---------- Pager ---------- */
 #pager{
@@ -4538,7 +4542,7 @@ function renderCards(){
       const idx=start+i;   // глобальный индекс в window.__items (для слайдера/описания)
       const capChip = x.capacity ? ('<span>до '+x.capacity+' гостей</span>') : '';
       const total = N ? ('<div class="total">'+(x.price*N)+' BYN за '+N+' ноч.</div>') : '';
-      const call = x.phone ? '<a class="call" href="tel:+'+x.phone+'">'+fmtPhone(x.phone)+(x.name?(' · '+x.name):'')+'</a>' : '';
+      const call = кнопкаТелефона(x, 'call');
       const desc = x.descId ? '<div class="desc-t" onclick="showDesc('+idx+')" id="dt'+idx+'">Описание ▾</div><div class="desc" id="dd'+idx+'" style="display:none"></div>' : '';
       let stars='';
       if(x.reviews>0 && x.rating>0){
@@ -4638,13 +4642,13 @@ function popupHtml(x){
   if(x.chips){   // отель 101hotels / flatbook (карточка по чипам)
     const unit=x.unit||(x.src==='H101'?'ночь':'сутки');
     const rate=(x.reviews>0&&x.rating>0)? '<div style="font-size:12px;color:#e6a400;font-weight:700;margin:2px 0">★ '+x.rating.toFixed(1)+' · '+x.reviews+' отз.</div>':'';
-    const call=x.phone? '<a class="mp-call" href="tel:+'+x.phone+'">📞 '+fmtPhone(x.phone)+'</a>':'';
+    const call=кнопкаТелефона(x, 'mp-call');
     return '<div class="mp"><div class="mp-price">'+x.price+' '+curOf(x)+' <small>/ '+unit+'</small></div>'
       +'<div class="mp-meta">'+(x.title||'')+'</div>'
       +(x.chips.length ? ('<div class="mp-meta">'+x.chips.join(' · ')+'</div>') : '')+rate+img+call
       +'<a class="mp-open" href="'+x.link+'" target="_blank" rel="noopener">Открыть на '+srcName(x.src)+' →</a></div>';
   }
-  const call=x.phone? '<a class="mp-call" href="tel:+'+x.phone+'">📞 '+fmtPhone(x.phone)+(x.name?(' · '+x.name):'')+'</a>':'';
+  const call=кнопкаТелефона(x, 'mp-call');
   const ap=x.approx? '<div class="mp-approx">≈ адрес примерный (по городу)</div>':'';
   const cap=x.capacity? (' · до '+x.capacity+' гостей'):'';
   return '<div class="mp"><div class="mp-price">'+x.price+' BYN <small>/ сутки</small></div>'
@@ -4749,6 +4753,33 @@ async function enrichRealt(){
     window.__enriching=false;
     if(note) note.textContent='';
   }
+}
+// Телефон хозяина: у Realt — только по нажатию.
+// Нажал «Показать телефон» — на месте кнопки появился номер, нажал по номеру —
+// телефон набирает. Сам номер лежит в data-ph: от глаз закрыт, но из разметки
+// не убран — если понадобится прятать всерьёз, номер надо будет докладывать
+// с сервера по нажатию.
+// Kufar и Flatbook оставлены как были: там номер открыт сразу.
+function кнопкаТелефона(x, класс){
+  if(!x.phone) return '';
+  const значок = (класс==='mp-call') ? '\u{1F4DE} ' : '';
+  const подпись = fmtPhone(x.phone) + (x.name ? (' \u00B7 ' + x.name) : '');
+  if(x.src!=='Realt')
+    return '<a class="'+класс+'" href="tel:+'+x.phone+'">'+значок+подпись+'</a>';
+  return '<button type="button" class="'+класс+' тел-скрыт" onclick="показатьТелефон(this)"'
+    + ' data-ph="'+x.phone+'" data-nm="'+String(x.name||'').replace(/"/g,'&quot;')+'">'
+    + значок + 'Показать телефон</button>';
+}
+function показатьТелефон(кн){
+  const т = кн.getAttribute('data-ph')||'', имя = кн.getAttribute('data-nm')||'';
+  const класс = кн.className.replace('тел-скрыт','').trim();
+  const a = document.createElement('a');
+  a.className = класс;
+  a.href = 'tel:+' + т;
+  a.title = 'Нажмите, чтобы позвонить';
+  a.textContent = (класс.indexOf('mp-call')>=0 ? '\u{1F4DE} ' : '')
+                + fmtPhone(т) + (имя ? (' \u00B7 ' + имя) : '');
+  кн.parentNode.replaceChild(a, кн);
 }
 // телефон: 375298261243 -> +375 29 826-12-43
 function fmtPhone(p){
