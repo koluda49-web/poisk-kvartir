@@ -1,4 +1,4 @@
-// Поиск жилья на сутки — Kufar + Realt + Flatbook по Беларуси и 101Hotels по России.
+// Поиск жилья на сутки — Kufar, Realt, Flatbook, check-in.by и kvartirka.by по Беларуси и 101Hotels по России.
 // Квартиры / коттеджи / усадьбы.
 // Запуск: node kvartiry-server.js  ->  http://localhost:8080  (или двойной клик "Открыть поиск.bat")
 // На Render порт берётся из переменной окружения PORT.
@@ -29,6 +29,8 @@ const ИСТОЧНИКИ = {
   kufar:    process.env.KUFAR    !== 'off',
   realt:    process.env.REALT    !== 'off',
   flatbook: process.env.FLATBOOK !== 'off',
+  checkin:  process.env.CHECKIN  !== 'off',
+  kvartirka:process.env.KVARTIRKA!== 'off',
 };
 const STATS_MAX  = 60000;                                   // сколько событий держим в памяти
 let STATS = [], statsDirty = false;
@@ -288,13 +290,13 @@ function statsPage(){
     '<h1>Статистика сайта</h1>'
     + '<div class="istoch">'
     +   '<b>Источники сейчас:</b> '
-    +   ['kufar','realt','flatbook'].map(function(и){
+    +   Object.keys(ИСТОЧНИКИ).map(function(и){
           return '<span class="' + (ИСТОЧНИКИ[и] ? 'on' : 'off') + '">' + и
                + (ИСТОЧНИКИ[и] ? '' : ' — скрыт') + '</span>';
         }).join(' ')
     +   '<div class="note">Если с площадки придёт письмо, источник убирается '
     +     'по ссылке — сразу, без обновления сайта. Обратно тем же адресом с on.</div>'
-    +   ['kufar','realt','flatbook'].map(function(и){
+    +   Object.keys(ИСТОЧНИКИ).map(function(и){
           return '<a href="/istochnik?key=' + encodeURIComponent(STATS_KEY) + '&' + и
                + '=' + (ИСТОЧНИКИ[и] ? 'off' : 'on') + '">'
                + (ИСТОЧНИКИ[и] ? 'скрыть ' : 'вернуть ') + и + '</a>';
@@ -855,6 +857,11 @@ async function search(regKey, city, type, rooms, maxP, guests, source, amen, min
   // поэтому при заданном числе гостей Flatbook не участвует — так же, как Realt
   // не участвует при выборе удобств.
   const useF = (source==='both' || source==='flatbook') && !guests && ИСТОЧНИКИ.flatbook;
+  // Две доски лежат в памяти: у них нет ни данных об удобствах, ни отдельного
+  // запроса — просто отбор из готового списка, поэтому при фильтре удобств
+  // они, как и Realt, не участвуют.
+  const useC = (source==='both' || source==='checkin')   && !hasAmen && ИСТОЧНИКИ.checkin;
+  const useKv= (source==='both' || source==='kvartirka') && !hasAmen && ИСТОЧНИКИ.kvartirka;
   // «любой» — это все три вида сразу: у источников общего запроса нет,
   // поэтому спрашиваем каждый вид отдельно и складываем. Повторы уберёт
   // отбор по ссылке ниже.
@@ -869,6 +876,8 @@ async function search(regKey, city, type, rooms, maxP, guests, source, amen, min
   });
   if(useF) типы.forEach(t=>
     tasks.push(fromFlatbook(regKey,city,t,maxP,rooms, amenList.map(a=>a.fb).filter(Boolean), minP)));   // flatbook: комнаты + удобства (apartment_comfort)
+  if(useC)  tasks.push(изКаталога('CheckIn',   null, regKey, city, type, rooms, maxP, guests, minP));
+  if(useKv) tasks.push(изКаталога('Kvartirka', null, regKey, city, type, rooms, maxP, guests, minP));
   const arrs = await Promise.all(tasks);
   let all = [].concat(...arrs);
   // фильтр удобств для Kufar по тексту удобств (Flatbook уже отфильтрован на своей стороне)
@@ -877,7 +886,8 @@ async function search(regKey, city, type, rooms, maxP, guests, source, amen, min
   // с разных поддоменов (mogilev.flatbook.by и flatbook.by), адреса разные,
   // а дом один — в ленте он показывался дважды, да ещё с разными городами.
   const seen = new Set();
-  all = all.filter(x=>{ const k = ключОбъявления(x); if(seen.has(k)) return false; seen.add(k); return true; })
+  all = all.filter(x=>{ const k = ключОбъявления(x); if(seen.has(k)) return false; seen.add(k); return true; });
+  all = убратьПовторыПлощадок(all)
            .sort((a,b)=>a.price-b.price)
            // Отдаём наружу полегче: шестнадцать снимков в карточке никто
            // не листает, а список удобств нужен был только что выше, при отборе.
@@ -889,6 +899,8 @@ async function search(regKey, city, type, rooms, maxP, guests, source, amen, min
            kufar: all.filter(x=>x.src==='Kufar').length,
            realt: all.filter(x=>x.src==='Realt').length,
            flatbook: all.filter(x=>x.src==='Flatbook').length,
+           checkin: all.filter(x=>x.src==='CheckIn').length,
+           kvartirka: all.filter(x=>x.src==='Kvartirka').length,
            items: all };
 }
 
@@ -1066,7 +1078,7 @@ function isRealtUrl(v){
 
 // Про склейку дублей между источниками.
 // Проверено на шести срезах (Минск, Брест, Гомель, Гродно, усадьбы, коттеджи —
-// около 900 объявлений): совпадений одного жилья между Kufar, Realt и Flatbook
+// около 900 объявлений): совпадений одного жилья между Kufar, Realt, Flatbook, Check-in и Kvartirka
 // НЕТ ни по адресу, ни по телефону. Источники держат разное жильё.
 // Склейка по «телефон + цена» была ошибкой: под неё попадали разные квартиры
 // одного хозяина по одинаковой цене — в Минске таких групп 59, и агентство
@@ -1596,6 +1608,325 @@ function nearestRegion(lat, lng){
   // вокруг Минска жильё чаще лежит в области, а не в городе
   if(best === 'minsk' && bd > 18) return 'minsk-obl';
   return best;
+}
+
+
+// ── check-in.by и kvartirka.by: каталоги в памяти ─────────────────────────
+// Обе площадки отдают список только постранично, и опрашивать их во время
+// поиска — значит держать человека лишние секунды на каждом запросе. Мы
+// на бесплатном тарифе, такой роскоши нет. Поэтому оба каталога собираются
+// в фоне раз в три часа и лежат в памяти: поиск по ним не ходит в сеть вовсе.
+//
+// Расплата — свежесть. Цена, изменённая хозяином час назад, доедет до нас
+// не сразу. Для Kufar и Realt всё осталось как было: они спрашиваются живьём.
+const КАТАЛОГ = { CheckIn: [], Kvartirka: [] };
+const КАТАЛОГ_ОБНОВЛЁН = { CheckIn: 0, Kvartirka: 0 };
+const ОБНОВЛЕНИЕ_КАЖДЫЕ = 3 * 60 * 60 * 1000;
+const ПЕРВОЕ_ОБНОВЛЕНИЕ = 40 * 1000;      // после запуска, чтобы не мешать первым посетителям
+let каталогиГрузятся = false;
+
+const передышка = мс => new Promise(r => setTimeout(r, мс));
+
+// --- check-in.by --------------------------------------------------------
+// Сайт на Inertia: та же страница, но с заголовком X-Inertia отдаёт JSON
+// вместо разметки. Версию сборки они меняют при выкладке и отвечают 409,
+// если прислать старую, — тогда просто перечитываем её с главной.
+let CI_ВЕРСИЯ = '';
+async function ciВерсия(){
+  const h = await (await fetch('https://check-in.by/', ждём({headers:{'User-Agent':UA}}))).text();
+  const m = h.match(/&quot;version&quot;:&quot;([a-f0-9]+)&quot;/) || h.match(/"version":"([a-f0-9]+)"/);
+  return m ? m[1] : '';
+}
+async function ciJson(путь, повтор){
+  if(!CI_ВЕРСИЯ) CI_ВЕРСИЯ = await ciВерсия();
+  const r = await fetch('https://check-in.by' + путь, ждём({headers:{
+    'User-Agent': UA, 'X-Inertia': 'true', 'X-Inertia-Version': CI_ВЕРСИЯ,
+    'Accept': 'text/html, application/xhtml+xml' }}));
+  if(r.status === 409 && !повтор){ CI_ВЕРСИЯ = await ciВерсия(); return ciJson(путь, true); }
+  if(!r.ok) throw new Error('check-in ' + r.status);
+  return r.json();
+}
+
+// Минск у них лежит внутри Минской области, отдельного раздела нет.
+const CI_ОБЛАСТИ = {
+  'brest':     ['brestskaya-oblast',    'Брестская область'],
+  'vitebsk':   ['vitebskaya-oblast',    'Витебская область'],
+  'gomel':     ['gomelskaya-oblast',    'Гомельская область'],
+  'grodno':    ['grodnenskaya-oblast',  'Гродненская область'],
+  'minsk-obl': ['minskaya-oblast',      'Минская область'],
+  'mogilev':   ['mogilyovskaya-oblast', 'Могилёвская область'],
+};
+
+// Хозяева иногда промахиваются меткой на карте: у пяти объявлений из трёх
+// с половиной тысяч точка стояла в Польше и в России, хотя адрес белорусский.
+// Ставить такую метку на карту нельзя. Если город знаем — двигаем в его центр
+// и честно помечаем «примерно»; если нет — оставляем без координат: карточка
+// в списке останется, а на карте не появится.
+const ЦЕНТРЫ_ПО_ИМЕНИ = new Map(
+  Object.entries(TOWN_CENTERS).map(([имя, к]) => [сравнимо(имя), к]));
+
+function точкаБеларуси(lat, lng, город){
+  if(lat > 51 && lat < 57 && lng > 23 && lng < 33) return { lat, lng, approx: false };
+  const c = ЦЕНТРЫ_ПО_ИМЕНИ.get(сравнимо(город));
+  if(c) return { lat: c[0], lng: c[1], approx: true };
+  return { lat: 0, lng: 0, approx: true };
+}
+
+function ciОбъявление(a, обл, названиеОбл){
+  const адрес = [a.street_type, a.street_name, a.house_number, a.building].filter(Boolean).join(' ');
+  const город = (a.city && a.city.name) || a.city_custom || '';
+  const фото = (a.photos || []).filter(Boolean).slice(0, 8)
+    .map(p => /^https?:/.test(p) ? p : ('https://check-in.by' + p));
+  return {
+    src: 'CheckIn',
+    price: Math.round(+a.cost_day) || 0,
+    rooms: +a.rooms_count || 0,
+    area: город, region: названиеОбл, обл,
+    capacity: a.guests_count || '',
+    title: [город, адрес].filter(Boolean).join(', ') || (a.title || ''),
+    photos: фото,
+    rating: 0, reviews: 0, descId: null,
+    phone: String(a.owner_phone || '').replace(/\D/g, ''),
+    name: a.owner_name || '',
+    ...точкаБеларуси(+a.lat || 0, +a.lng || 0, город),
+    вид: a.type === 'house' ? 'house' : 'flat',
+    link: 'https://check-in.by/' + (a.type === 'house' ? 'dom/' : 'kvartira/') + a.slug,
+  };
+}
+
+async function собратьCheckin(){
+  const out = [];
+  for(const [обл, [слаг, названиеОбл]] of Object.entries(CI_ОБЛАСТИ)){
+    for(const раздел of ['kvartiry', 'doma']){
+      let стр = 1, всего = 1;
+      do {
+        const путь = '/' + раздел + '-na-sutki-' + слаг + '?guests_count=1&page=' + стр;
+        try{
+          const j = await ciJson(путь);
+          const p = j.props || {};
+          всего = (p.pagination && p.pagination.lastPage) || 1;
+          ((p.apartments && p.apartments.data) || []).forEach(a => {
+            if(a && a.status !== 'archived') out.push(ciОбъявление(a, обл, названиеОбл));
+          });
+        }catch(e){ console.error('check-in', путь, e.message); break; }
+        стр++;
+        await передышка(250);
+      } while(стр <= всего && стр <= 40);
+    }
+  }
+  const было = new Set();
+  return out.filter(x => x.price > 0 && x.link && !было.has(x.link) && было.add(x.link));
+}
+
+// --- kvartirka.by -------------------------------------------------------
+// Обычные страницы списка. В карточке есть всё нужное: цена, комнаты, гости,
+// адрес, телефон хозяина, а координаты лежат в вызове showObjectMap рядом.
+// Их /api/ закрыт в robots.txt, поэтому берём только открытые страницы.
+const KV_ГОРОДА = {
+  'minsk':       ['minsk',       'Минск'],
+  'brest':       ['brest',       'Брест'],
+  'baranovichi': ['brest',       'Барановичи'],
+  'pinsk':       ['brest',       'Пинск'],
+  'gomel':       ['gomel',       'Гомель'],
+  'mozyr':       ['gomel',       'Мозырь'],
+  'zhlobin':     ['gomel',       'Жлобин'],
+  'rechica':     ['gomel',       'Речица'],
+  'svetlogorsk': ['gomel',       'Светлогорск'],
+  'grodno':      ['grodno',      'Гродно'],
+  'lida':        ['grodno',      'Лида'],
+  'vitebsk':     ['vitebsk',     'Витебск'],
+  'orsha':       ['vitebsk',     'Орша'],
+  'polock':      ['vitebsk',     'Полоцк'],
+  'novopolock':  ['vitebsk',     'Новополоцк'],
+  'mogilev':     ['mogilev',     'Могилёв'],
+  'bobruisk':    ['mogilev',     'Бобруйск'],
+  'borisov':     ['minsk-obl',   'Борисов'],
+  'molodechno':  ['minsk-obl',   'Молодечно'],
+  'soligorsk':   ['minsk-obl',   'Солигорск'],
+};
+const KV_УСАДЬБЫ = {
+  'brestskaya-oblast':   ['brest',     'Брестская область'],
+  'vitebskaya-oblast':   ['vitebsk',   'Витебская область'],
+  'gomelskaya-oblast':   ['gomel',     'Гомельская область'],
+  'grodnenskaya-oblast': ['grodno',    'Гродненская область'],
+  'minskaya-oblast':     ['minsk-obl', 'Минская область'],
+  'mogilevskaya-oblast': ['mogilev',   'Могилёвская область'],
+};
+
+function kvКарточки(html, обл, город, усадьбы, путьРаздела){
+  // координаты лежат отдельно от карточек — сначала собираем их по номеру
+  const точки = {};
+  for(const m of html.matchAll(/showObjectMap\(\[([\d.]+),\s*([\d.]+)\],\s*'[^']*id(\d+)'\)/g))
+    точки[m[3]] = [+m[1], +m[2]];
+
+  const out = [];
+  for(const b of html.split('catalog__card-wrap').slice(1)){
+    const id = (b.match(/id="o(\d+)"/) || [])[1];
+    if(!id) continue;
+    const тел = [...new Set([...b.matchAll(/tel:\+?(375\d{9})/g)].map(m => m[1]))]
+      .filter(t => t !== '375291657771');              // это номер самой площадки, не хозяина
+    const т = b.replace(/<script[\s\S]*?<\/script>/g, ' ')
+               .replace(/<[^>]+>/g, '|').replace(/\|+/g, '|').replace(/\s+/g, ' ');
+    const куски = т.split('|').map(x => x.trim()).filter(Boolean);
+    const адрес = куски.find(x => /ул\.|пр-т|просп|пер\.|б-р|наб\.|д\.\s|аг\.|г\.п\.|р-н|обл/i.test(x)) || '';
+    const фото = [...new Set([...b.matchAll(/src="(\/uploads\/[^"]+\.(?:jpg|jpeg|png|webp))"/gi)]
+      .map(m => 'https://kvartirka.by' + m[1]))].slice(0, 8);
+    const к = точки[id] || [0, 0];
+    out.push({
+      src: 'Kvartirka',
+      price: +((т.match(/\|(\d+)\|\s*р\./) || [])[1]) || 0,
+      rooms: +((т.match(/\|(\d+)\|-комн/) || [])[1]) || 0,
+      area: город, region: город, обл,
+      capacity: +((т.match(/\|(\d+)\|\s*гостей/) || [])[1]) || '',
+      title: [город, адрес].filter(Boolean).join(', '),
+      photos: фото,
+      rating: 0, reviews: 0, descId: null,
+      phone: тел[0] || '', name: '',
+      ...точкаБеларуси(к[0], к[1], город),
+      вид: усадьбы ? 'usadba' : 'flat',
+      link: 'https://kvartirka.by' + путьРаздела + '/id' + id,
+    });
+  }
+  return out;
+}
+
+async function собратьKvartirka(){
+  const out = [];
+  const разделы = [
+    ...Object.entries(KV_ГОРОДА).map(([слаг, [обл, имя]]) =>
+      ['/' + слаг + '/kvartiry/posutochno', обл, имя, false]),
+    ...Object.entries(KV_УСАДЬБЫ).map(([слаг, [обл, имя]]) =>
+      ['/' + слаг + '/usadby', обл, имя, true]),
+  ];
+  for(const [путь, обл, имя, усадьбы] of разделы){
+    for(let стр = 1; стр <= 30; стр++){
+      let h;
+      try{
+        const r = await fetch('https://kvartirka.by' + путь + (стр > 1 ? ('?page=' + стр) : ''),
+                              ждём({headers:{'User-Agent': UA}}));
+        if(!r.ok) break;
+        h = await r.text();
+      }catch(e){ console.error('kvartirka', путь, стр, e.message); break; }
+      const порция = kvКарточки(h, обл, имя, усадьбы, путь);
+      if(!порция.length) break;
+      const было = out.length;
+      out.push(...порция);
+      if(out.length === было) break;                   // страница повторилась — раздел кончился
+      await передышка(300);
+    }
+  }
+  const видели = new Set();
+  return out.filter(x => x.price > 0 && !видели.has(x.link) && видели.add(x.link));
+}
+
+async function обновитьКаталоги(){
+  if(каталогиГрузятся) return;
+  каталогиГрузятся = true;
+  const начало = Date.now();
+  try{
+    if(ИСТОЧНИКИ.checkin){
+      try{
+        const c = await собратьCheckin();
+        if(c.length){ КАТАЛОГ.CheckIn = c; КАТАЛОГ_ОБНОВЛЁН.CheckIn = Date.now(); }
+      }catch(e){ console.error('check-in не собрался:', e.message); }
+    }
+    if(ИСТОЧНИКИ.kvartirka){
+      try{
+        const k = await собратьKvartirka();
+        if(k.length){ КАТАЛОГ.Kvartirka = k; КАТАЛОГ_ОБНОВЛЁН.Kvartirka = Date.now(); }
+      }catch(e){ console.error('kvartirka не собралась:', e.message); }
+    }
+    console.log('каталоги обновлены за ' + Math.round((Date.now() - начало) / 1000) + ' с: '
+      + 'check-in ' + КАТАЛОГ.CheckIn.length + ', kvartirka ' + КАТАЛОГ.Kvartirka.length);
+  } finally { каталогиГрузятся = false; }
+}
+
+// Отбор из готового списка — сети здесь нет вовсе.
+function изКаталога(имя, reg, regKey, city, type, rooms, maxP, guests, minP){
+  const виды = type === 'any' ? ['flat', 'usadba', 'cottage'] : [type];
+  const хотимДом = виды.some(v => v === 'usadba' || v === 'cottage');
+  const хотимКвартиру = виды.indexOf('flat') >= 0;
+  return КАТАЛОГ[имя].filter(x =>
+       (regKey === 'any' || (regKey === 'minsk' ? сравнимо(x.area) === сравнимо('Минск') : x.обл === regKey))
+    && (!city || сравнимо(x.area).includes(сравнимо(city)) || сравнимо(x.title).includes(сравнимо(city)))
+    && (x.вид === 'flat' ? хотимКвартиру : хотимДом)
+    && (!rooms || x.rooms == rooms)
+    && (!maxP || x.price <= maxP)
+    && (!minP || x.price >= minP)
+    && (!guests || (+x.capacity || 0) >= guests)
+  );
+}
+
+
+// Одно и то же жильё на разных площадках. Раньше такого не было: Kufar,
+// Realt и Flatbook почти не пересекались. С приходом двух досок пересечение
+// стало заметным — 519 объявлений совпадают по телефону хозяина И адресу
+// одновременно, это проверено на живых данных.
+//
+// Склеиваем осторожно. Одного телефона мало: у хозяина бывает два десятка
+// квартир, и номер на всех один. Одного адреса тоже мало: в доме сдают
+// разные люди. Поэтому требуем совпадения телефона, дома и ещё одного
+// признака — числа комнат. Когда-то склейка «телефон плюс цена» уже подводила,
+// и урок усвоен: одного совпадения мало.
+const ПРИОРИТЕТ = ['Kufar', 'Realt', 'Flatbook', 'CheckIn', 'Kvartirka'];
+
+// «Восточная ул., 137» и «Брест Восточная ул. 137» — один дом. Берём все пары
+// «слово + номер»: у разных площадок порядок слов свой, и один ключ мимо.
+//
+// Название своего города из слов выбрасываем. Иначе «Минск ... Макаёнка 12»
+// и «Минск ... Мира 12» дают общий ключ «минск|12», и два совершенно разных
+// дома склеиваются в один — на живых данных это ровно так и случилось.
+// Выбрасываем именно свой город, а не все подряд: в Минске есть улица
+// Могилевская, и общий список названий похоронил бы её вместе с городом.
+function домКлючи(текст, город){
+  const свой = String(город || '').toLowerCase().replace(/ё/g, 'е').trim();
+  const t = String(текст || '').toLowerCase().replace(/ё/g, 'е')
+    .replace(/\b(ул|улица|пр-т|проспект|просп|пер|переулок|б-р|бульвар|наб|набережная|д|дом|г|аг|корп|к|кв)\b\.?/g, ' ')
+    .replace(/[^а-я0-9]+/g, ' ').trim();
+  const слова = (t.match(/[а-я]{4,}/g) || [])
+    .filter(w => w !== свой && w !== 'область').slice(0, 5);
+  const дома  = (t.match(/\b\d{1,4}\b/g) || []).slice(0, 3);
+  const out = [];
+  слова.forEach(w => дома.forEach(d => out.push(w + '|' + d)));
+  return out;
+}
+
+function убратьПовторыПлощадок(список){
+  // раскладываем по телефону: без телефона склеивать не с чем
+  const поТел = new Map();
+  список.forEach(x => {
+    const t = String(x.phone || '').replace(/\D/g, '');
+    if(t.length !== 12) return;
+    if(!поТел.has(t)) поТел.set(t, []);
+    поТел.get(t).push(x);
+  });
+  const лишние = new Set();
+  for(const группа of поТел.values()){
+    if(группа.length < 2) continue;
+    const порядок = группа.slice().sort((a, b) =>
+      ПРИОРИТЕТ.indexOf(a.src) - ПРИОРИТЕТ.indexOf(b.src));
+    for(let i = 0; i < порядок.length; i++){
+      const a = порядок[i];
+      if(лишние.has(a)) continue;
+      const ka = домКлючи(a.title + ' ' + (a.area || ''), a.area);
+      if(!ka.length) continue;
+      for(let j = i + 1; j < порядок.length; j++){
+        const b = порядок[j];
+        if(лишние.has(b) || a.src === b.src) continue;
+        const kb = домКлючи(b.title + ' ' + (b.area || ''), b.area);
+        if(!kb.some(k => ka.indexOf(k) >= 0)) continue;
+        // Цену в расчёт не берём: на одну и ту же квартиру площадки ставят
+        // очень разные суммы — Flatbook показывал 60 рублей там, где Realt
+        // просил 308. Если требовать близкую цену, половина повторов
+        // проскакивает. А вот число комнат, когда его знают обе стороны, —
+        // признак надёжный: разные комнатности в одном доме у одного хозяина
+        // это две разные квартиры, и склеивать их нельзя.
+        if(a.rooms && b.rooms && +a.rooms !== +b.rooms) continue;
+        лишние.add(b);
+      }
+    }
+  }
+  return список.filter(x => !лишние.has(x));
 }
 
 // Чем считать два объявления одним. Ссылка не годится: Flatbook отдаёт
@@ -2240,7 +2571,7 @@ async function mestoPageBuild(id){
         ? ('<h2>Где переночевать рядом</h2>'
            + '<p class="where">В 30 км отсюда сдаётся ' + вариантов(рядом.items.length)
            + (цены.length ? (', самый дешёвый — ' + цены[0] + ' BYN за сутки') : '')
-           + '. Это объявления частников с Kufar, Realt и Flatbook, собранные в один список.</p>'
+           + '. Это объявления частников с Kufar, Realt, Flatbook, Check-in и Kvartirka, собранные в один список.</p>'
            + '<div class="grid">' + карточки + '</div>'
            + '<a class="cta" href="/?country=by&region=' + рядом.region + '&type=flat">Все варианты в области с фильтрами и картой →</a>')
         : ('<h2>Где переночевать рядом</h2>'
@@ -2255,7 +2586,7 @@ async function mestoPageBuild(id){
         : '')
     + '<footer><p>Описание и снимок — из нашего же справочника архитектурного наследия Беларуси. '
     + 'Жильё мы не сдаём и комиссию не берём: показываем объявления '
-    + 'с Kufar, Realt и Flatbook. Перед поездкой уточняйте детали у собственника.</p>'
+    + 'с Kufar, Realt, Flatbook, Check-in и Kvartirka. Перед поездкой уточняйте детали у собственника.</p>'
     + '<p><a href="/?country=places">Все ' + list.length + ' мест на карте →</a></p></footer>'
     + '</div>'
     + '<script>'
@@ -2562,7 +2893,7 @@ async function маршрутСобрать(slug){
     ? '<h2>Где переночевать на маршруте</h2>'
       + '<p class="lead">Что сдаётся в тридцати километрах от начала, середины и конца пути. '
       +   'Цена — обычная для города: половина вариантов дешевле, половина дороже. '
-      +   'Считается из живых объявлений Kufar, Realt и Flatbook.</p>'
+      +   'Считается из живых объявлений Kufar, Realt, Flatbook, Check-in и Kvartirka.</p>'
       + '<div class="others">'
       + ночлег.map(function(н){
           return '<a href="' + esc(н.ссылка) + '">' + esc(н.город) + ': ' + вариантов(н.всего)
@@ -2640,8 +2971,9 @@ async function маршрутСобрать(slug){
     + '<h2>Другие маршруты</h2><div class="others">' + другие + '</div>'
     + '<footer><p>Описания и координаты точек — с нашего сайта '
     +   '<a href="https://kudin.by" target="_blank" rel="noopener">kudin.by</a>, карты '
-    +   'архитектурного наследия Беларуси. Жильё подтягивается из объявлений Kufar, Realt '
-    +   'и Flatbook в реальном времени.</p>'
+    +   'архитектурного наследия Беларуси. Жильё подтягивается из объявлений Kufar, Realt, Flatbook, '
+    +   'Check-in и Kvartirka. Первые три — в реальном времени, две последние '
+    +   'обновляются несколько раз в сутки.</p>'
     +   '<p><a href="/?country=places">Все 798 мест на карте →</a> · '
     +   '<a href="/">Поиск жилья на сутки →</a></p></footer>'
     + '</div></body></html>';
@@ -2721,7 +3053,7 @@ async function гидPage(slug){
   const title = 'Где остановиться ' + z.где + ': цены на жильё посуточно';
   const desc = 'Где остановиться ' + z.где + ' — ' + вариантов(всего) + ' посуточно: квартиры от '
     + (кв.от || '—') + ' BYN, обычная цена ' + (кв.обычно || '—') + ' BYN за сутки. Районы, цены '
-    + 'и что посмотреть рядом. Kufar, Realt и Flatbook в одном списке.';
+    + 'и что посмотреть рядом. Kufar, Realt, Flatbook, Check-in и Kvartirka в одном списке.';
 
   const строкиВидов = ВИДЫ.filter(function(в){ return d.по[в.код].всего > 0; }).map(function(в){
     const т = d.по[в.код];
@@ -2776,7 +3108,7 @@ async function гидPage(slug){
         acceptedAnswer:{ '@type':'Answer', text:'Квартира — от ' + (кв.от || '—') + ' BYN за сутки, '
           + 'обычная цена около ' + (кв.обычно || '—') + ' BYN. Всего сейчас ' + вариантов(всего) + '.' } },
       { '@type':'Question', name:'Нужно ли платить комиссию?',
-        acceptedAnswer:{ '@type':'Answer', text:'Нет. Мы показываем объявления с Kufar, Realt и Flatbook '
+        acceptedAnswer:{ '@type':'Answer', text:'Нет. Мы показываем объявления с Kufar, Realt, Flatbook, Check-in и Kvartirka '
           + 'и отправляем напрямую к хозяину — комиссию не берём.' } }
     ]
   };
@@ -2811,7 +3143,7 @@ async function гидPage(slug){
     +   скл(всего, 'вариант', 'варианта', 'вариантов') + ' посуточно'
     +   (кв.от ? (': квартиры от <b>' + кв.от + ' BYN</b> за сутки, обычная цена около <b>'
     +             + кв.обычно + ' BYN</b>') : '')
-    +   '. Всё собрано с Kufar, Realt и Flatbook — три площадки в одном списке. '
+    +   '. Всё собрано с Kufar, Realt, Flatbook, Check-in и Kvartirka — пять площадок в одном списке. '
     +   'Цифры на этой странице считаются из живой выдачи и меняются вместе с ней.</p>'
     + '<a class="cta" href="/?region=' + z.обл + '&city=' + encodeURIComponent(z.город) + '&type=any">'
     +   'Открыть поиск с фильтрами и картой →</a>'
@@ -2833,7 +3165,7 @@ async function гидPage(slug){
     + '<h2>Свежие варианты ' + esc(z.где) + '</h2>'
     + '<div class="grid">' + карточки + '</div>'
     + '<div class="others">' + другие + '</div>'
-    + '<footer><p>Цены и наличие подтягиваются из объявлений Kufar, Realt и Flatbook '
+    + '<footer><p>Цены и наличие подтягиваются из объявлений Kufar, Realt, Flatbook, Check-in и Kvartirka '
     +   'в реальном времени. Мы ничего не сдаём сами и комиссию не берём.</p>'
     +   '<p><a href="/">Все города и карта с ценами →</a></p></footer>'
     + '</div></body></html>';
@@ -2940,7 +3272,7 @@ async function спросPage(slug){
 
   const title = что + ' ' + z.где + ' — снять посуточно';
   const desc = что + ' ' + z.где + ': ' + вариантов(d.total)
-    + ' с Kufar, Realt и Flatbook в одном списке'
+    + ' с Kufar, Realt, Flatbook, Check-in и Kvartirka в одном списке'
     + (мин ? (', цены от ' + мин + ' BYN за сутки') : '') + '. Фото, цены и телефоны хозяев.';
 
   const карточки = items.map(function(x){
@@ -3062,7 +3394,7 @@ async function cityPage(slug, kind){
   const midP = prices.length ? prices[Math.floor(prices.length/2)] : 0;
 
   const title = k.what + ' ' + c.where + k.extra + ' — снять посуточно';
-  const desc  = k.what + ' ' + c.where + k.extra + ': ' + вариантов(data.total || 0) + ' от частников с Kufar, Realt и Flatbook в одном списке'
+  const desc  = k.what + ' ' + c.where + k.extra + ': ' + вариантов(data.total || 0) + ' от частников с Kufar, Realt, Flatbook, Check-in и Kvartirka в одном списке'
     + (minP ? (', цены от ' + minP + ' BYN за сутки') : '') + '. Фото, цены, телефоны хозяев и карта.';
 
   const cards = items.map(function(x){
@@ -3110,14 +3442,14 @@ async function cityPage(slug, kind){
     + '</style></head><body><div class="w">'
     + '<h1>' + esc(k.what) + ' ' + esc(c.where) + esc(k.extra) + '</h1>'
     + '<p class="lead">Собрали объявления частников с <b>Kufar</b>, <b>Realt</b> и <b>Flatbook</b> в один список — '
-    +   'не нужно открывать три сайта. Сейчас доступно <b>' + (data.total || 0) + '</b> '
+    +   'не нужно открывать пять сайтов. Сейчас доступно <b>' + (data.total || 0) + '</b> '
     +   скл(data.total || 0, 'вариант', 'варианта', 'вариантов')
     +   (minP ? (', самый дешёвый — <b>' + minP + ' BYN</b> за сутки, обычная цена около <b>' + midP + ' BYN</b>') : '')
     +   '. Цены и наличие подтягиваются из объявлений в реальном времени.</p>'
     + '<a class="cta" href="/?region=' + slug + '&type=' + k.type + (k.max ? ('&max=' + k.max) : '') + '">Открыть поиск с фильтрами и картой →</a>'
     + (cards ? ('<div class="grid">' + cards + '</div>') : '<p>Сейчас вариантов нет — загляните позже.</p>')
     + '<div class="others">' + others + '</div>'
-    + '<footer><p>Мы не сдаём жильё сами и не берём комиссию: показываем объявления с Kufar, Realt и Flatbook '
+    + '<footer><p>Мы не сдаём жильё сами и не берём комиссию: показываем объявления с Kufar, Realt, Flatbook, Check-in и Kvartirka '
     +   'и отправляем напрямую к хозяину. Перед оплатой проверяйте условия и не переводите предоплату незнакомым людям.</p>'
     +   '<p><a href="/">Все города и карта с ценами →</a></p></footer>'
     + '</div></body></html>';
@@ -3163,7 +3495,7 @@ const PAGE = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
  "url":"https://poisk-kvartir.onrender.com/",
  "name":"Поиск жилья на сутки",
  "inLanguage":"ru",
- "description":"Квартиры, коттеджи и усадьбы на сутки по Беларуси из Kufar, Realt и Flatbook в одной выдаче, отели России с 101Hotels и 798 достопримечательностей с подбором жилья рядом.",
+ "description":"Квартиры, коттеджи и усадьбы на сутки по Беларуси из Kufar, Realt, Flatbook, Check-in и Kvartirka в одной выдаче, отели России с 101Hotels и 798 достопримечательностей с подбором жилья рядом.",
  "publisher":{"@id":"https://poisk-kvartir.onrender.com/#кто"},
  "potentialAction":{"@type":"SearchAction",
   "target":{"@type":"EntryPoint","urlTemplate":"https://poisk-kvartir.onrender.com/?name={search_term_string}"},
@@ -3172,17 +3504,17 @@ const PAGE = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
  "name":"Поиск жилья на сутки",
  "url":"https://poisk-kvartir.onrender.com/",
  "areaServed":[{"@type":"Country","name":"Беларусь"},{"@type":"Country","name":"Россия"}],
- "description":"Собираем объявления посуточного жилья с Kufar, Realt и Flatbook в одну выдачу. Комиссию не берём и жильё сами не сдаём."},
+ "description":"Собираем объявления посуточного жилья с Kufar, Realt, Flatbook, Check-in и Kvartirka в одну выдачу. Комиссию не берём и жильё сами не сдаём."},
 {"@type":"FAQPage",
  "mainEntity":[
   {"@type":"Question","name":"Сколько стоит снять жильё на сутки в Беларуси?",
    "acceptedAnswer":{"@type":"Answer","text":"Обычная цена ночи в областном центре — от 90 до 130 рублей: дешевле всего в Витебске и Могилёве, дороже всего в Минске. Комнату или койку в хостеле можно найти за 30-40 рублей, дом на компанию обойдётся дороже."}},
   {"@type":"Question","name":"Берёте ли вы комиссию?",
-   "acceptedAnswer":{"@type":"Answer","text":"Нет. Мы ничего не сдаём сами и комиссию не берём: показываем объявления с Kufar, Realt и Flatbook и отправляем напрямую к хозяину."}},
+   "acceptedAnswer":{"@type":"Answer","text":"Нет. Мы ничего не сдаём сами и комиссию не берём: показываем объявления с Kufar, Realt, Flatbook, Check-in и Kvartirka и отправляем напрямую к хозяину."}},
   {"@type":"Question","name":"Как разместить своё объявление?",
    "acceptedAnswer":{"@type":"Answer","text":"Напишите нам — и мы разместим. Нужны фотографии, цена за сутки, адрес и телефон. Размещение бесплатное: комиссию мы не берём и места в выдаче не продаём. Ещё один способ попасть к нам — выложить объявление на Kufar, Realt или Flatbook, оттуда оно подтянется само примерно за полчаса."}},
   {"@type":"Question","name":"Откуда берутся цены и наличие?",
-   "acceptedAnswer":{"@type":"Answer","text":"Из самих объявлений Kufar, Realt и Flatbook в реальном времени, а по России — с 101hotels.com. Повторы убираем, места в выдаче не продаём: сортировка одна для всех, по цене."}},
+   "acceptedAnswer":{"@type":"Answer","text":"Из самих объявлений. Kufar, Realt и Flatbook спрашиваем в реальном времени; каталоги check-in.by и kvartirka.by обновляем несколько раз в сутки. По России — 101hotels.com. Повторы убираем, места в выдаче не продаём: сортировка одна для всех, по цене."}},
   {"@type":"Question","name":"Что такое раздел «Что посетить»?",
    "acceptedAnswer":{"@type":"Answer","text":"Почти 800 достопримечательностей Беларуси с фотографией, описанием и координатами. У каждой кнопка «Жильё рядом» — подбирает варианты в 30 километрах, а несколько точек складываются в маршрут на день с километражом по настоящим дорогам."}}
  ]}
@@ -3804,6 +4136,8 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
 .tag.H101{background:linear-gradient(120deg,#7c3aed,#a855f7)}
 .price-pin.H101{background:#7c3aed}
 .tag.Flatbook{background:linear-gradient(120deg,#0a9d70,#12c78f)}
+.tag.CheckIn{background:linear-gradient(120deg,#c0264a,#e8456d)}
+.tag.Kvartirka{background:linear-gradient(120deg,#1f6f9c,#3a9fd4)}
 .price-pin.Flatbook{background:#0a9d70}
 
 .onlyph{grid-column:1 / -1;margin-top:2px}
@@ -4017,7 +4351,7 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
     <span class="kicker"><span class="dot"></span>Kufar · Realt · Flatbook · 101Hotels</span>
   </header>
   <h1>Жильё на сутки, <span class="accent">без лишних вкладок</span></h1>
-  <p class="lead">Квартиры, коттеджи и усадьбы на сутки из Kufar, Realt и Flatbook по Беларуси — плюс отели и жильё России с 101Hotels. Всё в одной ленте и на карте: настройте фильтры и найдите вариант под свою дату и бюджет.</p>
+  <p class="lead">Квартиры, коттеджи и усадьбы на сутки из Kufar, Realt, Flatbook, Check-in и Kvartirka по Беларуси — плюс отели и жильё России с 101Hotels. Всё в одной ленте и на карте: настройте фильтры и найдите вариант под свою дату и бюджет.</p>
 
  </div>
 
@@ -4106,6 +4440,8 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
         <option value="kufar">Только Kufar</option>
         <option value="realt">Только Realt</option>
         <option value="flatbook">Только Flatbook</option>
+        <option value="checkin">Только Check-in</option>
+        <option value="kvartirka">Только Kvartirka</option>
       </select>
     </label>
 
@@ -4260,9 +4596,9 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
   <div id="pager"></div>
 
   <nav class="cities" aria-label="Города">Квартиры на сутки по городам: <a href="/minsk">Минск</a><a href="/brest">Брест</a><a href="/gomel">Гомель</a><a href="/grodno">Гродно</a><a href="/vitebsk">Витебск</a><a href="/mogilev">Могилёв</a><a href="/minsk-obl">Минская область</a></nav>
-  <p class="hint" id="hint">Цены и наличие подтягиваются напрямую из объявлений Kufar, Realt и Flatbook в режиме реального времени. На карте цена показана прямо на метке: <b style="color:var(--kufar)">синие</b> — Kufar, <b style="color:var(--realt)">оранжевые</b> — Realt, <b style="color:#0a9d70">зелёные</b> — Flatbook (областные центры, квартиры и усадьбы). Точные координаты подтягиваются из объявления; пока адрес уточняется, метка стоит у центра города (значок ≈ в подсказке). Итоговая стоимость за весь период рассчитывается по датам заезда и выезда. Перед бронированием уточняйте детали у собственника.</p>
+  <p class="hint" id="hint">Цены и наличие подтягиваются напрямую из объявлений Kufar, Realt, Flatbook, Check-in и Kvartirka в режиме реального времени. На карте цена показана прямо на метке: <b style="color:var(--kufar)">синие</b> — Kufar, <b style="color:var(--realt)">оранжевые</b> — Realt, <b style="color:#0a9d70">зелёные</b> — Flatbook (областные центры, квартиры и усадьбы). Точные координаты подтягиваются из объявления; пока адрес уточняется, метка стоит у центра города (значок ≈ в подсказке). Итоговая стоимость за весь период рассчитывается по датам заезда и выезда. Перед бронированием уточняйте детали у собственника.</p>
 
-  <section class="seo" id="seo"><h2>Жильё на сутки в Беларуси</h2><p>Здесь собраны посуточные квартиры, коттеджи и усадьбы по всей стране: <b>Минск</b>, <b>Брест</b>, <b>Гродно</b>, <b>Витебск</b>, <b>Могилёв</b>, <b>Гомель</b>, а также Барановичи, Пинск, Бобруйск, Орша, Полоцк, Лида, Мозырь, Солигорск, Молодечно и другие города — всего семь областей.</p><p>Объявления берутся сразу из трёх источников — Kufar, Realt и Flatbook — и показываются одним списком, без повторов. Обычная цена ночи в областном центре сейчас от 90 до 130 рублей: дешевле всего в Витебске и Могилёве, дороже всего в Минске. Комнату или койку в хостеле можно найти и за 30–40 рублей, дом на компанию обойдётся дороже.</p><p>Искать можно по области и городу, по числу комнат и гостей, по цене, по удобствам (Wi-Fi, стиральная машина, холодильник) и по названию — если знаете, как называется усадьба или посёлок. Есть даты заезда и выезда: стоимость сразу считается за весь срок. Найденное показывается списком или на карте, где цена написана прямо на метке.</p><p>Квартиры на сутки чаще всего берут в командировку и на выходные, коттеджи и усадьбы — компанией на день рождения или на праздники. У каждого варианта есть кнопка «Что посмотреть рядом»: она покажет замки, костёлы и усадьбы поблизости — из тех почти 800 мест, что собраны в разделе «Что посетить».</p></section>
+  <section class="seo" id="seo"><h2>Жильё на сутки в Беларуси</h2><p>Здесь собраны посуточные квартиры, коттеджи и усадьбы по всей стране: <b>Минск</b>, <b>Брест</b>, <b>Гродно</b>, <b>Витебск</b>, <b>Могилёв</b>, <b>Гомель</b>, а также Барановичи, Пинск, Бобруйск, Орша, Полоцк, Лида, Мозырь, Солигорск, Молодечно и другие города — всего семь областей.</p><p>Объявления берутся сразу из трёх источников — Kufar, Realt, Flatbook, Check-in и Kvartirka — и показываются одним списком, без повторов. Обычная цена ночи в областном центре сейчас от 90 до 130 рублей: дешевле всего в Витебске и Могилёве, дороже всего в Минске. Комнату или койку в хостеле можно найти и за 30–40 рублей, дом на компанию обойдётся дороже.</p><p>Искать можно по области и городу, по числу комнат и гостей, по цене, по удобствам (Wi-Fi, стиральная машина, холодильник) и по названию — если знаете, как называется усадьба или посёлок. Есть даты заезда и выезда: стоимость сразу считается за весь срок. Найденное показывается списком или на карте, где цена написана прямо на метке.</p><p>Квартиры на сутки чаще всего берут в командировку и на выходные, коттеджи и усадьбы — компанией на день рождения или на праздники. У каждого варианта есть кнопка «Что посмотреть рядом»: она покажет замки, костёлы и усадьбы поблизости — из тех почти 800 мест, что собраны в разделе «Что посетить».</p></section>
 
   <div class="foot" id="foot">
     <div class="foot-h">Нашли неточность или хотите что-то добавить?</div>
@@ -4319,12 +4655,22 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
 /*ПРЕДЗАГРУЗКА*/
 const $=s=>document.querySelector(s);
 const CITIES = ${JSON.stringify(CITIES_MAP)};
+// Склейка повторов между площадками. Код тот же, что на сервере, —
+// он подставляется сюда исходным текстом, чтобы правило нельзя было
+// поправить в одном месте и забыть в другом.
+const ПРИОРИТЕТ = ${JSON.stringify(ПРИОРИТЕТ)};
+${домКлючи.toString()}
+${убратьПовторыПлощадок.toString()}
 const PAGE_SIZE = 24;
 window.__page = 1;
 window.__view = 'list';
 window.__mode = 'by';   // 'by' = Беларусь (Kufar+Realt+Flatbook), 'ru' = Россия (101hotels)
 
-function srcName(s){ return s==='H101' ? '101Hotels' : s; }
+function srcName(s){
+  if(s==='H101') return '101Hotels';
+  if(s==='CheckIn') return 'Check-in';
+  return s;
+}
 function curOf(x){ return (x && x.cur) ? x.cur : 'BYN'; }
 const FB_TO = 'a29sdWRhNDlAZ21haWwuY29t';   // адрес обратной связи в base64 (не открытым текстом)
 const SEO_RU = '<h2>Отели и жильё в России</h2><p>Раздел показывает отели, апартаменты, гостевые дома, хостелы и базы отдыха в сорока городах и курортах: <b>Москва</b>, <b>Санкт-Петербург</b>, <b>Казань</b>, <b>Сочи</b>, Адлер, Анапа, Геленджик, Туапсе, Новороссийск, а также Крым — Ялта, Алушта, Евпатория, Севастополь, Феодосия, Судак, Керчь, Гурзуф. Из горных мест — Домбай, Шерегеш, Абзаково, Кировск в Мурманской области; из курортов — Пятигорск, Байкальск, Хвалынск.</p><p>Данные берутся с 101hotels.com в реальном времени. Цена «от» за ночь видна прямо на метке карты, координаты точные. Отбирать можно по типу размещения, звёздам, цене, рейтингу и отзывам, по удобствам и по возможности оплатить при заселении — последнее удобно, когда карта не проходит.</p><p>Бронирование и оплата происходят на стороне 101hotels: мы только показываем, что есть и почём. Перед поездкой проверяйте на их сайте даты, условия отмены и что входит в цену.</p>';
@@ -4432,7 +4778,11 @@ async function runRF(){
 }
 // Поиск идёт по трём источникам параллельно, и каждый рисуется сразу, как ответил:
 // Kufar обычно отвечает первым, поэтому человек видит квартиры, не дожидаясь остальных.
-const SRC_NAME = { kufar:'Kufar', realt:'Realt', flatbook:'Flatbook' };
+const SRC_NAME = { kufar:'Kufar', realt:'Realt', flatbook:'Flatbook',
+                   checkin:'Check-in', kvartirka:'Kvartirka' };
+// В запросе источник называется одним словом, а в самом объявлении — другим.
+const КЛЮЧ_ИСТОЧНИКА = { kufar:'Kufar', realt:'Realt', flatbook:'Flatbook',
+                         checkin:'CheckIn', kvartirka:'Kvartirka' };
 async function run(){
   if(window.__mode==='places') return runPlaces();
   if(window.__mode==='ru') return runRF();
@@ -4484,8 +4834,9 @@ async function run(){
   }
 
   const pick=$('#source').value;
-  let sources = (pick==='both') ? ['kufar','realt','flatbook'] : [pick];
-  if(amen) sources = sources.filter(function(x){ return x!=='realt'; });   // у Realt нет данных удобств в списке
+  let sources = (pick==='both') ? ['kufar','realt','flatbook','checkin','kvartirka'] : [pick];
+  // Удобства есть только у Kufar и Flatbook — остальные при таком фильтре молчат
+  if(amen) sources = sources.filter(function(x){ return ['kufar','flatbook'].indexOf(x)>=0; });
 
   const seen=new Set(), counts={};
   let done=0, failed=0;
@@ -4496,12 +4847,21 @@ async function run(){
       const d=await (await fetch('/api/search?'+p.toString())).json();
       if(token!==window.__runToken) return;
       (d.items||[]).forEach(function(x){ if(!seen.has(x.link)){ seen.add(x.link); window.__all.push(x); } });
+      // Одна и та же квартира приходит и с Flatbook, и с check-in.by. Пока
+      // источники спрашивались по одному, склеивать было нечего; теперь есть.
+      window.__all = убратьПовторыПлощадок(window.__all);
       applyPhotoFilter();
       counts[src]=d.total||0;
     }catch(e){ failed++; }
     if(token!==window.__runToken) return;
     done++;
-    const parts=sources.filter(function(x){ return counts[x]; }).map(function(x){ return SRC_NAME[x]+' '+counts[x]; });
+    // Считаем по тому, что осталось после склейки, иначе слагаемые
+    // не сходятся с итогом: часть карточек ушла как повтор.
+    const поИсточникам={};
+    (window.__all||[]).forEach(function(x){ поИсточникам[x.src]=(поИсточникам[x.src]||0)+1; });
+    const parts=sources.filter(function(x){ return counts[x]; })
+      .map(function(x){ return SRC_NAME[x]+' '+(поИсточникам[КЛЮЧ_ИСТОЧНИКА[x]]||0); })
+      .filter(function(t){ return !/ 0$/.test(t); });
     const hid=(window.__all||[]).length-(window.__items||[]).length;
     const head='Найдено '+window.__items.length+(parts.length?(' ('+parts.join(' + ')+')'):'')+(hid>0?(' · без фото скрыто '+hid):'');
     $('#stat').textContent = (done<sources.length) ? (head+' · ищу ещё…') : (head+tail);
@@ -4760,11 +5120,12 @@ async function enrichRealt(){
 // не убран — если понадобится прятать всерьёз, номер надо будет докладывать
 // с сервера по нажатию.
 // Kufar и Flatbook оставлены как были: там номер открыт сразу.
+const ТЕЛЕФОН_ПО_НАЖАТИЮ = ['Realt', 'CheckIn', 'Kvartirka'];
 function кнопкаТелефона(x, класс){
   if(!x.phone) return '';
   const значок = (класс==='mp-call') ? '\u{1F4DE} ' : '';
   const подпись = fmtPhone(x.phone) + (x.name ? (' \u00B7 ' + x.name) : '');
-  if(x.src!=='Realt')
+  if(ТЕЛЕФОН_ПО_НАЖАТИЮ.indexOf(x.src) < 0)
     return '<a class="'+класс+'" href="tel:+'+x.phone+'">'+значок+подпись+'</a>';
   return '<button type="button" class="'+класс+' тел-скрыт" onclick="показатьТелефон(this)"'
     + ' data-ph="'+x.phone+'" data-nm="'+String(x.name||'').replace(/"/g,'&quot;')+'">'
@@ -5539,7 +5900,7 @@ const HINT_PL = 'Раздел «Что посетить» — почти 800 д�
   + 'усадьбы, форты, музеи и памятники. У каждой точки фотография, короткое описание и координаты.'
   + '<br><br><b>Одна точка.</b> «Проложить маршрут» ведёт прямо в Яндекс.Карты — на телефоне '
   + 'откроется приложение и поведёт от вашего места. «Жильё рядом» показывает квартиры, коттеджи '
-  + 'и усадьбы на сутки в 30 км отсюда — из Kufar, Realt и Flatbook сразу.'
+  + 'и усадьбы на сутки в 30 км отсюда — из Kufar, Realt, Flatbook, Check-in и Kvartirka сразу.'
   + '<br><br><b>Несколько точек — маршрут на день.</b> Отмечайте кнопкой «+ в маршрут» сколько '
   + 'угодно мест: внизу появится полоска, а по ней — страница с картой. Порядок объезда '
   + 'считается сам, от первой точки к ближайшей. Линия идёт по настоящим дорогам, поэтому '
@@ -5913,7 +6274,7 @@ http.createServer(async (req,res)=>{
       res.end('Нужен ключ: /istochnik?key=…'); return;
     }
     const менялось = [];
-    ['kufar','realt','flatbook'].forEach(function(имя){
+    Object.keys(ИСТОЧНИКИ).forEach(function(имя){
       const v = u.searchParams.get(имя);
       if(v === 'off' || v === 'on'){
         ИСТОЧНИКИ[имя] = (v === 'on');
@@ -5925,7 +6286,7 @@ http.createServer(async (req,res)=>{
     if(менялось.length) SEARCH_CACHE.clear();
     res.writeHead(200, {'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'});
     res.end('Сейчас:\n'
-      + ['kufar','realt','flatbook'].map(function(и){
+      + Object.keys(ИСТОЧНИКИ).map(function(и){
           return '  ' + и.padEnd(9) + (ИСТОЧНИКИ[и] ? 'показываем' : 'СКРЫТ');
         }).join('\n')
       + (менялось.length ? ('\n\nИзменено: ' + менялось.join(', ')
@@ -6307,3 +6668,9 @@ function warmUp(){
 }
 setTimeout(warmUp, 1500);
 setInterval(warmUp, 7 * 60 * 1000).unref();   // держим кэш тёплым
+
+// Каталоги двух досок собираются в фоне. Первый заход — через сорок секунд
+// после старта: к этому времени прогрев Kufar/Realt/Flatbook уже закончился,
+// и мы не отбираем у него ни сети, ни процессора. Дальше раз в три часа.
+setTimeout(обновитьКаталоги, ПЕРВОЕ_ОБНОВЛЕНИЕ);
+setInterval(обновитьКаталоги, ОБНОВЛЕНИЕ_КАЖДЫЕ).unref();
