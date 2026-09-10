@@ -1621,6 +1621,9 @@ function nearestRegion(lat, lng){
 // не сразу. Для Kufar и Realt всё осталось как было: они спрашиваются живьём.
 const КАТАЛОГ = { CheckIn: [], Kvartirka: [] };
 const КАТАЛОГ_ОБНОВЛЁН = { CheckIn: 0, Kvartirka: 0 };
+// Чем кончился последний сбор. Без этого сломавшийся источник просто
+// исчезает из выдачи молча, и понять почему — неоткуда.
+const КАТАЛОГ_ОШИБКА = { CheckIn: '', Kvartirka: '' };
 const ОБНОВЛЕНИЕ_КАЖДЫЕ = 3 * 60 * 60 * 1000;
 const ПЕРВОЕ_ОБНОВЛЕНИЕ = 40 * 1000;      // после запуска, чтобы не мешать первым посетителям
 let каталогиГрузятся = false;
@@ -1637,13 +1640,35 @@ async function ciВерсия(){
   const m = h.match(/&quot;version&quot;:&quot;([a-f0-9]+)&quot;/) || h.match(/"version":"([a-f0-9]+)"/);
   return m ? m[1] : '';
 }
+// Запасной путь: те же самые данные лежат в обычной странице, в атрибуте
+// data-page. Он нужен, когда версию сборки прочитать не удалось, — без
+// неё заголовочный способ отвечает только отказом. На своей машине этого
+// не случалось, а на Render — случилось, и источник молча исчез из выдачи.
+async function ciИзСтраницы(путь){
+  const h = await (await fetch('https://check-in.by' + путь, ждём({headers:{'User-Agent':UA}}))).text();
+  const m = h.match(/data-page="([^"]+)"/);
+  if(!m) throw new Error('check-in: страница без data-page');
+  const текст = m[1].replace(/&quot;/g, '"').replace(/&#039;/g, "'")
+                    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  return JSON.parse(текст);
+}
+
 async function ciJson(путь, повтор){
-  if(!CI_ВЕРСИЯ) CI_ВЕРСИЯ = await ciВерсия();
+  if(!CI_ВЕРСИЯ){
+    try{ CI_ВЕРСИЯ = await ciВерсия(); }catch(e){ CI_ВЕРСИЯ = ''; }
+    if(!CI_ВЕРСИЯ) return ciИзСтраницы(путь);
+  }
   const r = await fetch('https://check-in.by' + путь, ждём({headers:{
     'User-Agent': UA, 'X-Inertia': 'true', 'X-Inertia-Version': CI_ВЕРСИЯ,
     'Accept': 'text/html, application/xhtml+xml' }}));
-  if(r.status === 409 && !повтор){ CI_ВЕРСИЯ = await ciВерсия(); return ciJson(путь, true); }
-  if(!r.ok) throw new Error('check-in ' + r.status);
+  if(r.status === 409 && !повтор){
+    CI_ВЕРСИЯ = '';
+    return ciJson(путь, true);
+  }
+  if(!r.ok){
+    if(повтор) return ciИзСтраницы(путь);
+    throw new Error('check-in ' + r.status);
+  }
   return r.json();
 }
 
@@ -1827,14 +1852,16 @@ async function обновитьКаталоги(){
     if(ИСТОЧНИКИ.checkin){
       try{
         const c = await собратьCheckin();
-        if(c.length){ КАТАЛОГ.CheckIn = c; КАТАЛОГ_ОБНОВЛЁН.CheckIn = Date.now(); }
-      }catch(e){ console.error('check-in не собрался:', e.message); }
+        if(c.length){ КАТАЛОГ.CheckIn = c; КАТАЛОГ_ОБНОВЛЁН.CheckIn = Date.now(); КАТАЛОГ_ОШИБКА.CheckIn = ''; }
+        else КАТАЛОГ_ОШИБКА.CheckIn = 'пусто: ни одного объявления не пришло';
+      }catch(e){ КАТАЛОГ_ОШИБКА.CheckIn = e.message; console.error('check-in не собрался:', e.message); }
     }
     if(ИСТОЧНИКИ.kvartirka){
       try{
         const k = await собратьKvartirka();
-        if(k.length){ КАТАЛОГ.Kvartirka = k; КАТАЛОГ_ОБНОВЛЁН.Kvartirka = Date.now(); }
-      }catch(e){ console.error('kvartirka не собралась:', e.message); }
+        if(k.length){ КАТАЛОГ.Kvartirka = k; КАТАЛОГ_ОБНОВЛЁН.Kvartirka = Date.now(); КАТАЛОГ_ОШИБКА.Kvartirka = ''; }
+        else КАТАЛОГ_ОШИБКА.Kvartirka = 'пусто: ни одного объявления не пришло';
+      }catch(e){ КАТАЛОГ_ОШИБКА.Kvartirka = e.message; console.error('kvartirka не собралась:', e.message); }
     }
     console.log('каталоги обновлены за ' + Math.round((Date.now() - начало) / 1000) + ' с: '
       + 'check-in ' + КАТАЛОГ.CheckIn.length + ', kvartirka ' + КАТАЛОГ.Kvartirka.length);
@@ -6285,10 +6312,21 @@ http.createServer(async (req,res)=>{
     // источник ещё продолжал бы показываться.
     if(менялось.length) SEARCH_CACHE.clear();
     res.writeHead(200, {'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'});
+    // Две доски живут не как остальные: их каталог собирается в фоне.
+    // Если сбор сломается, источник исчезнет молча — поэтому пишем прямо тут,
+    // сколько объявлений набралось, когда и чем кончилась последняя попытка.
+    const каталоги = ['CheckIn', 'Kvartirka'].map(function(и){
+      const когда = КАТАЛОГ_ОБНОВЛЁН[и];
+      const мин = когда ? Math.round((Date.now() - когда) / 60000) : 0;
+      return '  ' + и.padEnd(10) + String(КАТАЛОГ[и].length).padStart(5) + ' объявлений'
+        + (когда ? (', обновлён ' + мин + ' мин назад') : ', ещё не собирался')
+        + (КАТАЛОГ_ОШИБКА[и] ? ('\n             сбой: ' + КАТАЛОГ_ОШИБКА[и]) : '');
+    }).join('\n');
     res.end('Сейчас:\n'
       + Object.keys(ИСТОЧНИКИ).map(function(и){
-          return '  ' + и.padEnd(9) + (ИСТОЧНИКИ[и] ? 'показываем' : 'СКРЫТ');
+          return '  ' + и.padEnd(11) + (ИСТОЧНИКИ[и] ? 'показываем' : 'СКРЫТ');
         }).join('\n')
+      + '\n\nКаталоги в памяти:\n' + каталоги
       + (менялось.length ? ('\n\nИзменено: ' + менялось.join(', ')
           + '\nВыдача из памяти сброшена.'
           + '\n\nЭто действует до перезапуска сервера. Чтобы осталось навсегда,'
