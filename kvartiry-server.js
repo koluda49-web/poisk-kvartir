@@ -1733,7 +1733,13 @@ async function собратьCheckin(){
           ((p.apartments && p.apartments.data) || []).forEach(a => {
             if(a && a.status !== 'archived') out.push(ciОбъявление(a, обл, названиеОбл));
           });
-        }catch(e){ console.error('check-in', путь, e.message); break; }
+        }catch(e){
+          // Первую беду запоминаем: без неё в /istochnik видно только «пусто»,
+          // а почему пусто — непонятно. Именно так и вышло на Render.
+          if(!КАТАЛОГ_ОШИБКА.CheckIn) КАТАЛОГ_ОШИБКА.CheckIn = путь + ' → ' + e.message;
+          console.error('check-in', путь, e.message);
+          break;
+        }
         стр++;
         await передышка(250);
       } while(стр <= всего && стр <= 40);
@@ -1851,9 +1857,10 @@ async function обновитьКаталоги(){
   try{
     if(ИСТОЧНИКИ.checkin){
       try{
+        КАТАЛОГ_ОШИБКА.CheckIn = '';
         const c = await собратьCheckin();
         if(c.length){ КАТАЛОГ.CheckIn = c; КАТАЛОГ_ОБНОВЛЁН.CheckIn = Date.now(); КАТАЛОГ_ОШИБКА.CheckIn = ''; }
-        else КАТАЛОГ_ОШИБКА.CheckIn = 'пусто: ни одного объявления не пришло';
+        else if(!КАТАЛОГ_ОШИБКА.CheckIn) КАТАЛОГ_ОШИБКА.CheckIn = 'пусто: ни одного объявления не пришло';
       }catch(e){ КАТАЛОГ_ОШИБКА.CheckIn = e.message; console.error('check-in не собрался:', e.message); }
     }
     if(ИСТОЧНИКИ.kvartirka){
