@@ -1634,9 +1634,82 @@ const передышка = мс => new Promise(r => setTimeout(r, мс));
 // Сайт на Inertia: та же страница, но с заголовком X-Inertia отдаёт JSON
 // вместо разметки. Версию сборки они меняют при выкладке и отвечают 409,
 // если прислать старую, — тогда просто перечитываем её с главной.
+// Сервер check-in.by отдаёт только свой сертификат, без промежуточного
+// «GlobalSign GCC R6 AlphaSSL CA 2025». Браузер недостающее звено докачивает
+// сам, Node — нет: на Render каждый запрос падал с «unable to verify the first
+// certificate». Проверку подлинности не отключаем — кладём этот промежуточный
+// сертификат рядом с корневыми, и цепочка честно проверяется до корня
+// GlobalSign R6, который в Node уже есть. Сертификат взят по адресу, указанному
+// в самом сертификате сайта; подпись сверена: R6 → промежуточный → check-in.by.
+// Годен до 21 мая 2027 — если к тому времени они не починят цепочку сами,
+// нужно будет положить сюда новый.
+const CI_ПРОМЕЖУТОЧНЫЙ = `-----BEGIN CERTIFICATE-----
+MIIFjTCCA3WgAwIBAgIRAIN9TriekS/nLK07x2kt3CAwDQYJKoZIhvcNAQELBQAw
+TDEgMB4GA1UECxMXR2xvYmFsU2lnbiBSb290IENBIC0gUjYxEzARBgNVBAoTCkds
+b2JhbFNpZ24xEzARBgNVBAMTCkdsb2JhbFNpZ24wHhcNMjUwNTIxMDIzNjUyWhcN
+MjcwNTIxMDAwMDAwWjBVMQswCQYDVQQGEwJCRTEZMBcGA1UEChMQR2xvYmFsU2ln
+biBudi1zYTErMCkGA1UEAxMiR2xvYmFsU2lnbiBHQ0MgUjYgQWxwaGFTU0wgQ0Eg
+MjAyNTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAJ/oiu0Bviq52UUE
+ADbFWmgu3rC7KDSMoorLN1Wd03McG3Z1aP71DlPCE33838r72Dfuj5M9LXfiQLJp
+Au6MwNExmKOzothw4x0zGf5oBYyrCMGm3fBpLPafwYQ3MchBOWMTbf83rKUPLH48
+KCJ0MnU8GUl8oA/J81wIvbbKPuNrFf6hvJDccjzc4NyxLz3A89zjV2g5whCg5O0u
+9YX4Zxk9JHuc/LvllOJO4waAYLjbWBJkz3rV3ts1SmSYnJqmyRTIjXwQgRvhEYqt
+DbRskt0W7M6cPwCze3GTBN2UHNpHkMs3YmVxku68I0aOQn5+uz//fDROP3z1Z/7I
+APteRtECAwEAAaOCAV8wggFbMA4GA1UdDwEB/wQEAwIBhjAdBgNVHSUEFjAUBggr
+BgEFBQcDAQYIKwYBBQUHAwIwEgYDVR0TAQH/BAgwBgEB/wIBADAdBgNVHQ4EFgQU
+xbSTj28r3B5Iv7cQMIXO0bK7SC0wHwYDVR0jBBgwFoAUrmwFo5MT4qLn4tcc1sfw
+f8hnU6AwewYIKwYBBQUHAQEEbzBtMC4GCCsGAQUFBzABhiJodHRwOi8vb2NzcDIu
+Z2xvYmFsc2lnbi5jb20vcm9vdHI2MDsGCCsGAQUFBzAChi9odHRwOi8vc2VjdXJl
+Lmdsb2JhbHNpZ24uY29tL2NhY2VydC9yb290LXI2LmNydDA2BgNVHR8ELzAtMCug
+KaAnhiVodHRwOi8vY3JsLmdsb2JhbHNpZ24uY29tL3Jvb3QtcjYuY3JsMCEGA1Ud
+IAQaMBgwCAYGZ4EMAQIBMAwGCisGAQQBoDIKAQMwDQYJKoZIhvcNAQELBQADggIB
+AB/uvBuZf4CiuSahwiXn4geF52roAH+6jxsEPTXTfb7bbeMDXsYgRRsOTNA70ruZ
+Tnz5DfFMuBhNoFhIFb0qR1izdy6VkdKOqFPNF2dOFI1EcnY9l2ory9mrzHqVbrL4
+vzUd17FLUVyjTVU7PAv4nxyhnO1GTeT83YlrdRF31NyR6bvZVTEERHmpbWSgeveJ
+LRtaMzlGWiLZ8IwkH7o6GH3jp/KPtDW4Npu8w64HrRZdN2pqQhi7+YKwfHM7H+2U
+dM1BGN0sjOWMVbMSB9MtCsleS2Mb7TRZEbOHxECJLLIluQypZr7Pol3+hAqrhyKI
+k+6y+Da0NeDuWxW59Ku4NvClqW1UFX1SpfNGhzVfp/CH+vPM1tySomx2jE0EnYZu
+GwVucXPBsp5nUWqUV9+143glVuS7GTg9hFPjNBInn17HbCoIIQIOzj5Vd9bK3A9U
+GxXNpwenDHEalCsD/4eQYDHPhFE7sNe0D/OXu+FAM02VZkARx37Jp4bDdujvgL9P
+vZPR3wThvDN1CTU8Bc3xea3yKFAraKcPZLkhReQUAm2VpR+HSJRPlUpYizlF9WkL
+h3KcAVCBJWvnOkVwxyU5QJMcnwW95JlOtx+9100GL99jHE5rs3gXp7F4bg8H01QT
+9jVOhBBmQ7nQoXuwI0tqal2QUqZz3eeu62CU7xBwtfYR
+-----END CERTIFICATE-----`;
+const CI_АГЕНТ = new (require('https').Agent)({
+  ca: require('tls').rootCertificates.concat([CI_ПРОМЕЖУТОЧНЫЙ]),
+  keepAlive: true, maxSockets: 2,
+});
+
+// Запрос к check-in.by через этот агент. Ответ похож на fetch: status, ok,
+// text(), json() — чтобы остальной код менять по минимуму.
+function ciЗапрос(путь, заголовки, осталосьПереходов){
+  const переходов = осталосьПереходов === undefined ? 3 : осталосьПереходов;
+  return new Promise(function(готово, беда){
+    const адрес = /^https?:/.test(путь) ? путь : ('https://check-in.by' + путь);
+    const з = require('https').get(адрес, { agent: CI_АГЕНТ, headers: заголовки || {} }, function(r){
+      if([301, 302, 303, 307, 308].indexOf(r.statusCode) >= 0 && r.headers.location && переходов > 0){
+        r.resume();
+        готово(ciЗапрос(new URL(r.headers.location, адрес).toString(), заголовки, переходов - 1));
+        return;
+      }
+      const куски = [];
+      r.on('data', function(к){ куски.push(к); });
+      r.on('end', function(){
+        const текст = Buffer.concat(куски).toString('utf8');
+        готово({ status: r.statusCode, ok: r.statusCode >= 200 && r.statusCode < 300,
+                 text: async function(){ return текст; },
+                 json: async function(){ return JSON.parse(текст); } });
+      });
+      r.on('error', беда);
+    });
+    з.setTimeout(WAIT, function(){ з.destroy(new Error('check-in: не ответил за ' + (WAIT / 1000) + ' с')); });
+    з.on('error', беда);
+  });
+}
+
 let CI_ВЕРСИЯ = '';
 async function ciВерсия(){
-  const h = await (await fetch('https://check-in.by/', ждём({headers:{'User-Agent':UA}}))).text();
+  const h = await (await ciЗапрос('/', {'User-Agent':UA})).text();
   const m = h.match(/&quot;version&quot;:&quot;([a-f0-9]+)&quot;/) || h.match(/"version":"([a-f0-9]+)"/);
   return m ? m[1] : '';
 }
@@ -1645,7 +1718,7 @@ async function ciВерсия(){
 // неё заголовочный способ отвечает только отказом. На своей машине этого
 // не случалось, а на Render — случилось, и источник молча исчез из выдачи.
 async function ciИзСтраницы(путь){
-  const h = await (await fetch('https://check-in.by' + путь, ждём({headers:{'User-Agent':UA}}))).text();
+  const h = await (await ciЗапрос(путь, {'User-Agent':UA})).text();
   const m = h.match(/data-page="([^"]+)"/);
   if(!m) throw new Error('check-in: страница без data-page');
   const текст = m[1].replace(/&quot;/g, '"').replace(/&#039;/g, "'")
@@ -1658,9 +1731,9 @@ async function ciJson(путь, повтор){
     try{ CI_ВЕРСИЯ = await ciВерсия(); }catch(e){ CI_ВЕРСИЯ = ''; }
     if(!CI_ВЕРСИЯ) return ciИзСтраницы(путь);
   }
-  const r = await fetch('https://check-in.by' + путь, ждём({headers:{
+  const r = await ciЗапрос(путь, {
     'User-Agent': UA, 'X-Inertia': 'true', 'X-Inertia-Version': CI_ВЕРСИЯ,
-    'Accept': 'text/html, application/xhtml+xml' }}));
+    'Accept': 'text/html, application/xhtml+xml' });
   if(r.status === 409 && !повтор){
     CI_ВЕРСИЯ = '';
     return ciJson(путь, true);
