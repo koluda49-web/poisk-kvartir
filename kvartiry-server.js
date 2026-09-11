@@ -768,7 +768,7 @@ async function fromFlatbook(regKey, city, type, maxP, rooms, amenFb, minP){
 
 // Поиск по НАЗВАНИЮ по всей Беларуси (когда известно название, но не место), по всем трём источникам.
 // Kufar — полнотекстовый поиск; Flatbook — по всем городам; Realt — по тексту списка (title/адрес/город).
-const KUFAR_JUNK = /прокат|пароочистит|пылесос|karcher|керхер|электроинструмент|генератор|виброплит|отбойн|перфоратор|\bдрель|бетоно|шлифов|аппарат|моющий|химчистк|фотозон|аренда авто|прицеп|вывоз мусора|грузчик|грузопере|уборк|клининг|манипулятор|эвакуатор|такси|洗/i;
+const KUFAR_JUNK = /прокат|пароочистит|пылесос|karcher|керхер|электроинструмент|генератор|виброплит|отбойн|перфоратор|\bдрель|бетоно|шлифов|аппарат|моющий|химчистк|фотозон|аренда авто|прицеп|вывоз мусора|грузчик|грузопере|уборк|клининг|манипулятор|эвакуатор|такси|洗|продаж|продам|продаётся|продается|куплю|обмен квартир/i;
 // Realt по названию: перебираем разделы всех областей и матчим по тексту списка
 // (title/headline/адрес/город). Имена в глубоком описании тут не видны — только то, что в списке.
 const RB_REALT_KEYS = ['minsk','brest','gomel','grodno','vitebsk','mogilev'];   // minsk-obl = тот же глобальный список, что minsk
@@ -836,13 +836,23 @@ async function searchByName(name, type, maxP, minP){
     const части = await Promise.all(типы.map(t => fromRealtByName(rx, t, maxP)));
     return [].concat(...части);
   }catch(e){ return []; } })();
+  // Две доски лежат в памяти: ищем название в городе и адресе. Сети тут нет.
+  const изДосок = function(имя, вкл){
+    if(!вкл || !rx) return [];
+    return изКаталога(имя, null, 'any', '', type, '', maxP, 0, minP)
+      .filter(x => rx.test(x.title || '') || rx.test(x.area || ''));
+  };
+  const ci = изДосок('CheckIn', ИСТОЧНИКИ.checkin);
+  const kv = изДосок('Kvartirka', ИСТОЧНИКИ.kvartirka);
   const [ka,ra,fa]=await Promise.all([kufarTask,realtTask,fbTask]);
   const seen=new Set();
-  const all=[...ka,...ra,...fa].filter(x=>{ const k=ключОбъявления(x); if(seen.has(k))return false; seen.add(k); return true; })
-                         .sort((a,b)=>a.price-b.price);
+  let all=[...ka,...ra,...fa,...ci,...kv].filter(x=>{ const k=ключОбъявления(x); if(seen.has(k))return false; seen.add(k); return true; });
+  all = убратьПовторыПлощадок(all).sort((a,b)=>a.price-b.price);
   return { total:all.length, kufar:all.filter(x=>x.src==='Kufar').length,
            realt:all.filter(x=>x.src==='Realt').length,
-           flatbook:all.filter(x=>x.src==='Flatbook').length, items:all };
+           flatbook:all.filter(x=>x.src==='Flatbook').length,
+           checkin:all.filter(x=>x.src==='CheckIn').length,
+           kvartirka:all.filter(x=>x.src==='Kvartirka').length, items:all };
 }
 
 async function search(regKey, city, type, rooms, maxP, guests, source, amen, minP){
@@ -882,6 +892,16 @@ async function search(regKey, city, type, rooms, maxP, guests, source, amen, min
   let all = [].concat(...arrs);
   // фильтр удобств для Kufar по тексту удобств (Flatbook уже отфильтрован на своей стороне)
   if(hasAmen) all = all.filter(x=> x.src!=='Kufar' || amenList.every(a=> a.rx.test(x.amenText||'')));
+  // Flatbook комнаты фильтрует у себя, но неточно: в ответ на «1-комнатные»
+  // приходят заголовки «3-комн. квартира». Числа комнат в самом объявлении
+  // у него нет, поэтому досеиваем по заголовку: явно другая комнатность —
+  // вон, не указана — оставляем, раз Flatbook её сам отобрал.
+  if(rooms) all = all.filter(x=>{
+    if(x.src!=='Flatbook') return true;
+    const m = String(x.title||'').match(/(\d)\s*-?\s*(?:х\s*)?(?:комн|к\.|ком\b)/i);
+    if(!m) return true;
+    return +rooms >= 3 ? +m[1] >= 3 : +m[1] === +rooms;
+  });
   // Убираем повторы. Ссылки мало: Flatbook отдаёт одно и то же объявление
   // с разных поддоменов (mogilev.flatbook.by и flatbook.by), адреса разные,
   // а дом один — в ленте он показывался дважды, да ещё с разными городами.
@@ -1770,6 +1790,13 @@ function точкаБеларуси(lat, lng, город){
   return { lat: 0, lng: 0, approx: true };
 }
 
+// «Домик у озера за 35 рублей», а в описании — «стоимость за 1 чел/сут».
+// В выдаче, где всё остальное стоит за жильё целиком, такая цена вводит
+// в заблуждение: на шестерых это уже двести десять. Владелец сайта решил
+// такие объявления не показывать. Описание у check-in.by приходит вместе
+// с объявлением, поэтому узнать можно прямо при сборе.
+const ЦЕНА_ЗА_ЧЕЛОВЕКА = /(?:за|с)\s*(?:1|одного|одну)?\s*(?:чел(?![а-яё])|человека|персону|гостя)|руб\.?\s*\/\s*чел(?![а-яё])|\/\s*чел(?![а-яё])|цена\s+за\s+место|за\s+койко-?место/i;
+
 function ciОбъявление(a, обл, названиеОбл){
   const адрес = [a.street_type, a.street_name, a.house_number, a.building].filter(Boolean).join(' ');
   const город = (a.city && a.city.name) || a.city_custom || '';
@@ -1804,7 +1831,9 @@ async function собратьCheckin(){
           const p = j.props || {};
           всего = (p.pagination && p.pagination.lastPage) || 1;
           ((p.apartments && p.apartments.data) || []).forEach(a => {
-            if(a && a.status !== 'archived') out.push(ciОбъявление(a, обл, названиеОбл));
+            if(a && a.status !== 'archived'
+               && !ЦЕНА_ЗА_ЧЕЛОВЕКА.test(String(a.description || '') + ' ' + String(a.title || '')))
+              out.push(ciОбъявление(a, обл, названиеОбл));
           });
         }catch(e){
           // Первую беду запоминаем: без неё в /istochnik видно только «пусто»,
@@ -1883,7 +1912,9 @@ function kvКарточки(html, обл, город, усадьбы, путьР
       src: 'Kvartirka',
       price: +((т.match(/\|(\d+)\|\s*р\./) || [])[1]) || 0,
       rooms: +((т.match(/\|(\d+)\|-комн/) || [])[1]) || 0,
-      area: город, region: город, обл,
+      // В «области» пишем область, а не город: по этому полю сверяются
+      // выдачи и подписи, и «Барановичи» там смотрелись как чужой регион.
+      area: город, region: (REGIONS[обл] || {}).oblast || город, обл,
       capacity: +((т.match(/\|(\d+)\|\s*гостей/) || [])[1]) || '',
       title: [город, адрес].filter(Boolean).join(', '),
       photos: фото,
@@ -1946,6 +1977,14 @@ async function обновитьКаталоги(){
         else КАТАЛОГ_ОШИБКА.Kvartirka = 'пусто: ни одного объявления не пришло';
       }catch(e){ КАТАЛОГ_ОШИБКА.Kvartirka = e.message; console.error('kvartirka не собралась:', e.message); }
     }
+    // Выдачи, собранные до этой минуты, досок не знали. Сбрасываем только
+    // готовые выдачи жилья: сырые ответы площадок не трогаем — иначе они
+    // получат залп повторных запросов, — и отели России тоже не трогаем.
+    сброситьВыдачуЖилья();
+    // Сброс снял и прогретую выдачу по умолчанию — ту, что видит каждый
+    // первый зашедший. Без повторного прогрева он ждал бы полсекунды вместо
+    // мгновенного ответа: так и поймала проверка «поиск-и-кэш».
+    warmUp();
     console.log('каталоги обновлены за ' + Math.round((Date.now() - начало) / 1000) + ' с: '
       + 'check-in ' + КАТАЛОГ.CheckIn.length + ', kvartirka ' + КАТАЛОГ.Kvartirka.length);
   } finally { каталогиГрузятся = false; }
@@ -2193,6 +2232,17 @@ function пауза(key){
 
 const isEmpty = d => Array.isArray(d) ? d.length === 0
                    : (d && Array.isArray(d.items) ? d.items.length === 0 : false);
+
+// Сбросить выдачи жилья — и только их. Отели России, рейсы и сырые
+// ответы площадок остаются: к переключению источников и к обновлению
+// досок они отношения не имеют, а их повторный сбор стоит секунды.
+function сброситьВыдачуЖилья(){
+  let сколько = 0;
+  for(const к of [...SEARCH_CACHE.keys()]){
+    if(к.startsWith('/api/search?') || к.startsWith('idx|')){ SEARCH_CACHE.delete(к); сколько++; }
+  }
+  return сколько;
+}
 
 async function cached(key, fn, ttl){
   const life = ttl || CACHE_TTL;
@@ -2473,7 +2523,8 @@ function крошки(звенья){
     })
   }) + '</' + 'script>';
 }
-const SRC_TITLE = { Kufar:'Kufar', Realt:'Realt', Flatbook:'Flatbook', H101:'101Hotels' };
+const SRC_TITLE = { Kufar:'Kufar', Realt:'Realt', Flatbook:'Flatbook', H101:'101Hotels',
+                    CheckIn:'Check-in', Kvartirka:'Kvartirka' };
 const srcTitle = v => SRC_TITLE[v] || v || 'источнике';
 
 // разбираем адрес вида 'brest-usadby' на город и уточнение
@@ -3276,7 +3327,8 @@ async function гидPage(slug){
     + '<div class="grid">' + карточки + '</div>'
     + '<div class="others">' + другие + '</div>'
     + '<footer><p>Цены и наличие подтягиваются из объявлений Kufar, Realt, Flatbook, Check-in и Kvartirka '
-    +   'в реальном времени. Мы ничего не сдаём сами и комиссию не берём.</p>'
+    +   '— первые три в реальном времени, две последние обновляются несколько раз в сутки. '
+    +   'Мы ничего не сдаём сами и комиссию не берём.</p>'
     +   '<p><a href="/">Все города и карта с ценами →</a></p></footer>'
     + '</div></body></html>';
 }
@@ -3432,11 +3484,12 @@ async function спросPage(slug){
     + крошки([['Главная', '/'], ['Жильё на сутки', '/minsk'], [что + ' ' + z.где]])
     + '<style>' + СТИЛЬ_СПИСКА + '</style></head><body><div class="w">'
     + '<h1>' + esc(что) + ' ' + esc(z.где) + '</h1>'
-    + '<p class="lead">Объявления частников с <b>Kufar</b>, <b>Realt</b> и <b>Flatbook</b> в одном списке. '
+    + '<p class="lead">Объявления частников с <b>Kufar</b>, <b>Realt</b>, <b>Flatbook</b>, <b>Check-in</b> и <b>Kvartirka</b> в одном списке. '
     +   'Сейчас доступно <b>' + d.total + '</b> ' + скл(d.total, 'вариант', 'варианта', 'вариантов')
     +   (мин ? (', самый дешёвый — <b>' + мин + ' BYN</b> за сутки, обычная цена около <b>' + сред + ' BYN</b>') : '')
     +   (z.точка ? '. Показываем то, что сдаётся в радиусе ' + (z.радиус || 25) + ' километров' : '')
-    +   '. Цены подтягиваются из объявлений в реальном времени.</p>'
+    +   '. Цены берутся из самих объявлений: у Kufar, Realt и Flatbook — в реальном времени, '
+    +   'у Check-in и Kvartirka — с обновлением несколько раз в сутки.</p>'
     + '<a class="cta" href="' + куда + '">Открыть поиск с фильтрами и картой →</a>'
     + '<div class="grid">' + карточки + '</div>'
     + '<div class="others">' + рядом + '</div>'
@@ -3551,11 +3604,12 @@ async function cityPage(slug, kind){
     + '<style>' + СТИЛЬ_СПИСКА
     + '</style></head><body><div class="w">'
     + '<h1>' + esc(k.what) + ' ' + esc(c.where) + esc(k.extra) + '</h1>'
-    + '<p class="lead">Собрали объявления частников с <b>Kufar</b>, <b>Realt</b> и <b>Flatbook</b> в один список — '
+    + '<p class="lead">Собрали объявления частников с <b>Kufar</b>, <b>Realt</b>, <b>Flatbook</b>, <b>Check-in</b> и <b>Kvartirka</b> в один список — '
     +   'не нужно открывать пять сайтов. Сейчас доступно <b>' + (data.total || 0) + '</b> '
     +   скл(data.total || 0, 'вариант', 'варианта', 'вариантов')
     +   (minP ? (', самый дешёвый — <b>' + minP + ' BYN</b> за сутки, обычная цена около <b>' + midP + ' BYN</b>') : '')
-    +   '. Цены и наличие подтягиваются из объявлений в реальном времени.</p>'
+    +   '. Цены и наличие берутся из самих объявлений: у Kufar, Realt и Flatbook — в реальном времени, '
+    +   'у Check-in и Kvartirka — с обновлением несколько раз в сутки.</p>'
     + '<a class="cta" href="/?region=' + slug + '&type=' + k.type + (k.max ? ('&max=' + k.max) : '') + '">Открыть поиск с фильтрами и картой →</a>'
     + (cards ? ('<div class="grid">' + cards + '</div>') : '<p>Сейчас вариантов нет — загляните позже.</p>')
     + '<div class="others">' + others + '</div>'
@@ -4734,8 +4788,9 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
     <p><b>Напишите нам — и мы разместим.</b> Нужны фотографии, цена за сутки, адрес
        и телефон для связи. Размещение бесплатное: комиссию мы не берём и места
        в выдаче не продаём, сортировка у всех одна — по цене.</p>
-    <p>Ещё один способ попасть к нам — выложить объявление на <b>Kufar</b>, <b>Realt</b>
-       или <b>Flatbook</b>: оттуда оно подтянется само, обычно в течение получаса.</p>
+    <p>Ещё один способ попасть к нам — выложить объявление на <b>Kufar</b>, <b>Realt</b>,
+       <b>Flatbook</b>, <b>Check-in</b> или <b>Kvartirka</b>: оттуда оно подтянется само —
+       с первых трёх обычно в течение получаса, с двух последних — в течение нескольких часов.</p>
     <p>Объявление есть, а у нас его не видно? Тоже напишите, разберёмся: иногда площадка
        не отдаёт координаты или прячет объявление от поиска.</p>
   </div>
@@ -5124,7 +5179,7 @@ function popupHtml(x){
   return '<div class="mp"><div class="mp-price">'+x.price+' BYN <small>/ сутки</small></div>'
     +'<div class="mp-meta">'+(x.area||'')+' · '+x.rooms+'-комн'+cap+'</div>'
     +img+call
-    +'<a class="mp-open" href="'+x.link+'" target="_blank" rel="noopener">Открыть на '+x.src+' →</a>'+ap+'</div>';
+    +'<a class="mp-open" href="'+x.link+'" target="_blank" rel="noopener">Открыть на '+srcName(x.src)+' →</a>'+ap+'</div>';
 }
 // Первый кадр с адресом, остальные — с пометкой: пока человек не листает,
 // браузер их не трогает. Иначе открытие метки тянуло бы восемь снимков.
@@ -6393,7 +6448,8 @@ http.createServer(async (req,res)=>{
     });
     // Выдача лежит в памяти до восьми минут: без сброса выключённый
     // источник ещё продолжал бы показываться.
-    if(менялось.length) SEARCH_CACHE.clear();
+    // Только выдачи жилья: отели России от переключения площадок не зависят.
+    if(менялось.length){ сброситьВыдачуЖилья(); warmUp(); }
     res.writeHead(200, {'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'});
     // Две доски живут не как остальные: их каталог собирается в фоне.
     // Если сбор сломается, источник исчезнет молча — поэтому пишем прямо тут,
