@@ -1736,7 +1736,10 @@ async function собратьCheckin(){
         }catch(e){
           // Первую беду запоминаем: без неё в /istochnik видно только «пусто»,
           // а почему пусто — непонятно. Именно так и вышло на Render.
-          if(!КАТАЛОГ_ОШИБКА.CheckIn) КАТАЛОГ_ОШИБКА.CheckIn = путь + ' → ' + e.message;
+          // «fetch failed» ничего не объясняет — настоящая причина лежит в cause:
+          // обрыв соединения, таймаут, недоступный адрес.
+          const причина = e.cause ? (' (' + (e.cause.code || '') + ' ' + (e.cause.message || '') + ')') : '';
+          if(!КАТАЛОГ_ОШИБКА.CheckIn) КАТАЛОГ_ОШИБКА.CheckIn = путь + ' → ' + e.message + причина;
           console.error('check-in', путь, e.message);
           break;
         }
