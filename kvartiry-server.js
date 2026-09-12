@@ -1955,13 +1955,22 @@ async function собратьKvartirka(){
   ];
   for(const [путь, обл, имя, усадьбы] of разделы){
     for(let стр = 1; стр <= 30; стр++){
-      let h;
-      try{
-        const r = await fetch('https://kvartirka.by' + путь + (стр > 1 ? ('?page=' + стр) : ''),
-                              ждём({headers:{'User-Agent': UA}}));
-        if(!r.ok) break;
-        h = await r.text();
-      }catch(e){ console.error('kvartirka', путь, стр, e.message); break; }
+      // Страница может не ответить с первого раза: без повтора сбор бросал
+      // весь город, и из каталога молча пропадали сотни объявлений — так
+      // однажды выпали Минск с пятой страницы, Речица и Гродно.
+      let h = null;
+      for(let попытка = 1; попытка <= 3 && h === null; попытка++){
+        try{
+          const r = await fetch('https://kvartirka.by' + путь + (стр > 1 ? ('?page=' + стр) : ''),
+                                ждём({headers:{'User-Agent': UA}}));
+          if(!r.ok){ h = ''; break; }
+          h = await r.text();
+        }catch(e){
+          console.error('kvartirka', путь, стр, 'попытка ' + попытка + ':', e.message);
+          await передышка(1500 * попытка);
+        }
+      }
+      if(!h) break;
       const порция = kvКарточки(h, обл, имя, усадьбы, путь);
       if(!порция.length) break;
       const было = out.length;
