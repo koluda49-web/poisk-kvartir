@@ -51,6 +51,11 @@ check('на карте три выделенные метки', номера.len
 check('номера по порядку: 1, 2, 3', номера.slice().sort().join(',') === '1,2,3', номера.join(','));
 check('между точками нарисована линия', await js(`document.querySelectorAll('.leaflet-overlay-pane path').length > 0`));
 
+// под названием в списке маршрута — где точка находится
+const подписи = JSON.parse(await js(`JSON.stringify([...document.querySelectorAll('#rtList .rt-item')].map(function(e){ var s = e.querySelector('.t small'); return s ? s.textContent : ''; }))`));
+const адреса = JSON.parse(await js(`JSON.stringify(orderRoute(window.__route).map(function(p){ return (window.__places.concat(window.__plMap||[]).find(function(x){ return x.id === p.id; })||{}).addr || ''; }))`));
+check('под каждой точкой в списке маршрута — где она', подписи.length === 3 && подписи.every(Boolean) && подписи.join('|') === адреса.join('|'), подписи.join(' | '));
+
 // при отдалении выделенные не прячутся в скопления
 await js(`window.__map.setZoom(6); 1`); await sleep(900);
 check('при отдалении карты метки маршрута остаются видны',
@@ -74,6 +79,14 @@ await js(`routeToggle(${JSON.stringify(точки[0])}); setCountry('by'); 1`);
 await sleep(1500);
 await js(`setView('map'); 1`); await sleep(2000);
 check('на карте жилья меток маршрута нет', (await js(`document.querySelectorAll('.rt-pin').length`)) === 0);
+await js(`clearRoute(); 1`);
+
+// маршрут, собранный раньше, без адресов: адрес дотягивается сам
+await js(`localStorage.setItem('route', JSON.stringify([{id:5069,name:'Костёл святого Казимира',lat:54.0,lng:25.6}])); 1`);
+await send('Page.navigate', { url: SITE + '/?country=places' });
+for (let i = 0; i < 60; i++) { if (await js(`!!document.querySelector('#rtList .rt-item .t small')`)) break; await sleep(500); }
+check('у старого маршрута адрес подписался сам', /Липнишки/.test(await js(`(document.querySelector('#rtList .rt-item .t small')||{}).textContent || ''`)));
+check('адрес запомнился в маршруте', /Липнишки/.test(await js(`localStorage.getItem('route')`)));
 await js(`clearRoute(); 1`);
 
 check('в консоли нет ошибок', ошибки.length === 0, ошибки.slice(0, 2).join(' | '));

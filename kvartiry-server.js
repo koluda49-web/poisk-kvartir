@@ -4448,11 +4448,14 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
 .rt-clear{margin-left:auto;font:inherit;font-size:13px;color:var(--txt-2);background:none;
   border:1px solid var(--line);border-radius:999px;padding:4px 12px;cursor:pointer}
 .rt-clear:hover{border-color:var(--accent);color:var(--accent)}
-.rt-item{display:flex;align-items:baseline;gap:9px;padding:5px 0;font-size:14.5px;
+.rt-item{display:flex;align-items:center;gap:9px;padding:5px 0;font-size:14.5px;
   border-top:1px solid var(--line)}
 .rt-item:first-child{border-top:0}
 .rt-item .n{width:22px;height:22px;flex:none;border-radius:50%;background:var(--accent);color:var(--accent-ink);
   font-size:12px;font-weight:700;display:inline-flex;align-items:center;justify-content:center}
+.rt-item .t{display:flex;flex-direction:column;min-width:0;line-height:1.3}
+.rt-item .t b{font-weight:700}
+.rt-item .t small{color:var(--txt-3);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rt-item .km{margin-left:auto;color:var(--txt-3);font-size:13px;white-space:nowrap}
 .rt-item .x{font:inherit;background:none;border:0;color:var(--txt-3);cursor:pointer;padding:0 2px}
 .rt-item .x:hover{color:var(--accent)}
@@ -5928,7 +5931,7 @@ async function plotPlaces(){
       // кавычки, и строка внутри строки ломала бы разметку.
       + '<button class="mp-route' + (inRoute(p.id) ? ' on' : '') + '" type="button"'
       +   ' data-id="' + p.id + '" data-lat="' + p.lat + '" data-lng="' + p.lng + '"'
-      +   ' data-name="' + esc2(p.name) + '" onclick="pinRoute(this)">'
+      +   ' data-name="' + esc2(p.name) + '" data-addr="' + esc2(p.addr || '') + '" onclick="pinRoute(this)">'
       +   (inRoute(p.id) ? '✓ в маршруте' : '+ в маршрут') + '</button></div>',
       { maxWidth:300, minWidth:240 });
     // Описание тянем только когда окошко открыли: на карте бывает под тысячу
@@ -5997,7 +6000,7 @@ function toggleRoute(i){
 function routeToggle(p){
   const было = inRoute(p.id);
   if(было) window.__route = window.__route.filter(function(x){ return x.id !== p.id; });
-  else window.__route = window.__route.concat([{ id:p.id, name:p.name, lat:p.lat, lng:p.lng }]);
+  else window.__route = window.__route.concat([{ id:p.id, name:p.name, addr:p.addr || '', lat:p.lat, lng:p.lng }]);
   try{ localStorage.setItem('route', JSON.stringify(window.__route)); }catch(e){}
   if(window.__T && !было) window.__T('route_add', {});
   // Перерисовываем одну кнопку, а не всю ленту: заново рисовать шесть десятков
@@ -6008,7 +6011,7 @@ function routeToggle(p){
 }
 
 function pinRoute(b){
-  routeToggle({ id: +b.dataset.id, name: b.dataset.name,
+  routeToggle({ id: +b.dataset.id, name: b.dataset.name, addr: b.dataset.addr || '',
                 lat: +b.dataset.lat, lng: +b.dataset.lng });
 }
 
@@ -6165,6 +6168,35 @@ function orderRoute(list){
   return out;
 }
 
+// Где находится точка — подписью под названием, как в карточке места.
+// В маршрутах, собранных до этой подписи, адреса нет: берём его из
+// загруженного списка мест.
+function адресТочки(p){
+  if(p.addr) return p.addr;
+  if(своя(p)) return 'своя точка';
+  const все = (window.__plMap || []).concat(window.__places || []);
+  const н = все.find(function(x){ return String(x.id) === String(p.id); });
+  if(н && н.addr) p.addr = н.addr;
+  else дотянутьАдрес(p.id);
+  return p.addr || '';
+}
+
+// Точки нет в загруженном списке (выбран другой город) — спрашиваем сервер
+// один раз, адрес запоминаем в самом маршруте.
+const АДРЕС_СПРОШЕН = {};
+function дотянутьАдрес(id){
+  if(АДРЕС_СПРОШЕН[id]) return;
+  АДРЕС_СПРОШЕН[id] = 1;
+  fetch('/api/place?id=' + encodeURIComponent(id)).then(function(r){ return r.json(); }).then(function(d){
+    if(!d || !d.addr) return;
+    let было = false;
+    (window.__route || []).forEach(function(p){ if(String(p.id) === String(id) && !p.addr){ p.addr = d.addr; было = true; } });
+    if(!было) return;
+    try{ localStorage.setItem('route', JSON.stringify(window.__route)); }catch(e){}
+    drawRoute();
+  }).catch(function(){});
+}
+
 function drawRoute(){
   рисоватьМаршрутНаКарте();
   const box = $('#routeBox'); if(!box) return;
@@ -6182,7 +6214,8 @@ function drawRoute(){
     const шаг = i ? кмМежду(list[i-1].lat, list[i-1].lng, p.lat, p.lng) : 0;
     сумма += шаг;
     return '<div class="rt-item"><span class="n">' + (i+1) + '</span>'
-      + '<span>' + (своя(p) ? '📍 ' : '') + esc2(p.name) + '</span>'
+      + '<span class="t"><b>' + (своя(p) ? '📍 ' : '') + esc2(p.name) + '</b>'
+      +   (адресТочки(p) ? ('<small>' + esc2(адресТочки(p)) + '</small>') : '') + '</span>'
       + '<span class="km">' + (i ? ('+' + Math.round(шаг) + ' км') : 'старт') + '</span>'
       + '<button class="x" type="button" title="убрать" data-id="' + p.id + '" onclick="dropRoute(this.dataset.id)">×</button></div>';
   }).join('');
