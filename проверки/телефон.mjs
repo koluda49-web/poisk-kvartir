@@ -150,11 +150,28 @@ if (!живое.реалт) {
     'открытых ' + живое.открытых + ' из ' + живое.реалт);
   check('у карточек Realt стоит кнопка', живое.кнопок > 0,
     'кнопок ' + живое.кнопок + ' из ' + живое.реалт);
-  // Kufar и Flatbook не трогали: если их номера тоже закрылись, значит
-  // условие по площадке где-то потерялось.
-  if (живое.всего > живое.реалт)
-    check('у других площадок номер по-прежнему открыт', живое.чужихОткрытых > 0,
-      'открытых у не-Realt: ' + живое.чужихОткрытых);
+}
+
+// Flatbook номер не прячем: если и у него он закрылся, условие по площадке
+// где-то потерялось. Ищем карточку Flatbook с телефоном по всей выдаче, а не
+// на странице с Realt: там может не оказаться ни одной — Kufar номер в списке
+// не отдаёт, а у досок он закрыт намеренно.
+{
+  const стрФ = await js(`(function(){
+    const все = window.__items || [];
+    const i = все.findIndex(function(x){ return x.src === 'Flatbook' && x.phone; });
+    if(i < 0) return 0;
+    const с = Math.floor(i / 24) + 1;
+    if(с !== window.__page) gotoPage(с);
+    return с;
+  })()`);
+  if (!стрФ) console.log('  — Flatbook с телефоном в выдаче нет, пропускаю');
+  else {
+    await sleep(800);
+    const открыт = await js(`[...document.querySelectorAll('#grid .card')].some(function(k){
+      const t = k.querySelector('.tag'); return t && /Flatbook/.test(t.textContent) && k.querySelector('a.call[href^="tel:"]'); })`);
+    check('у Flatbook номер по-прежнему открыт', открыт);
+  }
 }
 
 console.log('\nПройдено ' + passed + ', падает ' + failed);

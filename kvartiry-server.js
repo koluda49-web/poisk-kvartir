@@ -847,7 +847,7 @@ async function searchByName(name, type, maxP, minP){
   const [ka,ra,fa]=await Promise.all([kufarTask,realtTask,fbTask]);
   const seen=new Set();
   let all=[...ka,...ra,...fa,...ci,...kv].filter(x=>{ const k=ключОбъявления(x); if(seen.has(k))return false; seen.add(k); return true; });
-  all = убратьПовторыПлощадок(all).sort((a,b)=>a.price-b.price);
+  all = all.filter(x => годнаяЦена(x.price)).sort((a,b)=>a.price-b.price);
   return { total:all.length, kufar:all.filter(x=>x.src==='Kufar').length,
            realt:all.filter(x=>x.src==='Realt').length,
            flatbook:all.filter(x=>x.src==='Flatbook').length,
@@ -880,14 +880,15 @@ async function search(regKey, city, type, rooms, maxP, guests, source, amen, min
   keys.forEach(key=>{
     const reg = REGIONS[key];
     типы.forEach(t=>{
-      if(useK) tasks.push(fromKufar(reg,city,t,rooms,maxP,guests,minP));
-      if(useR) tasks.push(fromRealt(reg,city,t,rooms,maxP,guests,minP));
+      // Цену здесь не передаём: она отсеивается ниже, после склейки повторов.
+      if(useK) tasks.push(fromKufar(reg,city,t,rooms,0,guests,0));
+      if(useR) tasks.push(fromRealt(reg,city,t,rooms,0,guests,0));
     });
   });
   if(useF) типы.forEach(t=>
-    tasks.push(fromFlatbook(regKey,city,t,maxP,rooms, amenList.map(a=>a.fb).filter(Boolean), minP)));   // flatbook: комнаты + удобства (apartment_comfort)
-  if(useC)  tasks.push(изКаталога('CheckIn',   null, regKey, city, type, rooms, maxP, guests, minP));
-  if(useKv) tasks.push(изКаталога('Kvartirka', null, regKey, city, type, rooms, maxP, guests, minP));
+    tasks.push(fromFlatbook(regKey,city,t,0,rooms, amenList.map(a=>a.fb).filter(Boolean), 0)));   // flatbook: комнаты + удобства (apartment_comfort)
+  if(useC)  tasks.push(изКаталога('CheckIn',   null, regKey, city, type, rooms, 0, guests, 0));
+  if(useKv) tasks.push(изКаталога('Kvartirka', null, regKey, city, type, rooms, 0, guests, 0));
   const arrs = await Promise.all(tasks);
   let all = [].concat(...arrs);
   // фильтр удобств для Kufar по тексту удобств (Flatbook уже отфильтрован на своей стороне)
@@ -907,7 +908,8 @@ async function search(regKey, city, type, rooms, maxP, guests, source, amen, min
   // а дом один — в ленте он показывался дважды, да ещё с разными городами.
   const seen = new Set();
   all = all.filter(x=>{ const k = ключОбъявления(x); if(seen.has(k)) return false; seen.add(k); return true; });
-  all = убратьПовторыПлощадок(all)
+  all = all
+           .filter(x => годнаяЦена(x.price) && (!maxP || x.price <= maxP) && (!minP || x.price >= minP))
            .sort((a,b)=>a.price-b.price)
            // Отдаём наружу полегче: шестнадцать снимков в карточке никто
            // не листает, а список удобств нужен был только что выше, при отборе.
@@ -1901,16 +1903,31 @@ function kvКарточки(html, обл, город, усадьбы, путьР
     if(!id) continue;
     const тел = [...new Set([...b.matchAll(/tel:\+?(375\d{9})/g)].map(m => m[1]))]
       .filter(t => t !== '375291657771');              // это номер самой площадки, не хозяина
+    // Неразрывные пробелы убираем до разбора: в карточке цена написана как
+    // «от 1&nbsp;800 р. / сутки», и без этого число читалось кусками —
+    // вилла за 1800 рублей уезжала в выдачу как жильё за 88.
     const т = b.replace(/<script[\s\S]*?<\/script>/g, ' ')
+               .replace(/&nbsp;|&#160;| /g, '')
                .replace(/<[^>]+>/g, '|').replace(/\|+/g, '|').replace(/\s+/g, ' ');
     const куски = т.split('|').map(x => x.trim()).filter(Boolean);
     const адрес = куски.find(x => /ул\.|пр-т|просп|пер\.|б-р|наб\.|д\.\s|аг\.|г\.п\.|р-н|обл/i.test(x)) || '';
     const фото = [...new Set([...b.matchAll(/src="(\/uploads\/[^"]+\.(?:jpg|jpeg|png|webp))"/gi)]
       .map(m => 'https://kvartirka.by' + m[1]))].slice(0, 8);
     const к = точки[id] || [0, 0];
+    // Берём именно посуточную цену: рядом в карточке стоит ещё цена
+    // с человека, и раньше она могла попасть в выдачу как цена за жильё.
+    // «от» запоминаем — у усадеб она почти всегда «от».
+    // У усадеб цена подписана «от 280 р. / сутки», рядом стоит «от 60 р. / чел.».
+    // У квартир подписи нет вовсе — просто «140 р.». Поэтому сначала ищем
+    // посуточную, потом любую, кроме той, что с человека. Если есть только
+    // цена с человека — объявление пропускаем: в общей выдаче она обманывает.
+    const сутки = т.match(/(от\s*\|)?\s*(\d+)\s*\|р\.\|\s*\/\s*сутки/)
+               || т.match(/(от\s*\|)?\s*(\d+)\s*\|р\.\|(?!\s*\/\s*чел)/);
+    if(!сутки) continue;
     out.push({
       src: 'Kvartirka',
-      price: +((т.match(/\|(\d+)\|\s*р\./) || [])[1]) || 0,
+      price: +сутки[2] || 0,
+      от: !!сутки[1],
       rooms: +((т.match(/\|(\d+)\|-комн/) || [])[1]) || 0,
       // В «области» пишем область, а не город: по этому полю сверяются
       // выдачи и подписи, и «Барановичи» там смотрелись как чужой регион.
@@ -2007,76 +2024,21 @@ function изКаталога(имя, reg, regKey, city, type, rooms, maxP, gues
 }
 
 
-// Одно и то же жильё на разных площадках. Раньше такого не было: Kufar,
-// Realt и Flatbook почти не пересекались. С приходом двух досок пересечение
-// стало заметным — 519 объявлений совпадают по телефону хозяина И адресу
-// одновременно, это проверено на живых данных.
-//
-// Склеиваем осторожно. Одного телефона мало: у хозяина бывает два десятка
-// квартир, и номер на всех один. Одного адреса тоже мало: в доме сдают
-// разные люди. Поэтому требуем совпадения телефона, дома и ещё одного
-// признака — числа комнат. Когда-то склейка «телефон плюс цена» уже подводила,
-// и урок усвоен: одного совпадения мало.
-const ПРИОРИТЕТ = ['Kufar', 'Realt', 'Flatbook', 'CheckIn', 'Kvartirka'];
+// Склейки «одно и то же жильё на разных площадках» здесь нет — намеренно.
+// Её пробовали: считали одним жильём объявления с тем же телефоном, тем же
+// домом и той же комнатностью. Проверка по фотографиям показала, что
+// по-настоящему одинаковые снимки только у 15 пар из 31. Остальное — разные
+// квартиры одного агентства в одном доме или разные домики одной усадьбы.
+// Склейка прятала настоящие объявления, а «оставляем где дешевле» подменяло
+// одну квартиру другой. Раньше так же подвела склейка «телефон плюс цена».
+// Надёжно отличить одно жильё от соседнего можно только по снимкам; пока
+// этого нет, повторяющиеся ссылки убираются, а похожие объявления остаются.
 
-// «Восточная ул., 137» и «Брест Восточная ул. 137» — один дом. Берём все пары
-// «слово + номер»: у разных площадок порядок слов свой, и один ключ мимо.
-//
-// Название своего города из слов выбрасываем. Иначе «Минск ... Макаёнка 12»
-// и «Минск ... Мира 12» дают общий ключ «минск|12», и два совершенно разных
-// дома склеиваются в один — на живых данных это ровно так и случилось.
-// Выбрасываем именно свой город, а не все подряд: в Минске есть улица
-// Могилевская, и общий список названий похоронил бы её вместе с городом.
-function домКлючи(текст, город){
-  const свой = String(город || '').toLowerCase().replace(/ё/g, 'е').trim();
-  const t = String(текст || '').toLowerCase().replace(/ё/g, 'е')
-    .replace(/\b(ул|улица|пр-т|проспект|просп|пер|переулок|б-р|бульвар|наб|набережная|д|дом|г|аг|корп|к|кв)\b\.?/g, ' ')
-    .replace(/[^а-я0-9]+/g, ' ').trim();
-  const слова = (t.match(/[а-я]{4,}/g) || [])
-    .filter(w => w !== свой && w !== 'область').slice(0, 5);
-  const дома  = (t.match(/\b\d{1,4}\b/g) || []).slice(0, 3);
-  const out = [];
-  слова.forEach(w => дома.forEach(d => out.push(w + '|' + d)));
-  return out;
-}
-
-function убратьПовторыПлощадок(список){
-  // раскладываем по телефону: без телефона склеивать не с чем
-  const поТел = new Map();
-  список.forEach(x => {
-    const t = String(x.phone || '').replace(/\D/g, '');
-    if(t.length !== 12) return;
-    if(!поТел.has(t)) поТел.set(t, []);
-    поТел.get(t).push(x);
-  });
-  const лишние = new Set();
-  for(const группа of поТел.values()){
-    if(группа.length < 2) continue;
-    const порядок = группа.slice().sort((a, b) =>
-      ПРИОРИТЕТ.indexOf(a.src) - ПРИОРИТЕТ.indexOf(b.src));
-    for(let i = 0; i < порядок.length; i++){
-      const a = порядок[i];
-      if(лишние.has(a)) continue;
-      const ka = домКлючи(a.title + ' ' + (a.area || ''), a.area);
-      if(!ka.length) continue;
-      for(let j = i + 1; j < порядок.length; j++){
-        const b = порядок[j];
-        if(лишние.has(b) || a.src === b.src) continue;
-        const kb = домКлючи(b.title + ' ' + (b.area || ''), b.area);
-        if(!kb.some(k => ka.indexOf(k) >= 0)) continue;
-        // Цену в расчёт не берём: на одну и ту же квартиру площадки ставят
-        // очень разные суммы — Flatbook показывал 60 рублей там, где Realt
-        // просил 308. Если требовать близкую цену, половина повторов
-        // проскакивает. А вот число комнат, когда его знают обе стороны, —
-        // признак надёжный: разные комнатности в одном доме у одного хозяина
-        // это две разные квартиры, и склеивать их нельзя.
-        if(a.rooms && b.rooms && +a.rooms !== +b.rooms) continue;
-        лишние.add(b);
-      }
-    }
-  }
-  return список.filter(x => !лишние.has(x));
-}
+// Меньше 20 рублей за сутки — не цена, а заглушка: «10 р.» за трёхкомнатную,
+// «от 1 р.» за усадьбу на 42 человека. Самые дешёвые настоящие варианты —
+// комнаты от 25 рублей.
+const ЦЕНА_НЕ_НИЖЕ = 20;
+const годнаяЦена = p => +p >= ЦЕНА_НЕ_НИЖЕ;
 
 // Чем считать два объявления одним. Ссылка не годится: Flatbook отдаёт
 // один и тот же дом с разных поддоменов, и адреса выходят разными.
@@ -2641,7 +2603,7 @@ async function mestoPageBuild(id){
     const img = (x.photos && x.photos[0]) ? ('<img src="' + esc(x.photos[0]) + '" alt="" loading="lazy">')
                                           : '<div class="noimg">без фото</div>';
     return '<a class="c" href="' + esc(x.link) + '" target="_blank" rel="noopener nofollow">' + img
-      + '<div class="b"><div class="p">' + x.price + ' BYN <small>/ сутки</small></div>'
+      + '<div class="b"><div class="p">' + (x.от ? 'от ' : '') + x.price + ' BYN <small>/ сутки</small></div>'
       + '<div class="m"><span>' + (x.approx ? esc(x.area || 'рядом') : (x.km + ' км')) + '</span><span>' + esc(x.src) + '</span></div>'
       + '<h3>' + esc((x.title || '').slice(0, 70)) + '</h3></div></a>';
   }).join('');
@@ -3253,7 +3215,7 @@ async function гидPage(slug){
     const мета = [x.area, (x.rooms ? x.rooms + '-комн' : ''), x.capacity ? ('до ' + x.capacity + ' гостей') : '']
       .filter(Boolean).map(function(m){ return '<span>' + esc(m) + '</span>'; }).join('');
     return '<article class="c"><a href="' + esc(x.link) + '" target="_blank" rel="noopener nofollow">' + img + '</a>'
-      + '<div class="b"><div class="p">' + x.price + ' BYN <small>/ сутки</small></div>'
+      + '<div class="b"><div class="p">' + (x.от ? 'от ' : '') + x.price + ' BYN <small>/ сутки</small></div>'
       + '<div class="m">' + мета + '</div><h3>' + esc(x.title || ('Жильё ' + z.где)) + '</h3>'
       + '<a class="go" href="' + esc(x.link) + '" target="_blank" rel="noopener nofollow">Открыть на '
       + esc(srcTitle(x.src)) + '</a></div></article>';
@@ -3446,7 +3408,7 @@ async function спросPage(slug){
                   (typeof x.km === 'number' ? (x.km + ' км') : '')]
       .filter(Boolean).map(function(m){ return '<span>' + esc(m) + '</span>'; }).join('');
     return '<article class="c"><a href="' + esc(x.link) + '" target="_blank" rel="noopener nofollow">' + img + '</a>'
-      + '<div class="b"><div class="p">' + x.price + ' BYN <small>/ сутки</small></div>'
+      + '<div class="b"><div class="p">' + (x.от ? 'от ' : '') + x.price + ' BYN <small>/ сутки</small></div>'
       + '<div class="m">' + мета + '</div>'
       + '<h3>' + esc(x.title || (что + ' ' + z.где)) + '</h3>'
       + '<a class="go" href="' + esc(x.link) + '" target="_blank" rel="noopener nofollow">Открыть на '
@@ -3567,7 +3529,7 @@ async function cityPage(slug, kind){
     const meta = [x.area, (x.rooms ? x.rooms + '-комн' : ''), x.capacity ? ('до ' + x.capacity + ' гостей') : '']
       .filter(Boolean).map(function(m){ return '<span>' + esc(m) + '</span>'; }).join('');
     return '<article class="c"><a href="' + esc(x.link) + '" target="_blank" rel="noopener nofollow">' + img + '</a>'
-      + '<div class="b"><div class="p">' + x.price + ' BYN <small>/ сутки</small></div>'
+      + '<div class="b"><div class="p">' + (x.от ? 'от ' : '') + x.price + ' BYN <small>/ сутки</small></div>'
       + '<div class="m">' + meta + '</div>'
       + '<h3>' + esc(x.title || (k.what + ' ' + c.where)) + '</h3>'
       + '<a class="go" href="' + esc(x.link) + '" target="_blank" rel="noopener nofollow">Открыть на ' + esc(srcTitle(x.src)) + '</a>'
@@ -4820,12 +4782,6 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
 /*ПРЕДЗАГРУЗКА*/
 const $=s=>document.querySelector(s);
 const CITIES = ${JSON.stringify(CITIES_MAP)};
-// Склейка повторов между площадками. Код тот же, что на сервере, —
-// он подставляется сюда исходным текстом, чтобы правило нельзя было
-// поправить в одном месте и забыть в другом.
-const ПРИОРИТЕТ = ${JSON.stringify(ПРИОРИТЕТ)};
-${домКлючи.toString()}
-${убратьПовторыПлощадок.toString()}
 const PAGE_SIZE = 24;
 window.__page = 1;
 window.__view = 'list';
@@ -5012,9 +4968,6 @@ async function run(){
       const d=await (await fetch('/api/search?'+p.toString())).json();
       if(token!==window.__runToken) return;
       (d.items||[]).forEach(function(x){ if(!seen.has(x.link)){ seen.add(x.link); window.__all.push(x); } });
-      // Одна и та же квартира приходит и с Flatbook, и с check-in.by. Пока
-      // источники спрашивались по одному, склеивать было нечего; теперь есть.
-      window.__all = убратьПовторыПлощадок(window.__all);
       applyPhotoFilter();
       counts[src]=d.total||0;
     }catch(e){ failed++; }
@@ -5094,7 +5047,7 @@ function renderCards(){
       const shr = '<button class="share" type="button" data-share="'+idx+'" title="Поделиться">\u21AA</button>';
       return '<div class="card">'+slider.replace('<div class="slider">', '<div class="slider">'+fav+shr)
         +'<div class="bd">'
-        +'<div class="pr">'+x.price+' '+curOf(x)+' <span class="tot">/ '+(x.unit||(x.src==='H101'?'ночь':'сутки'))+'</span></div>'+total+stars
+        +'<div class="pr">'+(x.от?'от ':'')+x.price+' '+curOf(x)+' <span class="tot">/ '+(x.unit||(x.src==='H101'?'ночь':'сутки'))+'</span></div>'+total+stars
         +meta
         +'<div class="ttl">'+(x.title||'').replace(/</g,'&lt;')+'</div>'+desc
         +'<div class="act">'+call+'<a href="'+x.link+'" target="_blank" rel="noopener">Открыть</a></div>'
@@ -5168,7 +5121,7 @@ function popupHtml(x){
     const unit=x.unit||(x.src==='H101'?'ночь':'сутки');
     const rate=(x.reviews>0&&x.rating>0)? '<div style="font-size:12px;color:#e6a400;font-weight:700;margin:2px 0">★ '+x.rating.toFixed(1)+' · '+x.reviews+' отз.</div>':'';
     const call=кнопкаТелефона(x, 'mp-call');
-    return '<div class="mp"><div class="mp-price">'+x.price+' '+curOf(x)+' <small>/ '+unit+'</small></div>'
+    return '<div class="mp"><div class="mp-price">'+(x.от?'от ':'')+x.price+' '+curOf(x)+' <small>/ '+unit+'</small></div>'
       +'<div class="mp-meta">'+(x.title||'')+'</div>'
       +(x.chips.length ? ('<div class="mp-meta">'+x.chips.join(' · ')+'</div>') : '')+rate+img+call
       +'<a class="mp-open" href="'+x.link+'" target="_blank" rel="noopener">Открыть на '+srcName(x.src)+' →</a></div>';
@@ -5176,7 +5129,7 @@ function popupHtml(x){
   const call=кнопкаТелефона(x, 'mp-call');
   const ap=x.approx? '<div class="mp-approx">≈ адрес примерный (по городу)</div>':'';
   const cap=x.capacity? (' · до '+x.capacity+' гостей'):'';
-  return '<div class="mp"><div class="mp-price">'+x.price+' BYN <small>/ сутки</small></div>'
+  return '<div class="mp"><div class="mp-price">'+(x.от?'от ':'')+x.price+' BYN <small>/ сутки</small></div>'
     +'<div class="mp-meta">'+(x.area||'')+' · '+x.rooms+'-комн'+cap+'</div>'
     +img+call
     +'<a class="mp-open" href="'+x.link+'" target="_blank" rel="noopener">Открыть на '+srcName(x.src)+' →</a>'+ap+'</div>';
@@ -5243,7 +5196,7 @@ function plotMap(fit){
     const mk=L.marker([x.lat,x.lng],{icon:icon,riseOnHover:true});
     window.__mlayer.addLayer(mk);
     const tip = x.chips
-      ? ((x.chips.length ? (x.chips.join(' · ')+' · ') : '')+x.price+' '+curOf(x))
+      ? ((x.chips.length ? (x.chips.join(' · ')+' · ') : '')+(x.от?'от ':'')+x.price+' '+curOf(x))
       : ((x.area?x.area+' · ':'')+x.rooms+'-комн · '+x.price+' BYN'+(x.approx?' (≈)':''));
     mk.bindTooltip(tip,{direction:'top',offset:[0,-14]});
     mk.bindPopup(popupHtml(x),{maxWidth:260,minWidth:220});
@@ -5776,7 +5729,7 @@ async function stayNear(i){
     const cards = (d.items || []).slice(0, 6).map(function(x){
       const img = (x.photos && x.photos[0]) ? '<img src="' + x.photos[0] + '" loading="lazy" alt="">' : '';
       return '<a href="' + x.link + '" target="_blank" rel="noopener">' + img
-        + '<div class="p">' + x.price + ' BYN' + (N ? ('<small> · ' + (x.price*N) + ' за ' + N + ' ноч.</small>') : '') + '</div><div class="s">'
+        + '<div class="p">' + (x.от ? 'от ' : '') + x.price + ' BYN' + (N ? ('<small> · ' + (x.price*N) + ' за ' + N + ' ноч.</small>') : '') + '</div><div class="s">'
         // У Realt точной точки нет — метка стоит у центра города. Показывать
         // «около 0 км» было бы враньём, поэтому пишем сам город.
         + (x.approx ? esc2(x.area || 'рядом') : (x.km + ' км'))
