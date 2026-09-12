@@ -68,12 +68,159 @@ function statsSave(){
   catch(e){ console.log('Статистика: не записалась —', e.message); }
 }
 setInterval(statsSave, 30000).unref();
-['SIGTERM','SIGINT'].forEach(function(sig){ process.on(sig, function(){ statsSave(); process.exit(0); }); });
+// Render перед перезапуском шлёт SIGTERM. Статистика пишется сразу, а данные,
+// ждущие отправки в GitHub, отправляем немедленно: иначе всё, что накопилось
+// за последние минуты, пропало бы вместе с временным диском. Ждём не дольше
+// восьми секунд: зависший GitHub не должен держать перезапуск.
+// Повторный сигнал (второй Ctrl+C) выходит сразу, не дожидаясь сети.
+let выходим = false;
+['SIGTERM','SIGINT'].forEach(function(sig){ process.on(sig, function(){
+  if(выходим) process.exit(0);
+  выходим = true;
+  statsSave();
+  setTimeout(function(){ process.exit(0); }, 8000);
+  try{ отправитьОтложенноеСейчас().then(function(){ process.exit(0); }, function(){ process.exit(0); }); }
+  catch(e){ process.exit(0); }   // сигнал пришёл, пока сервер ещё не дочитался до хранилища
+}); });
 
 function statsAdd(ev){
   STATS.push(ev);
   if(STATS.length > STATS_MAX) STATS.splice(0, STATS.length - STATS_MAX);
   statsDirty = true;
+}
+
+// ── Будильник ─────────────────────────────────────────────────────────────
+// Бесплатный Render усыпляет сервис после пятнадцати минут без входящих
+// запросов. Расписание GitHub Actions на это не годится: запуски по cron
+// опаздывают на часы. Поэтому сервер будит себя сам — стучится на свой же
+// внешний адрес (через прокси Render, иначе запрос не засчитывается).
+// RENDER_EXTERNAL_URL Render задаёт сам; локально его нет — будильник молчит.
+const SELF_URL = process.env.RENDER_EXTERNAL_URL || '';
+const SELF_PING_MS = +process.env.SELF_PING_MS || 540000;
+const БУДИЛЬНИК = { включён: !!SELF_URL, удачных: 0, неудачных: 0, последнийУдачный: 0, ошибка: '' };
+if(SELF_URL){
+  setInterval(function(){
+    fetch(SELF_URL.replace(/\/+$/, '') + '/ping?self=1', ждём())
+      .then(function(r){
+        if(!r.ok) throw new Error('ответ ' + r.status);
+        БУДИЛЬНИК.удачных++; БУДИЛЬНИК.последнийУдачный = Date.now();
+        return r.text();
+      })
+      .catch(function(e){
+        БУДИЛЬНИК.неудачных++; БУДИЛЬНИК.ошибка = e.message;
+        console.log('Будильник: не достучался —', e.message);
+      });
+  }, SELF_PING_MS).unref();
+}
+
+// ── Постоянное хранилище ──────────────────────────────────────────────────
+// Диск Render временный: всё, что сервер запишет, пропадает при перезапуске.
+// Поэтому файл пишем локально (читать быстро), а копию отправляем в сам
+// репозиторий, в папку данные/. При следующем развёртывании файл придёт
+// вместе с кодом. «[skip render]» в сообщении не даёт такому коммиту
+// запускать новое развёртывание. Отправляем не чаще раза в GH_SYNC_MS на
+// файл: счётчики меняются часто, а коммит на каждое изменение — это шум.
+const DATA_DIR  = process.env.DATA_DIR || (__dirname + '/данные');
+const GH_TOKEN  = process.env.GH_TOKEN || '';
+const GH_REPO   = process.env.GH_REPO || 'koluda49-web/poisk-kvartir';
+const GH_BRANCH = process.env.GH_BRANCH || 'main';
+const GH_API    = (process.env.GH_API || 'https://api.github.com').replace(/\/+$/, '');
+const GH_SYNC_MS = +process.env.GH_SYNC_MS || 600000;
+const ХРАНИЛИЩЕ = { включено: !!(GH_TOKEN && GH_REPO), отправок: 0, последняяУдача: 0,
+                    ошибка: '', когдаОшибка: 0 };
+// имя → { текст: что отправить (null — нечего), таймер, идёт: Promise текущей отправки }
+const ОТЛОЖЕННОЕ = new Map();
+// Имя становится частью пути к файлу и адреса в GitHub — никаких косых и точек.
+const можноИмя = function(имя){ return typeof имя === 'string' && /^[0-9A-Za-zА-Яа-яЁё_-]{1,60}$/.test(имя); };
+
+function прочитатьДанные(имя, поУмолчанию){
+  if(!можноИмя(имя)) return поУмолчанию;
+  try{ return JSON.parse(fs.readFileSync(DATA_DIR + '/' + имя + '.json', 'utf8')); }
+  catch(e){ return поУмолчанию; }
+}
+
+function записатьДанные(имя, объект){
+  if(!можноИмя(имя)){ console.log('Хранилище: недопустимое имя —', имя); return false; }
+  const текст = JSON.stringify(объект, null, 1);
+  try{
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    // Сначала во временный файл, потом переименование: сбой посередине
+    // записи не оставит вместо данных половину файла.
+    const файл = DATA_DIR + '/' + имя + '.json';
+    fs.writeFileSync(файл + '.tmp', текст);
+    fs.renameSync(файл + '.tmp', файл);
+  }catch(e){
+    console.log('Хранилище: не записался файл ' + имя + ' —', e.message);
+    ХРАНИЛИЩЕ.ошибка = имя + ': ' + e.message; ХРАНИЛИЩЕ.когдаОшибка = Date.now();
+    return false;
+  }
+  if(ХРАНИЛИЩЕ.включено) отложитьОтправку(имя, текст);
+  return true;
+}
+
+function отложитьОтправку(имя, текст){
+  let з = ОТЛОЖЕННОЕ.get(имя);
+  if(!з){ з = { текст: null, таймер: null, идёт: null }; ОТЛОЖЕННОЕ.set(имя, з); }
+  з.текст = текст;                        // отправится самое свежее
+  if(з.таймер) return;
+  // Отправка всегда через полное окно после первой неотправленной записи:
+  // всё, что придёт за это время, уйдёт одним коммитом, а между двумя
+  // отправками одного файла заведомо не меньше GH_SYNC_MS.
+  з.таймер = setTimeout(function(){ з.таймер = null; отправитьИмя(имя); }, GH_SYNC_MS);
+  з.таймер.unref();
+}
+
+// Отправляет одно имя; две отправки одного файла одновременно не идут —
+// вторая дождётся первой (иначе обе возьмут один sha и одна получит 409).
+function отправитьИмя(имя){
+  const з = ОТЛОЖЕННОЕ.get(имя);
+  if(!з) return Promise.resolve();
+  const предыдущая = з.идёт || Promise.resolve();
+  const эта = предыдущая.then(function(){
+    if(з.текст === null) return;
+    const текст = з.текст; з.текст = null;
+    return вGitHub(имя, текст).then(function(){
+      ХРАНИЛИЩЕ.отправок++; ХРАНИЛИЩЕ.последняяУдача = Date.now();
+    }, function(e){
+      ХРАНИЛИЩЕ.ошибка = имя + ': ' + e.message; ХРАНИЛИЩЕ.когдаОшибка = Date.now();
+      console.log('Хранилище: в GitHub не ушло ' + имя + ' —', e.message);
+      // Не терять: если новее ничего не пришло, попробуем в следующем окне.
+      if(з.текст === null && !выходим) отложитьОтправку(имя, текст);
+    });
+  });
+  з.идёт = эта;
+  return эта;
+}
+
+async function вGitHub(имя, текст){
+  const путь = ['данные', имя + '.json'].map(encodeURIComponent).join('/');
+  const адрес = GH_API + '/repos/' + GH_REPO + '/contents/' + путь;
+  const заголовки = { 'Authorization': 'Bearer ' + GH_TOKEN, 'User-Agent': 'poisk-kvartir-server',
+                      'Accept': 'application/vnd.github+json' };
+  // sha нужен, чтобы заменить уже лежащий файл; 404 — файла ещё нет.
+  const г = await fetch(адрес + '?ref=' + encodeURIComponent(GH_BRANCH), ждём({ headers: заголовки }));
+  let sha;
+  if(г.ok) sha = (await г.json()).sha;
+  else{
+    await г.text().catch(function(){});
+    if(г.status !== 404) throw new Error('чтение: ответ ' + г.status);
+  }
+  const тело = { message: 'данные: ' + имя + ' [skip render]', branch: GH_BRANCH,
+                 content: Buffer.from(текст, 'utf8').toString('base64') };
+  if(sha) тело.sha = sha;
+  const п = await fetch(адрес, ждём({ method: 'PUT',
+    headers: Object.assign({ 'Content-Type': 'application/json' }, заголовки),
+    body: JSON.stringify(тело) }));
+  if(!п.ok) throw new Error('запись: ответ ' + п.status + ' ' + (await п.text()).slice(0, 120));
+}
+
+// При выходе: всё, что ждёт своего окна, — прямо сейчас.
+function отправитьОтложенноеСейчас(){
+  return Promise.all([...ОТЛОЖЕННОЕ.entries()].map(function(пара){
+    const з = пара[1];
+    if(з.таймер){ clearTimeout(з.таймер); з.таймер = null; }
+    return (з.текст !== null || з.идёт) ? отправитьИмя(пара[0]) : null;
+  }));
 }
 
 // откуда пришёл человек — приводим к понятному названию
@@ -220,6 +367,7 @@ function statsPage(){
            '</div>' + (note ? '<div class="note">' + note + '</div>' : '') + '</div>';
   }
   const pct = function(a, b){ return b ? Math.round(a/b*100) + '%' : '—'; };
+  const назад = function(т){ return т ? (Math.round((now - т) / 60000) + ' мин назад') : 'ещё не было'; };
   function median(nums){
     if(!nums.length) return 0;
     const a = nums.slice().sort(function(x,y){ return x-y; });
@@ -331,6 +479,25 @@ function statsPage(){
             ? 'Сайт запущен недавно — подождите полчаса, и по «самому долгому перерыву» станет видно, будит ли его пингер.'
             : 'Перерывы короче пятнадцати минут: кто-то регулярно дёргает сайт, засыпать он не должен.')) +
     '</p></div>' +
+
+    // Будильник: сервер сам стучится на свой внешний адрес раз в SELF_PING_MS.
+    '<h2>Будильник</h2><div class="card"><div class="tiles">' +
+      tile('Будильник', БУДИЛЬНИК.включён ? 'включён' : 'выключен',
+           БУДИЛЬНИК.включён ? ('раз в ' + Math.round(SELF_PING_MS / 60000 * 10) / 10 + ' мин') : 'нет RENDER_EXTERNAL_URL') +
+      tile('Удачных пингов', БУДИЛЬНИК.удачных, 'с запуска') +
+      tile('Неудачных', БУДИЛЬНИК.неудачных, БУДИЛЬНИК.ошибка ? esc(БУДИЛЬНИК.ошибка) : 'с запуска') +
+      tile('Последний ответ', назад(БУДИЛЬНИК.последнийУдачный), 'удачный пинг') +
+    '</div></div>' +
+
+    // Хранилище: копии файлов из данные/ в репозитории — переживают перезапуск.
+    '<h2>Постоянное хранилище</h2><div class="card"><div class="tiles">' +
+      tile('Отправка в GitHub', ХРАНИЛИЩЕ.включено ? 'включена' : 'выключена',
+           ХРАНИЛИЩЕ.включено ? esc(GH_REPO + ' · ' + GH_BRANCH) : 'нет GH_TOKEN — данные только на временном диске') +
+      tile('Удачных отправок', ХРАНИЛИЩЕ.отправок, 'с запуска') +
+      tile('Последняя удачная', назад(ХРАНИЛИЩЕ.последняяУдача), '') +
+      tile('Последняя ошибка', ХРАНИЛИЩЕ.когдаОшибка ? назад(ХРАНИЛИЩЕ.когдаОшибка) : 'не было',
+           ХРАНИЛИЩЕ.ошибка ? esc(ХРАНИЛИЩЕ.ошибка) : '') +
+    '</div></div>' +
 
     '<h2>Путь посетителя за 7 дней</h2><div class="card funnel">' +
       '<div><b>' + sessView.size + '</b> зашли на сайт</div>' +
@@ -6637,6 +6804,19 @@ http.createServer(async (req,res)=>{
     text = String(text).replace(/<[^>]+>/g,' ').replace(/&nbsp;/g,' ').replace(/\s+/g,' ').trim();
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
     res.end(JSON.stringify({text})); return;
+  }
+  // Служебный вход для проверки хранилища. Существует только при DATA_TEST=1:
+  // на рабочем сайте любой мог бы писать через него что угодно.
+  if(process.env.DATA_TEST === '1' && u.pathname === '/api/_data-test' && req.method === 'POST'){
+    let body='';
+    req.on('data', c=>{ body+=c; if(body.length>100000) req.destroy(); });
+    req.on('end', ()=>{
+      let ok = false;
+      try{ const d = JSON.parse(body||'{}'); ok = записатьДанные(d.имя, d.объект); }catch(e){}
+      res.writeHead(ok ? 200 : 400, {'Content-Type':'application/json; charset=utf-8'});
+      res.end(JSON.stringify({ok}));
+    });
+    return;
   }
   // приём событий статистики со страницы
   if(u.pathname === '/api/t' && req.method === 'POST'){
