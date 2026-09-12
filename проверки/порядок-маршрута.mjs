@@ -39,7 +39,7 @@ const check = (n, ok, d) => ok ? (passed++, console.log('  OK   ' + n)) : (faile
 
 // Перетащить строку за ручку настоящими событиями мыши: браузер сам
 // превращает их в pointerdown/pointermove/pointerup.
-async function тащить(строки, откуда, куда) {
+async function тащить(строки, откуда, куда, отменить) {
   // прокрутка на странице плавная — ждём, пока доедет, иначе координаты устареют
   await js(`document.querySelectorAll(${JSON.stringify(строки)})[${откуда}].scrollIntoView({block:'center'}); 1`);
   await sleep(1200);
@@ -63,6 +63,9 @@ async function тащить(строки, откуда, куда) {
       едет = await js(`!!document.querySelector('.dragging') && document.querySelector('.dragging').style.position === 'fixed'`);
     }
   }
+  // Отмена указателя (так бывает, когда браузер забирает палец себе):
+  // мышью настоящий pointercancel не вызвать, шлём его с тем же pointerId.
+  if (отменить) await js(`document.dispatchEvent(new PointerEvent('pointercancel', { pointerId: window.__pid, isPrimary: true, bubbles: true })); 1`);
   await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: к.x, y: к.y2, button: 'left', buttons: 0, clickCount: 1 });
   await sleep(400);
   return { заместитель, едет };
@@ -144,6 +147,55 @@ if (лида) {
   const сНовой = await иды();
   check('на /marshrut новая точка в ручном режиме встала в конец', сНовой.length === 4 && сНовой[3] === String(лида.id) && JSON.stringify(сНовой.slice(0, 3)) === JSON.stringify(послеСтрелки), сНовой.join(' | '));
 } else check('нашёлся Лидский замок для проверки новой точки', false);
+
+// ── отмена перетаскивания ────────────────────────────────────────────────
+await js(`window.__pid = null; document.addEventListener('pointerdown', function(e){ window.__pid = e.pointerId; }, true); 1`);
+const доОтмены = await иды();
+const ходОтмены = await тащить('#rlist .it', 2, 0, true);
+check('отмена: пока тянули, строка правда ехала', ходОтмены.заместитель && ходОтмены.едет);
+const послеОтмены = await иды();
+const тПослеОтмены = await js(`JSON.stringify(Т.map(function(p){ return String(p.id); }))`).then(JSON.parse);
+check('отмена: порядок строк не изменился', JSON.stringify(послеОтмены) === JSON.stringify(доОтмены), послеОтмены.join(' | '));
+check('отмена: строки совпадают с порядком точек', JSON.stringify(послеОтмены) === JSON.stringify(тПослеОтмены), тПослеОтмены.join(' | '));
+check('отмена: номера по порядку, полоски нет',
+  JSON.stringify(await имена('#rlist .it .n')) === JSON.stringify(доОтмены.map((_, i) => String(i + 1)))
+  && (await js(`document.querySelectorAll('.drag-ph, .dragging').length`)) === 0);
+await тащить('#rlist .it', 2, 0);
+const послеОтменыИТаска = await иды();
+check('после отмены следующее перетаскивание двигает нужную точку',
+  JSON.stringify(послеОтменыИТаска) === JSON.stringify([доОтмены[2], доОтмены[0], доОтмены[1]].concat(доОтмены.slice(3))), послеОтменыИТаска.join(' | '));
+
+// ── нажали на ручку мышью — стрелки работают сразу, без Tab ──────────────
+{
+  await js(`document.activeElement && document.activeElement.blur && document.activeElement.blur(); 1`);
+  const к = JSON.parse(await js(`(function(){ var h = document.querySelector('#rlist .it .drag').getBoundingClientRect(); return JSON.stringify({ x: h.left + h.width / 2, y: h.top + h.height / 2 }); })()`));
+  await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: к.x, y: к.y });
+  await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: к.x, y: к.y, button: 'left', buttons: 1, clickCount: 1 });
+  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: к.x, y: к.y, button: 'left', buttons: 0, clickCount: 1 });
+  await sleep(200);
+  check('после нажатия мышью фокус на ручке', await js(`document.activeElement === document.querySelector('#rlist .it .drag')`));
+  const доКлав = await иды();
+  await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 });
+  await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 });
+  await sleep(300);
+  const послеКлав = await иды();
+  check('после нажатия мышью стрелка вниз сразу переставляет',
+    JSON.stringify(послеКлав) === JSON.stringify([доКлав[1], доКлав[0]].concat(доКлав.slice(2))), послеКлав.join(' | '));
+}
+
+// ── режим сменили в другой вкладке — адрес обновился ─────────────────────
+{
+  const маршрутДо = await js(`localStorage.getItem('route')`);
+  await js(`localStorage.setItem('routeOrder', 'auto'); window.dispatchEvent(new StorageEvent('storage', { key: 'routeOrder', newValue: 'auto' })); 1`);
+  await sleep(300);
+  const адресАвто = await js(`location.search`);
+  check('routeOrder=auto из другой вкладки — в адресе нет o=1', !/[?&]o=1/.test(адресАвто), адресАвто);
+  check('смена режима из другой вкладки не переписывает маршрут в хранилище', (await js(`localStorage.getItem('route')`)) === маршрутДо);
+  await js(`localStorage.setItem('routeOrder', 'manual'); window.dispatchEvent(new StorageEvent('storage', { key: 'routeOrder', newValue: 'manual' })); 1`);
+  await sleep(300);
+  const адресРучной = await js(`location.search`);
+  check('routeOrder=manual из другой вкладки — в адресе снова o=1', /[?&]o=1/.test(адресРучной), адресРучной);
+}
 
 // ── ссылка с o=1 в чистом профиле ────────────────────────────────────────
 await js(`localStorage.clear(); 1`);

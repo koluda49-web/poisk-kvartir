@@ -3288,10 +3288,22 @@ function перетаскиваниеСтрок(список, перестави
       if(d.заместитель.parentNode) d.заместитель.parentNode.removeChild(d.заместитель);
       return;
     }
-    список.insertBefore(d.строка, d.заместитель);
+    // Новое место — сколько строк стоит перед полоской (саму строку не считаем).
+    var куда = 0;
+    for(var э = список.firstElementChild; э && э !== d.заместитель; э = э.nextElementSibling){
+      if(э !== d.строка) куда++;
+    }
+    // Сама строка в разметке всё это время стояла на прежнем месте — ездила
+    // только полоска. Поэтому при отмене (браузер забрал палец, пришёл звонок)
+    // и при отпускании там же достаточно убрать полоску: порядок на экране
+    // остаётся тем же, что в маршруте, а фокус не слетает с ручки, как слетел
+    // бы при переносе узла.
     список.removeChild(d.заместитель);
-    var куда = строки().indexOf(d.строка);
-    if(применить && куда >= 0 && куда !== d.откуда) переставить(d.откуда, куда);
+    if(!применить || куда === d.откуда) return;
+    переставить(d.откуда, куда);
+    // список перерисован — фокус на ручку той же точки, чтобы дальше работали стрелки
+    var р = список.querySelectorAll('.drag')[куда];
+    if(р) try{ р.focus({ preventScroll: true }); }catch(err){}
   }
   function ход(e){
     if(!т || e.pointerId !== т.ид) return;
@@ -3316,6 +3328,9 @@ function перетаскиваниеСтрок(список, перестави
     var строка = строкаИз(ручка);
     if(!строка) return;
     e.preventDefault();
+    // preventDefault гасит и фокус кнопки, а без фокуса после нажатия мышью
+    // не работали бы стрелки — ставим его сами, не дёргая прокрутку
+    try{ ручка.focus({ preventScroll: true }); }catch(err){}
     var r = строка.getBoundingClientRect();
     var заместитель = document.createElement('div');
     заместитель.className = 'drag-ph';
@@ -3486,7 +3501,9 @@ async function marshrutPage(ids, ручной){
     +   'var m=s.match(/^\\s*(-?\\d{1,2}\\.\\d+)[\\s,;]+(-?\\d{1,3}\\.\\d+)\\s*$/);'
     +   'if(!m)return null;var a=+m[1],b=+m[2];'
     +   'if(Math.abs(a)>90||Math.abs(b)>180)return null;return [a,b];}'
-    + 'function сохранить(){try{localStorage.setItem("route",JSON.stringify(Т));}catch(e){}'+   'var q = Т.length ? ("?p=" + Т.map(вСсылку).join(",") + (ПОРЯДОК==="manual"?"&o=1":"")) : "";'+   'history.replaceState(null, "", "/marshrut" + q);}'+ 'function убрать(id){Т = Т.filter(function(p){return String(p.id)!==String(id);});нарисовать();сохранить();}'+ 'function добавить(p){if(Т.some(function(x){return String(x.id)===String(p.id);}))return;'+   'Т = Т.concat([{id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}]);нарисовать();сохранить();}'+ 'function порядок(){if(ПОРЯДОК==="manual"||Т.length<3)return;var left=Т.slice(1),out=[Т[0]];'+   'while(left.length){var c=out[out.length-1],bi=0,bd=Infinity;'+     'left.forEach(function(p,i){var d=км(c,p);if(d<bd){bd=d;bi=i;}});'+     'out.push(left.splice(bi,1)[0]);}Т=out;}'+ 'function нарисовать(){порядок();'+   'var сумма=0, строки="";'+   'Т.forEach(function(p,i){var шаг=i?км(Т[i-1],p):0;сумма+=шаг;'+     'строки += "<div class=\\"it\\"><button class=\\"drag\\" type=\\"button\\" aria-label=\\"Перетащить\\">⋮⋮</button><span class=\\"n\\">"+(i+1)+"</span>"'+       '+"<span class=\\"t\\">"+(своя(p)?("<b class=\\"ownn\\">📍 "+esc(p.name)+"</b><small>своя точка · её можно перетащить на карте</small>"):("<a href=\\"/mesto/"+p.id+"\\">"+esc(p.name)+"</a>"))'+       '+(p.addr?("<small>"+esc(p.addr)+"</small>"):"")+"</span>"'+       '+"<span class=\\"km\\">"+(i?("+"+Math.round(шаг)+" км"):"старт")+"</span>"'+       '+"<button class=\\"x\\" type=\\"button\\" title=\\"убрать\\" data-id=\\""+p.id+"\\">×</button></div>";});'+   'document.getElementById("rlist").innerHTML = строки; подписатьШаги();'+   'document.getElementById("rsub").textContent = Т.length'+     '? (Т.length + " точек · около " + Math.round(сумма) + " км между ними")'+     ': "Пока пусто";'
+    + 'function сохранить(){try{localStorage.setItem("route",JSON.stringify(Т));}catch(e){}обновитьАдрес();}'
+    // адрес страницы — это ссылка на маршрут: точки и, если порядок ручной, o=1
+    + 'function обновитьАдрес(){var q = Т.length ? ("?p=" + Т.map(вСсылку).join(",") + (ПОРЯДОК==="manual"?"&o=1":"")) : "";'+   'history.replaceState(null, "", "/marshrut" + q);}'+ 'function убрать(id){Т = Т.filter(function(p){return String(p.id)!==String(id);});нарисовать();сохранить();}'+ 'function добавить(p){if(Т.some(function(x){return String(x.id)===String(p.id);}))return;'+   'Т = Т.concat([{id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}]);нарисовать();сохранить();}'+ 'function порядок(){if(ПОРЯДОК==="manual"||Т.length<3)return;var left=Т.slice(1),out=[Т[0]];'+   'while(left.length){var c=out[out.length-1],bi=0,bd=Infinity;'+     'left.forEach(function(p,i){var d=км(c,p);if(d<bd){bd=d;bi=i;}});'+     'out.push(left.splice(bi,1)[0]);}Т=out;}'+ 'function нарисовать(){порядок();'+   'var сумма=0, строки="";'+   'Т.forEach(function(p,i){var шаг=i?км(Т[i-1],p):0;сумма+=шаг;'+     'строки += "<div class=\\"it\\"><button class=\\"drag\\" type=\\"button\\" aria-label=\\"Перетащить\\">⋮⋮</button><span class=\\"n\\">"+(i+1)+"</span>"'+       '+"<span class=\\"t\\">"+(своя(p)?("<b class=\\"ownn\\">📍 "+esc(p.name)+"</b><small>своя точка · её можно перетащить на карте</small>"):("<a href=\\"/mesto/"+p.id+"\\">"+esc(p.name)+"</a>"))'+       '+(p.addr?("<small>"+esc(p.addr)+"</small>"):"")+"</span>"'+       '+"<span class=\\"km\\">"+(i?("+"+Math.round(шаг)+" км"):"старт")+"</span>"'+       '+"<button class=\\"x\\" type=\\"button\\" title=\\"убрать\\" data-id=\\""+p.id+"\\">×</button></div>";});'+   'document.getElementById("rlist").innerHTML = строки; подписатьШаги();'+   'document.getElementById("rsub").textContent = Т.length'+     '? (Т.length + " точек · около " + Math.round(сумма) + " км между ними")'+     ': "Пока пусто";'
     +   'document.getElementById("rAuto").style.display = (ПОРЯДОК==="manual"&&Т.length>2) ? "" : "none";'
     +   'var g = document.getElementById("rGo");'+   'g.href = "https://yandex.by/maps/?rtext=" + Т.map(function(p){return p.lat+","+p.lng;}).join("~") + "&rtt=auto";'+   'g.className = "go" + (Т.length ? "" : " off");'+   'кудаЗаЖильём();'
     + '  document.getElementById("rEmpty").style.display = Т.length ? "none" : "";'+   'document.getElementById("rmap").style.display = (Т.length||РЕЖИМ) ? "" : "none";'+   'рисоватьКарту();}'+ 'function рисоватьКарту(){if((!Т.length&&!РЕЖИМ)||typeof L==="undefined")return;'+   'if(!карта){карта=L.map("rmap",{scrollWheelZoom:false});'+     'карта.attributionControl.setPrefix("");'+     'L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,'+       'attribution:"&copy; OpenStreetMap"}).addTo(карта);слой=L.layerGroup().addTo(карта);карта.on("click",поКарте);}'+   'слой.clearLayers(); if(линия){карта.removeLayer(линия);линия=null;}'+   'var пути=[];'+   'Т.forEach(function(p,i){пути.push([p.lat,p.lng]);'+     'L.marker([p.lat,p.lng],{icon:L.divIcon({className:"",iconSize:[26,26],iconAnchor:[13,13],'+       'html:"<div class=\\"pin"+(своя(p)?" own":"")+"\\">"+(i+1)+"</div>"}),draggable:своя(p)})'
@@ -3538,7 +3555,7 @@ async function marshrutPage(ids, ручной){
     +   'поставитьПорядок("manual");нарисовать();сохранить();}'
     + 'перетаскиваниеСтрок(document.getElementById("rlist"), переставить);'
     + 'нарисовать();'+ '(function(){var a=document.getElementById("back");if(!a)return;'+ 'try{ var r=document.referrer, с=localStorage.getItem("backTo");'+ '  if(r && r.indexOf(location.origin)===0 && /^\\/(\\?|$)/.test(r.slice(location.origin.length))) a.href=r;'+ '  else if(с && с.charAt(0)==="/") a.href=с; }catch(e){}})();'+ 'window.addEventListener("storage", function(e){if(e.key && e.key!=="route" && e.key!=="routeOrder")return;'
-    +   'ПОРЯДОК=прочитатьПорядок(); if(e.key==="routeOrder"){нарисовать();return;}'
+    +   'ПОРЯДОК=прочитатьПорядок(); if(e.key==="routeOrder"){нарисовать();обновитьАдрес();return;}'
     +   'var н=прочитать(); if(!н.length && Т.length) return; Т=н; нарисовать();});'
     + 'document.addEventListener("visibilitychange", function(){'+   'if(document.visibilityState!=="visible")return; var н=прочитать(), п=прочитатьПорядок();'
     // в другой вкладке могли переставить те же точки или сменить режим
