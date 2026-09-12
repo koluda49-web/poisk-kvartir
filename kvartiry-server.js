@@ -3366,7 +3366,22 @@ function перетаскиваниеСтрок(список, перестави
   });
 }
 
-async function marshrutPage(ids, ручной){
+// Снимок точки для og:image: соцсети берут только полный адрес. Свои снимки
+// лежат под /фото-точек/ с русским именем файла — кодируем, иначе часть
+// роботов адрес не разберёт.
+function снимокДляСоцсетей(pic){
+  if(!pic) return '';
+  return pic.charAt(0) === '/' ? (SITE_URL + encodeURI(pic)) : pic;
+}
+
+// опции: true/false (старый вызов — только «порядок руками») или объект
+// { ручной, заголовок, вступление, адрес }. С адресом это страница готового
+// маршрута из видео (/m/<slug>): свой заголовок и вступление, индексируется,
+// а в браузере показывает ровно эти точки, не подмешивая сохранённый маршрут.
+async function marshrutPage(ids, опции){
+  const о = (опции && typeof опции === 'object') ? опции : { ручной: !!опции };
+  const ручной = !!о.ручной;
+  const изВидео = !!о.адрес;
   const все = await placesRaw();
   const найденные = ids.map(function(t){
     if(/^[0-9]+$/.test(t)){
@@ -3398,23 +3413,47 @@ async function marshrutPage(ids, ручной){
       + '<button class="x" type="button" title="убрать" data-id="' + p.id + '">×</button></div>';
   }).join('');
 
-  const заголовок = точки.length
+  const заголовок = изВидео ? String(о.заголовок || 'Маршрут на день')
+    : точки.length
     ? ('Маршрут на день: ' + точки.map(p => p.name).slice(0, 3).join(', ')
        + (точки.length > 3 ? (' и ещё ' + (точки.length - 3)) : ''))
     : 'Маршрут на день по Беларуси';
 
+  // Для готового маршрута — всё, что нужно ссылке в соцсетях и поисковику.
+  // Снимок ищем при каждом запросе, а не при запуске: владелец докладывает
+  // фото в «фото-точек», и они должны подхватиться сами.
+  let голова;
+  if(изВидео){
+    const адрес = SITE_URL + о.адрес;
+    const сФото = ids.map(function(t){ return все.find(x => String(x.id) === t); })
+      .filter(function(p){ return p && p.pic; })[0];
+    const снимок = сФото ? снимокДляСоцсетей(сФото.pic) : '';
+    const описание = String(о.вступление || '');
+    голова = '<meta name="description" content="' + esc(описание) + '">'
+      + '<meta name="robots" content="index,follow">'
+      + '<link rel="canonical" href="' + esc(адрес) + '">'
+      + '<meta property="og:type" content="article">'
+      + '<meta property="og:title" content="' + esc(заголовок) + '">'
+      + '<meta property="og:description" content="' + esc(описание) + '">'
+      + '<meta property="og:url" content="' + esc(адрес) + '">'
+      + (снимок ? ('<meta property="og:image" content="' + esc(снимок) + '">'
+                   + '<meta name="twitter:card" content="summary_large_image">') : '');
+  } else {
+    голова = '<meta name="description" content="Маршрут на день по Беларуси'
+      +   (точки.length ? (': ' + точки.length + ' точек, около ' + Math.round(сумма) + ' км между ними') : '')
+      +   '. Карта, порядок объезда и переход в Яндекс.Карты.">'
+      + '<meta name="robots" content="noindex,follow">';
+  }
+
   return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
     + '<title>' + esc(заголовок) + '</title>'
-    + '<meta name="description" content="Маршрут на день по Беларуси'
-    +   (точки.length ? (': ' + точки.length + ' точек, около ' + Math.round(сумма) + ' км между ними') : '')
-    +   '. Карта, порядок объезда и переход в Яндекс.Карты.">'
-    + '<meta name="robots" content="noindex,follow">'
+    + голова
     + '<meta name="theme-color" content="#9a3412">'
     + '<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%F0%9F%8F%A0%3C/text%3E%3C/svg%3E">'
     + '<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">'
     + '<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></' + 'script>'
-    + '<style>' + '*{box-sizing:border-box}'+ 'body{margin:0;font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#faf7f3;color:#1c1917}'+ '.w{max-width:900px;margin:0 auto;padding:20px 16px 60px}'+ 'a{color:#9a3412}'+ '.back{display:inline-block;margin:0 0 14px;padding:9px 17px;background:#fff;border:1px solid #e9e2d8;'+   'border-radius:999px;text-decoration:none;color:#1c1917;font-size:14.5px;font-weight:600}'+ 'h1{font-size:clamp(22px,4.4vw,32px);line-height:1.15;margin:0 0 4px;letter-spacing:-.02em}'+ '.sub{color:#57534e;margin:0 0 8px}'+ '.how{color:#57534e;font-size:14.5px;margin:0 0 16px;max-width:70ch}'+ '.own{margin:12px 0 0}'
+    + '<style>' + '*{box-sizing:border-box}'+ 'body{margin:0;font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#faf7f3;color:#1c1917}'+ '.w{max-width:900px;margin:0 auto;padding:20px 16px 60px}'+ 'a{color:#9a3412}'+ '.back{display:inline-block;margin:0 0 14px;padding:9px 17px;background:#fff;border:1px solid #e9e2d8;'+   'border-radius:999px;text-decoration:none;color:#1c1917;font-size:14.5px;font-weight:600}'+ 'h1{font-size:clamp(22px,4.4vw,32px);line-height:1.15;margin:0 0 4px;letter-spacing:-.02em}'+ '.sub{color:#57534e;margin:0 0 8px}'+ '.how{color:#57534e;font-size:14.5px;margin:0 0 16px;max-width:70ch}'+ '.intro{font-size:17px;margin:6px 0 10px;max-width:70ch}'+ '.own{margin:12px 0 0}'
     + '.ownb{font:inherit;font-weight:700;cursor:pointer;background:#fff;color:#1c1917;border:1px dashed #9a3412;'
     +   'border-radius:10px;padding:11px 15px}'
     + '.ownb.on{background:#9a3412;color:#fff;border-style:solid}'
@@ -3436,12 +3475,17 @@ async function marshrutPage(ids, ручной){
     +   '.it.dragging{background:#1d1916}.drag-ph{background:#241f1a;border-color:#332c25}.auto{color:#e2703a}}'
      + '</style></head><body><div class="w">'
     + '<a class="back" id="back" href="/?country=places">← Ко всем местам</a>'
-    + '<h1>Маршрут на день</h1>'
-    + '<p class="how">Порядок объезда посчитан сам: от первой точки к ближайшей. '
-    +   'Свой порядок — перетащите точку за ⋮⋮ слева. '
+    + (изВидео
+        ? ('<h1>' + esc(заголовок) + '</h1>'
+           + (о.вступление ? ('<p class="intro">' + esc(о.вступление) + '</p>') : '')
+           + '<p class="how">Точки стоят в том порядке, как в видео. '
+           +   'Свой порядок — перетащите точку за ⋮⋮ слева. ')
+        : ('<h1>Маршрут на день</h1>'
+           + '<p class="how">Порядок объезда посчитан сам: от первой точки к ближайшей. '
+           +   'Свой порядок — перетащите точку за ⋮⋮ слева. '))
     +   'Линия и километраж — по настоящим дорогам, не по прямой. Точку можно доложить '
     +   'поиском внизу или убрать крестиком, а потом открыть весь маршрут в Яндекс.Картах. '
-    +   'Держите эту страницу открытой рядом со списком мест — новые точки появятся здесь сами.</p>'
+    +   (изВидео ? '</p>' : 'Держите эту страницу открытой рядом со списком мест — новые точки появятся здесь сами.</p>')
     + '<div class="sumrow"><p class="sub" id="rsub">' + (точки.length
         ? (точки.length + ' точек · около ' + Math.round(сумма) + ' км между ними')
         : 'Пока пусто') + '</p>'
@@ -3471,16 +3515,33 @@ async function marshrutPage(ids, ручной){
         })) + ';'
     + 'var СЕРВЕРНЫЕ = ' + JSON.stringify(точки) + ';'
     + 'var РУЧНОЙ_ПО_ССЫЛКЕ = ' + (ручной ? 'true' : 'false') + ';'
+    // Маршрут из видео (/m/<slug>): показываем ровно его, даже если у человека
+    // сохранён другой, и ничего не пишем в хранилище, пока он сам не поменяет.
+    + 'var ИЗ_ВИДЕО = ' + (изВидео ? 'true' : 'false') + ';'
     // Порядок точек: "auto" — объезд по близости, "manual" — как расставил человек.
     // Режим один на маршрут и хранится рядом с ним, в routeOrder: главная страница
     // и эта вкладка должны показывать один и тот же порядок.
     + 'function прочитатьПорядок(){try{return localStorage.getItem("routeOrder")==="manual"?"manual":"auto";}catch(e){return "auto";}}'
     + 'var ПОРЯДОК = прочитатьПорядок();'
     + 'function поставитьПорядок(р){ПОРЯДОК=р;try{localStorage.setItem("routeOrder",р);}catch(e){}}'
-    + 'function прочитать(){try{var v=JSON.parse(localStorage.getItem("route")||"[]");'+   'return Array.isArray(v)?v.filter(function(p){return p&&p.lat&&p.lng;}):[];}catch(e){return [];}}'+ 'var ПО_ССЫЛКЕ = /[?&]p=/.test(location.search);'
+    + 'function прочитать(){try{var v=JSON.parse(localStorage.getItem("route")||"[]");'+   'return Array.isArray(v)?v.filter(function(p){return p&&p.lat&&p.lng;}):[];}catch(e){return [];}}'+ 'var ПО_ССЫЛКЕ = ИЗ_ВИДЕО || /[?&]p=/.test(location.search);'
     // по ссылке с o=1 точки расставлены руками; без o сохранённый режим не трогаем
-    + 'if(ПО_ССЫЛКЕ && РУЧНОЙ_ПО_ССЫЛКЕ) поставитьПорядок("manual");'
-    + 'var МОЙ = прочитать();'+ 'var Т = ПО_ССЫЛКЕ ? СЕРВЕРНЫЕ : МОЙ;'+ 'if(ПО_ССЫЛКЕ && МОЙ.length > СЕРВЕРНЫЕ.length && СЕРВЕРНЫЕ.every(function(p){'+   'return МОЙ.some(function(x){return String(x.id)===String(p.id);});})) Т = МОЙ;'+ 'var карта = null, слой = null, линия = null;'+ 'function км(a,b){var t=Math.PI/180,x=(b.lat-a.lat)*t,y=(b.lng-a.lng)*t;'+   'var h=Math.sin(x/2)*Math.sin(x/2)+Math.cos(a.lat*t)*Math.cos(b.lat*t)*Math.sin(y/2)*Math.sin(y/2);'+   'return 6371*2*Math.asin(Math.sqrt(h));}'+ 'function esc(t){return String(t==null?"":t).replace(/[&<>"]/g,function(c){'+   'return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c];});}'+ 'var РЕЖИМ=false, НЕ_ДВИГАТЬ=false;'
+    + 'if(ИЗ_ВИДЕО) ПОРЯДОК = "manual"; else if(ПО_ССЫЛКЕ && РУЧНОЙ_ПО_ССЫЛКЕ) поставитьПорядок("manual");'
+    + 'var МОЙ = прочитать();'+ 'var Т = ПО_ССЫЛКЕ ? СЕРВЕРНЫЕ : МОЙ;'+ 'if(ПО_ССЫЛКЕ && !ИЗ_ВИДЕО && МОЙ.length > СЕРВЕРНЫЕ.length && СЕРВЕРНЫЕ.every(function(p){'+   'return МОЙ.some(function(x){return String(x.id)===String(p.id);});})) Т = МОЙ;'
+    + 'function ключИд(с){return с.map(function(x){return String(x.id);}).join(",");}'
+    + 'function наборИд(с){return с.map(function(x){return String(x.id);}).sort().join(",");}'
+    // СВЯЗАН — на странице тот же маршрут, что в хранилище, и чужие правки
+    // (другая вкладка, возврат на страницу) надо подхватывать. Страница по
+    // ссылке или из видео в чистом профиле не связана: пустое хранилище не
+    // должно стирать то, что человек открыл, — так страница пустела после
+    // переключения на другое приложение и обратно.
+    + 'var СВЯЗАН = !ИЗ_ВИДЕО && (!ПО_ССЫЛКЕ || Т === МОЙ || наборИд(МОЙ) === наборИд(Т));'
+    // что лежало в хранилище, когда страница его видела в последний раз:
+    // при возврате на вкладку сверяемся с этим, а не с тем, что на экране
+    + 'var ВИДЕЛИ_МАРШРУТ = null, ВИДЕЛИ_ПОРЯДОК = null;'
+    + 'function запомнитьВиденное(){try{ВИДЕЛИ_МАРШРУТ=localStorage.getItem("route");ВИДЕЛИ_ПОРЯДОК=localStorage.getItem("routeOrder");}catch(e){}}'
+    + 'запомнитьВиденное();'
+    + 'var карта = null, слой = null, линия = null;'+ 'function км(a,b){var t=Math.PI/180,x=(b.lat-a.lat)*t,y=(b.lng-a.lng)*t;'+   'var h=Math.sin(x/2)*Math.sin(x/2)+Math.cos(a.lat*t)*Math.cos(b.lat*t)*Math.sin(y/2)*Math.sin(y/2);'+   'return 6371*2*Math.asin(Math.sqrt(h));}'+ 'function esc(t){return String(t==null?"":t).replace(/[&<>"]/g,function(c){'+   'return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c];});}'+ 'var РЕЖИМ=false, НЕ_ДВИГАТЬ=false;'
     + 'function своя(p){return String(p&&p.id).charAt(0)==="m";}'
     + 'function вСсылку(p){return своя(p)?(p.id+"~"+encodeURIComponent(p.name||"")):p.id;}'
     + 'function чистоеИмя(t){return String(t||"").replace(/[<>~,]/g," ").replace(/\\s+/g," ").trim().slice(0,60);}'
@@ -3501,7 +3562,11 @@ async function marshrutPage(ids, ручной){
     +   'var m=s.match(/^\\s*(-?\\d{1,2}\\.\\d+)[\\s,;]+(-?\\d{1,3}\\.\\d+)\\s*$/);'
     +   'if(!m)return null;var a=+m[1],b=+m[2];'
     +   'if(Math.abs(a)>90||Math.abs(b)>180)return null;return [a,b];}'
-    + 'function сохранить(){try{localStorage.setItem("route",JSON.stringify(Т));}catch(e){}обновитьАдрес();}'
+    + 'function сохранить(){try{localStorage.setItem("route",JSON.stringify(Т));'
+    // первая правка на странице по ссылке или из видео: вместе с точками
+    // сохраняем и порядок, в котором они сейчас стоят на экране
+    +   'if(!СВЯЗАН)localStorage.setItem("routeOrder",ПОРЯДОК);}catch(e){}'
+    +   'СВЯЗАН=true;запомнитьВиденное();обновитьАдрес();}'
     // адрес страницы — это ссылка на маршрут: точки и, если порядок ручной, o=1
     + 'function обновитьАдрес(){var q = Т.length ? ("?p=" + Т.map(вСсылку).join(",") + (ПОРЯДОК==="manual"?"&o=1":"")) : "";'+   'history.replaceState(null, "", "/marshrut" + q);}'+ 'function убрать(id){Т = Т.filter(function(p){return String(p.id)!==String(id);});нарисовать();сохранить();}'+ 'function добавить(p){if(Т.some(function(x){return String(x.id)===String(p.id);}))return;'+   'Т = Т.concat([{id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}]);нарисовать();сохранить();}'+ 'function порядок(){if(ПОРЯДОК==="manual"||Т.length<3)return;var left=Т.slice(1),out=[Т[0]];'+   'while(left.length){var c=out[out.length-1],bi=0,bd=Infinity;'+     'left.forEach(function(p,i){var d=км(c,p);if(d<bd){bd=d;bi=i;}});'+     'out.push(left.splice(bi,1)[0]);}Т=out;}'+ 'function нарисовать(){порядок();'+   'var сумма=0, строки="";'+   'Т.forEach(function(p,i){var шаг=i?км(Т[i-1],p):0;сумма+=шаг;'+     'строки += "<div class=\\"it\\"><button class=\\"drag\\" type=\\"button\\" aria-label=\\"Перетащить\\">⋮⋮</button><span class=\\"n\\">"+(i+1)+"</span>"'+       '+"<span class=\\"t\\">"+(своя(p)?("<b class=\\"ownn\\">📍 "+esc(p.name)+"</b><small>своя точка · её можно перетащить на карте</small>"):("<a href=\\"/mesto/"+p.id+"\\">"+esc(p.name)+"</a>"))'+       '+(p.addr?("<small>"+esc(p.addr)+"</small>"):"")+"</span>"'+       '+"<span class=\\"km\\">"+(i?("+"+Math.round(шаг)+" км"):"старт")+"</span>"'+       '+"<button class=\\"x\\" type=\\"button\\" title=\\"убрать\\" data-id=\\""+p.id+"\\">×</button></div>";});'+   'document.getElementById("rlist").innerHTML = строки; подписатьШаги();'+   'document.getElementById("rsub").textContent = Т.length'+     '? (Т.length + " точек · около " + Math.round(сумма) + " км между ними")'+     ': "Пока пусто";'
     +   'document.getElementById("rAuto").style.display = (ПОРЯДОК==="manual"&&Т.length>2) ? "" : "none";'
@@ -3555,13 +3620,22 @@ async function marshrutPage(ids, ручной){
     +   'поставитьПорядок("manual");нарисовать();сохранить();}'
     + 'перетаскиваниеСтрок(document.getElementById("rlist"), переставить);'
     + 'нарисовать();'+ '(function(){var a=document.getElementById("back");if(!a)return;'+ 'try{ var r=document.referrer, с=localStorage.getItem("backTo");'+ '  if(r && r.indexOf(location.origin)===0 && /^\\/(\\?|$)/.test(r.slice(location.origin.length))) a.href=r;'+ '  else if(с && с.charAt(0)==="/") a.href=с; }catch(e){}})();'+ 'window.addEventListener("storage", function(e){if(e.key && e.key!=="route" && e.key!=="routeOrder")return;'
-    +   'ПОРЯДОК=прочитатьПорядок(); if(e.key==="routeOrder"){нарисовать();обновитьАдрес();return;}'
-    +   'var н=прочитать(); if(!н.length && Т.length) return; Т=н; нарисовать();});'
-    + 'document.addEventListener("visibilitychange", function(){'+   'if(document.visibilityState!=="visible")return; var н=прочитать(), п=прочитатьПорядок();'
+    // режим чужого маршрута к открытому по ссылке не относится
+    +   'if(e.key==="routeOrder"){запомнитьВиденное();if(!СВЯЗАН)return;ПОРЯДОК=прочитатьПорядок();нарисовать();обновитьАдрес();return;}'
+    +   'var н=прочитать(); запомнитьВиденное(); if(!н.length && Т.length) return;'
+    // маршрут правда поменяли в другой вкладке — теперь страница показывает его
+    +   'ПОРЯДОК=прочитатьПорядок(); Т=н; var был=СВЯЗАН; СВЯЗАН=true; нарисовать(); if(!был)обновитьАдрес();});'
+    + 'document.addEventListener("visibilitychange", function(){'+   'if(document.visibilityState!=="visible")return;'
+    // Сверяемся только с тем, что поменялось в хранилище, пока страница была
+    // скрыта. Раньше сравнивали с экраном — и открытый по ссылке маршрут
+    // в чистом профиле заменялся пустым сохранённым.
+    +   'var сырой=null, сырПор=null; try{сырой=localStorage.getItem("route");сырПор=localStorage.getItem("routeOrder");}catch(e){return;}'
+    +   'if(сырой===ВИДЕЛИ_МАРШРУТ&&сырПор===ВИДЕЛИ_ПОРЯДОК)return;'
+    +   'var маршрутМенялся=сырой!==ВИДЕЛИ_МАРШРУТ; запомнитьВиденное();'
+    +   'var н=прочитать(), п=прочитатьПорядок();'
+    +   'if(!СВЯЗАН){if(!маршрутМенялся||!н.length)return; Т=н; ПОРЯДОК=п; СВЯЗАН=true; нарисовать(); обновитьАдрес(); return;}'
     // в другой вкладке могли переставить те же точки или сменить режим
-    +   'var ключ=function(с){return с.map(function(x){return String(x.id);}).join(",");};'
-    +   'var набор=function(с){return с.map(function(x){return String(x.id);}).sort().join(",");};'
-    +   'var другие=н.length!==Т.length||(п==="manual"&&набор(н)===набор(Т)&&ключ(н)!==ключ(Т));'
+    +   'var другие=наборИд(н)!==наборИд(Т)||(п==="manual"&&ключИд(н)!==ключИд(Т));'
     +   'if(!другие&&п===ПОРЯДОК)return; ПОРЯДОК=п; if(другие)Т=н; нарисовать();});' + '</' + 'script>'
     + '</div></body></html>';
 }
@@ -3578,6 +3652,109 @@ catch(e){ console.error('маршруты не прочитались:', e.messa
 
 const МАРШРУТ_ПО = {};
 МАРШРУТЫ.forEach(function(м){ МАРШРУТ_ПО['marshrut-' + м.ключ] = м; });
+
+// ── Маршруты из видео ─────────────────────────────────────────────────────
+// Маршруты из роликов в ТикТоке: в ролике ссылка /m/<slug>, по ней человек
+// сразу видит те же точки на карте, может их поменять и открыть в навигаторе.
+// Файл — массив, новые сверху; точки — номера справочника или свои точки
+// в виде m<широта>_<долгота>~Имя, как в ссылке /marshrut.
+const ВИДЕО_ФАЙЛ = path.join(__dirname, 'маршруты-из-видео.json');
+let ВИДЕО_МАРШРУТЫ = [];
+try{
+  ВИДЕО_МАРШРУТЫ = JSON.parse(fs.readFileSync(ВИДЕО_ФАЙЛ, 'utf8'))
+    .filter(function(м){ return м && /^[a-z0-9-]+$/.test(м.slug || '') && Array.isArray(м.points); });
+}catch(e){ console.error('маршруты из видео не прочитались:', e.message); }
+const ВИДЕО_ПО = {};
+ВИДЕО_МАРШРУТЫ.forEach(function(м){ ВИДЕО_ПО[м.slug] = м; });
+
+function точкиВидео(м){
+  return м.points.map(function(t){ return String(t).trim(); }).filter(Boolean).slice(0, 20);
+}
+
+// «14 сентября» — год пишем, только если он не текущий
+const МЕСЯЦЕВ = ['января','февраля','марта','апреля','мая','июня','июля','августа',
+                 'сентября','октября','ноября','декабря'];
+function датаВидео(iso){
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(!m || !МЕСЯЦЕВ[+m[2] - 1]) return '';
+  return (+m[3]) + ' ' + МЕСЯЦЕВ[+m[2] - 1] + (+m[1] !== new Date().getFullYear() ? (' ' + m[1]) : '');
+}
+
+async function видеоМаршрутPage(slug){
+  const м = ВИДЕО_ПО[slug];
+  if(!м) return '';
+  return marshrutPage(точкиВидео(м), { ручной: true, заголовок: м.title,
+                                        вступление: м.intro, адрес: '/m/' + м.slug });
+}
+
+// Страница /m — все маршруты из видео карточками.
+async function видеоСписокPage(){
+  let все = [];
+  try{ все = await placesRaw(); }catch(e){}
+  const адрес = SITE_URL + '/m';
+  const desc = 'Готовые маршруты на день по Беларуси из наших роликов: точки на карте, '
+    + 'порядок объезда, километраж по дорогам и переход в Яндекс.Карты.';
+  const карточки = ВИДЕО_МАРШРУТЫ.map(function(м, i){
+    const ids = точкиВидео(м);
+    const точек = ids.filter(function(t){
+      return /^[0-9]+$/.test(t) ? все.some(x => String(x.id) === t) : !!своюТочкуИзСсылки(t);
+    }).length || ids.length;
+    const сФото = ids.map(function(t){ return все.find(x => String(x.id) === t); })
+      .filter(function(p){ return p && p.pic; })[0];
+    const дата = датаВидео(м.date);
+    return '<a class="c" href="/m/' + м.slug + '">'
+      + (сФото ? ('<img src="' + esc(сФото.pic) + '" alt=""' + (i ? ' loading="lazy"' : '') + '>')
+               : '<div class="noimg"></div>')
+      + '<div class="b"><h2>' + esc(м.title) + '</h2>'
+      + '<div class="m">' + (дата ? ('<span>' + esc(дата) + '</span>') : '')
+      +   '<span>' + точек + ' ' + скл(точек, 'точка', 'точки', 'точек') + '</span></div>'
+      + '<span class="go">Смотреть маршрут →</span></div></a>';
+  }).join('');
+  return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<title>Маршруты из видео — готовые поездки на день по Беларуси</title>'
+    + '<meta name="description" content="' + esc(desc) + '">'
+    + '<meta name="robots" content="index,follow">'
+    + '<meta name="theme-color" content="#9a3412">'
+    + '<link rel="canonical" href="' + адрес + '">'
+    + '<meta property="og:type" content="website">'
+    + '<meta property="og:title" content="Маршруты из видео">'
+    + '<meta property="og:description" content="' + esc(desc) + '">'
+    + '<meta property="og:url" content="' + адрес + '">'
+    + крошки([['Главная', '/'], ['Что посетить', '/?country=places'], ['Маршруты из видео']])
+    + '<style>'
+    + '*{box-sizing:border-box}'
+    + 'body{margin:0;font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#faf7f3;color:#1c1917}'
+    + '.w{max-width:900px;margin:0 auto;padding:20px 16px 60px}'
+    + 'a{color:#9a3412}'
+    + '.back{display:inline-block;margin:0 0 14px;padding:9px 17px;background:#fff;border:1px solid #e9e2d8;'
+    +   'border-radius:999px;text-decoration:none;color:#1c1917;font-size:14.5px;font-weight:600}'
+    + '.back:hover{border-color:#9a3412;color:#9a3412}'
+    + 'h1{font-size:clamp(24px,4.6vw,34px);line-height:1.15;margin:0 0 6px;letter-spacing:-.02em}'
+    + '.sub{color:#57534e;margin:0 0 20px}'
+    + '.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}'
+    + '.c{background:#fff;border:1px solid #e9e2d8;border-radius:14px;overflow:hidden;display:flex;'
+    +   'flex-direction:column;text-decoration:none;color:inherit}'
+    + '.c:hover{border-color:#9a3412}'
+    + '.c img,.noimg{width:100%;height:170px;object-fit:cover;display:block}'
+    + '.noimg{background:#f0eae1}'
+    + '.c .b{padding:12px 14px 14px;display:flex;flex-direction:column;gap:6px;flex:1}'
+    + '.c h2{font-size:17px;line-height:1.25;margin:0}'
+    + '.c .m{display:flex;flex-wrap:wrap;gap:6px}'
+    + '.c .m span{font-size:12.5px;background:#f8f4ef;border:1px solid #e9e2d8;border-radius:999px;padding:2px 9px;color:#57534e}'
+    + '.c .go{margin-top:auto;padding-top:6px;color:#9a3412;font-weight:700;font-size:14px}'
+    + '.empty{background:#fff;border:1px dashed #d9cec0;border-radius:14px;padding:22px;color:#57534e}'
+    + '@media (prefers-color-scheme:dark){body{background:#14110e;color:#f6f2ed}.sub{color:#c2b7ab}'
+    +   '.back,.c,.empty{background:#1d1916;border-color:#332c25;color:#f6f2ed}.noimg{background:#2b251f}'
+    +   '.c .m span{background:#241f1a;border-color:#332c25;color:#c2b7ab}a,.c .go{color:#e2703a}}'
+    + '</style></head><body><div class="w">'
+    + '<a class="back" href="/?country=places">← Ко всем местам</a>'
+    + '<h1>Маршруты из видео</h1>'
+    + '<p class="sub">Маршруты из роликов @poisk.kvartir в ТикТоке</p>'
+    + (карточки ? ('<div class="grid">' + карточки + '</div>')
+                : '<div class="empty">Маршрутов пока нет.</div>')
+    + '</div></body></html>';
+}
 
 // Файлы для maps.me: их кладут в приложение и берут в поездку без интернета.
 const МАРШРУТ_ФАЙЛЫ = {
@@ -4996,6 +5173,10 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
   font-size:14.5px;padding:12px 20px;border-radius:999px;box-shadow:0 8px 24px rgba(41,32,24,.28)}
 #routeBar:hover{background:var(--accent-2)}
 @media (max-width:520px){ #routeBar{left:12px;right:12px;transform:none;text-align:center} }
+/* Ссылки над списком мест — неприметно, чтобы не спорить с поиском. */
+.pl-links{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px 14px;margin:-8px 4px 10px;font-size:13.5px}
+.pl-links a{color:var(--txt-2);text-decoration:none}
+.pl-links a:hover{color:var(--accent);text-decoration:underline}
 #routeBox{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
   padding:14px 16px;margin:0 0 14px;box-shadow:var(--shadow-sm)}
 .rt-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
@@ -5391,6 +5572,8 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
     </label>
   </form>
 
+  <div class="pl-links" id="plLinks" style="display:none"><a href="/m">Маршруты из видео →</a></div>
+
   <div class="presets" id="presets">
     <button class="preset" type="button" data-preset="cheap">до 60 руб</button>
     <button class="preset" type="button" data-preset="weekend">на выходные</button>
@@ -5533,6 +5716,7 @@ function setCountry(c, quiet){
   // логично только там, где эти точки и показаны.
   const sb = $('#subBox'); if(sb) sb.style.display = pl ? 'none' : '';
   const pb = $('#plBox');  if(pb) pb.style.display = pl ? '' : 'none';
+  const pk = $('#plLinks'); if(pk) pk.style.display = pl ? '' : 'none';
   drawRoute();
   const ft = $('#fToggle'); if(ft) ft.style.display = (ru || pl) ? 'none' : '';
   if(!window.__hintBY) window.__hintBY = $('#hint').innerHTML;
@@ -7616,6 +7800,28 @@ http.createServer(async (req,res)=>{
     res.writeHead(200, {'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'no-cache'});
     res.end(html); return;
   }
+  // Маршруты из видео: /m — все, /m/<slug> — один
+  if(u.pathname === '/m' || u.pathname === '/m/'){
+    let html = '';
+    try{ html = await видеоСписокPage(); }catch(e){ console.error('/m:', e.message); }
+    if(!html){ res.writeHead(500); res.end('Не получилось собрать страницу'); return; }
+    res.writeHead(200, {'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'public, max-age=600'});
+    res.end(html); return;
+  }
+  if(u.pathname.startsWith('/m/')){
+    const slug = u.pathname.slice(3).replace(/\/$/, '');
+    let html = '';
+    if(ВИДЕО_ПО[slug]){
+      try{ html = await видеоМаршрутPage(slug); }catch(e){ console.error('/m/' + slug + ':', e.message); }
+      if(!html){ res.writeHead(500); res.end('Не получилось собрать маршрут'); return; }
+      res.writeHead(200, {'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'public, max-age=600'});
+      res.end(html); return;
+    }
+    res.writeHead(404, {'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'no-cache'});
+    res.end(notFoundPage(u.pathname, 'Такого маршрута нет')
+      .replace('<a href="/?country=places">', '<a href="/m">Маршруты из видео</a><a href="/?country=places">'));
+    return;
+  }
   if(u.pathname.startsWith('/mesto/')){
     const хвост = decodeURIComponent(u.pathname.slice('/mesto/'.length));
     const id = (хвост.match(/^[0-9]+/) || [''])[0];
@@ -7646,6 +7852,10 @@ http.createServer(async (req,res)=>{
       })));
     urls.push.apply(urls, Object.keys(МАРШРУТ_ПО).map(function(k){
       return '<url><loc>'+SITE_URL+'/'+k+'</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>';
+    }));
+    urls.push('<url><loc>'+SITE_URL+'/m</loc><changefreq>weekly</changefreq><priority>0.7</priority></url>');
+    urls.push.apply(urls, ВИДЕО_МАРШРУТЫ.map(function(м){
+      return '<url><loc>'+SITE_URL+'/m/'+м.slug+'</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>';
     }));
     urls.push.apply(urls, Object.keys(ГИДЫ).map(function(k){
       return '<url><loc>'+SITE_URL+'/'+k+'</loc><changefreq>daily</changefreq><priority>0.7</priority></url>';
