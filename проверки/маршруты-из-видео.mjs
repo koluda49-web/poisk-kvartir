@@ -62,6 +62,11 @@ const нет = await fetch(SITE + '/m/net-takogo');
 const нетHtml = await нет.text();
 check('/m/net-takogo — 404', нет.status === 404, String(нет.status));
 check('на странице 404 ссылка на /m', нетHtml.includes('href="/m"'));
+// имена свойств обычного объекта не должны «находить» маршрут и ронять сервер
+for (const slug of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
+  const st = (await fetch(SITE + '/m/' + slug)).status;
+  check('/m/' + slug + ' — 404', st === 404, String(st));
+}
 const карта = await (await fetch(SITE + '/sitemap.xml')).text();
 check('в sitemap.xml есть /m', карта.includes('<loc>https://poisk-kvartir.onrender.com/m</loc>'));
 check('в sitemap.xml есть /m/lida-voronovo', карта.includes('<loc>https://poisk-kvartir.onrender.com/m/lida-voronovo</loc>'));
@@ -144,6 +149,43 @@ await js(`(function(){ var v = JSON.parse(localStorage.getItem('route')); v.push
 await скрытьИПоказать();
 check('после этого новые точки из другой вкладки тоже подхватываются', (await строки()).length === 3, (await строки()).join(' | '));
 
+// ── /marshrut?p=…&o=1 в чистом профиле: порядок пишется при загрузке ─────
+await js(`localStorage.clear(); 1`);
+await send('Page.navigate', { url: SITE + '/marshrut?p=286,5069,910026&o=1' });
+await ждать(`typeof L !== 'undefined' && document.querySelectorAll('#rmap .pin').length === 3`);
+const иды = () => js(`JSON.stringify(Т.map(function(p){ return String(p.id); }))`).then(JSON.parse);
+check('/marshrut с o=1: три точки в порядке ссылки', JSON.stringify(await иды()) === '["286","5069","910026"]');
+await скрытьИПоказать();
+check('/marshrut с o=1: после возврата на страницу те же три точки в том же порядке', JSON.stringify(await иды()) === '["286","5069","910026"]', (await иды()).join(','));
+check('/marshrut с o=1: адрес не сменился', (await js(`location.search`)) === '?p=286,5069,910026&o=1', await js(`location.search`));
+
+// ── маршрут из видео заменили из другой вкладки — заголовок становится обычным ─
+const чужой = JSON.stringify([{id:285,name:'Лидский замок',addr:'г. Лида',lat:53.887131,lng:25.302564},
+  {id:2416,name:'Мирский замок',addr:'г. Мир',lat:53.451232,lng:26.473042}]);
+await js(`localStorage.clear(); 1`);
+await send('Page.navigate', { url: SITE + '/m/lida-voronovo' });
+await ждать(`typeof L !== 'undefined' && document.querySelectorAll('#rmap .pin').length === ${м.points.length}`);
+await js(`localStorage.setItem('route', ${JSON.stringify(чужой)}); window.dispatchEvent(new StorageEvent('storage', { key: 'route', newValue: ${JSON.stringify(чужой)} })); 1`);
+await sleep(400);
+check('storage: точки из другой вкладки показаны', (await строки()).length === 2, (await строки()).join(' | '));
+check('storage: заголовок стал «Маршрут на день»', (await js(`document.querySelector('h1').textContent`)) === 'Маршрут на день', await js(`document.querySelector('h1').textContent`));
+check('storage: вступление скрыто', await js(`!document.querySelector('.intro') || document.querySelector('.intro').offsetParent === null`));
+check('storage: title страницы — обычный маршрут', /^Маршрут на день/.test(await js(`document.title`)) && !(await js(`document.title`)).includes(м.title), await js(`document.title`));
+check('storage: текст про порядок из видео убран', !(await js(`document.querySelector('.how').textContent`)).includes('как в видео'));
+check('storage: адрес стал /marshrut', (await js(`location.pathname`)) === '/marshrut', await js(`location.pathname`));
+
+// то же через возврат на страницу
+await js(`localStorage.clear(); 1`);
+await send('Page.navigate', { url: SITE + '/m/lida-voronovo' });
+await ждать(`typeof L !== 'undefined' && document.querySelectorAll('#rmap .pin').length === ${м.points.length}`);
+await js(`localStorage.setItem('route', ${JSON.stringify(чужой)}); 1`);
+await скрытьИПоказать();
+check('возврат: точки из другой вкладки показаны', (await строки()).length === 2, (await строки()).join(' | '));
+check('возврат: заголовок «Маршрут на день», вступление скрыто, title обычный',
+  (await js(`document.querySelector('h1').textContent`)) === 'Маршрут на день'
+  && await js(`document.querySelector('.intro').offsetParent === null`)
+  && /^Маршрут на день/.test(await js(`document.title`)), await js(`document.title`));
+
 // ── сохранён другой маршрут — страница из видео всё равно показывает свои 7 ─
 await js(`localStorage.clear(); localStorage.setItem('route', JSON.stringify([
   {id:2416,name:'Мирский замок',addr:'г. Мир',lat:53.451232,lng:26.473042},
@@ -177,7 +219,7 @@ check('в адресе 6 точек в порядке видео', JSON.stringif
 const вХранилище = JSON.parse(х.route || '[]').map(p => String(p.id));
 check('в localStorage.route 6 точек в порядке видео', JSON.stringify(вХранилище) === JSON.stringify(ждём), вХранилище.join(','));
 check('routeOrder = manual', х.order === 'manual', х.order);
-check('заголовок и вступление остались', await js(`document.querySelector('h1').textContent === ${JSON.stringify(м.title)} && !!document.querySelector('.intro')`));
+check('заголовок и вступление остались', await js(`document.querySelector('h1').textContent === ${JSON.stringify(м.title)} && document.querySelector('.intro').offsetParent !== null && document.title === ${JSON.stringify(м.title)}`));
 await скрытьИПоказать();
 check('после правки и возврата на страницу — 6 точек', (await строки()).length === 6);
 
