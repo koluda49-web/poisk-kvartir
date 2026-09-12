@@ -4399,6 +4399,14 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
 .seenear:hover{border-color:var(--accent);color:var(--accent)}
 .pl-pin{display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;
   background:#6d4bd6;color:#fff;font-size:15px;border:3px solid #fff;box-shadow:0 3px 10px rgba(20,24,33,.35)}
+/* Точка, выбранная в маршрут. Не кружок: рыжий кружок с цифрой — это уже
+   скопление точек, и номер маршрута с ним путался. Поэтому булавка-капля
+   тёмного цвета остриём в точку, номер внутри. */
+.rt-pin{position:relative;box-sizing:border-box;width:38px;height:38px;border-radius:50% 50% 50% 0;
+  transform:rotate(-45deg);background:#1c1917;border:3px solid #fff;
+  box-shadow:0 0 0 3px #9a3412,0 6px 14px rgba(20,24,33,.45)}
+.rt-pin span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  transform:rotate(45deg);color:#fff;font-weight:800;font-size:17px;line-height:1}
 .near{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius-sm);
   padding:12px 14px;margin-top:10px}
 .near b{display:block;margin-bottom:8px;font-size:14px}
@@ -5198,6 +5206,7 @@ function plotMap(fit){
     window.__map.addLayer(window.__mlayer);
   }
   window.__mlayer.clearLayers();
+  if(window.__routePins) window.__routePins.clearLayers();   // маршрут — только на карте мест
   const items=(window.__items||[]).filter(x=>x.lat&&x.lng);
   const pts=[];
   items.forEach(function(x){
@@ -5773,6 +5782,7 @@ async function plotPlaces(){
     }catch(e){}
   }
   window.__mlayer.clearLayers();
+  window.__plMarkers = {};
   const pts = [];
   all.forEach(function(p, i){
     // шесть знаков после запятой — точность около десяти сантиметров,
@@ -5805,8 +5815,10 @@ async function plotPlaces(){
     // точек, грузить их описания заранее — тысяча лишних запросов.
     mk.on('popupopen', function(){ loadMapText(p.id, i); syncPins(); });
     window.__mlayer.addLayer(mk);
+    window.__plMarkers[p.id] = mk;
     pts.push([p.lat, p.lng]);
   });
+  рисоватьМаршрутНаКарте();
   setTimeout(function(){
     window.__map.invalidateSize();
     if(pts.length) window.__map.fitBounds(pts, { padding:[45,45], maxZoom:13 });
@@ -5889,6 +5901,44 @@ function syncPins(){
   });
 }
 
+// Точки маршрута на карте мест. Обычная метка у них та же, что у всех, и
+// среди восьмисот замков выбранную не найти, — поэтому поверх рисуем свою:
+// кружок цвета сайта с номером, как в списке маршрута. Эти метки живут
+// в отдельном слое и в скопления не прячутся: иначе при отдалении карты
+// выбранная точка снова терялась бы в кружке с числом.
+function рисоватьМаршрутНаКарте(){
+  if(!window.__map || typeof L === 'undefined') return;
+  if(!window.__routePins) window.__routePins = L.layerGroup().addTo(window.__map);
+  window.__routePins.clearLayers();
+  if(window.__mode !== 'places' || window.__view !== 'map') return;
+  const list = orderRoute(window.__route || []);
+  const путь = [];
+  list.forEach(function(p, i){
+    путь.push([p.lat, p.lng]);
+    const mk = L.marker([p.lat, p.lng], {
+      // Капля — это квадрат, повёрнутый на 45°: её остриё смотрит строго вниз
+      // и лежит на полдиагонали ниже центра (19·√2 ≈ 27), то есть в 46 px от верха.
+      icon: L.divIcon({ className:'', iconSize:[38,38], iconAnchor:[19,46],
+                        html:'<div class="rt-pin"><span>' + (i + 1) + '</span></div>' }),
+      zIndexOffset: 1000 });
+    mk.bindTooltip((i + 1) + '. ' + p.name, { direction:'top', offset:[0,-46] });
+    mk.on('click', function(){ открытьТочкуНаКарте(p.id); });
+    window.__routePins.addLayer(mk);
+  });
+  if(путь.length > 1)
+    window.__routePins.addLayer(L.polyline(путь, { color:'#9a3412', weight:3, opacity:.55, dashArray:'6 8' }));
+}
+
+// По нажатию на метку маршрута открываем окошко самой точки: там описание
+// и кнопка «убрать из маршрута». Если точка сидит в скоплении — сначала
+// приближаем карту, чтобы её было видно.
+function открытьТочкуНаКарте(id){
+  const mk = (window.__plMarkers || {})[id];
+  if(!mk) return;
+  if(window.__mlayer && window.__mlayer.zoomToShowLayer) window.__mlayer.zoomToShowLayer(mk, function(){ mk.openPopup(); });
+  else mk.openPopup();
+}
+
 // вид кнопки «в маршрут» у одной карточки
 function markRoute(i, on){
   const card = document.getElementById('pl' + i); if(!card) return;
@@ -5923,6 +5973,7 @@ function orderRoute(list){
 }
 
 function drawRoute(){
+  рисоватьМаршрутНаКарте();
   const box = $('#routeBox'); if(!box) return;
   const list = orderRoute(window.__route || []);
   window.__route = list;
