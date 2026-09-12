@@ -3183,8 +3183,10 @@ async function mestoPageBuild(id){
 
 // Порядок объезда: от первой точки каждый раз к ближайшей из оставшихся.
 // Для трёх-пяти точек это тот же ответ, что и перебор всех вариантов.
-function порядокОбъезда(list){
-  if(list.length < 3) return list.slice();
+// ручной — человек сам расставил точки (в ссылке o=1): его порядок не трогаем,
+// ближайшая точка не всегда та, куда хотят ехать следующей.
+function порядокОбъезда(list, ручной){
+  if(ручной || list.length < 3) return list.slice();
   const left = list.slice(1), out = [list[0]];
   while(left.length){
     const cur = out[out.length - 1];
@@ -3246,7 +3248,110 @@ function своюТочкуИзСсылки(t){
   return { id: 'm' + lat.toFixed(5) + '_' + lng.toFixed(5), name, addr: '', lat, lng, own: 1 };
 }
 
-async function marshrutPage(ids){
+// Перетаскивание строк маршрута за ручку ⋮⋮ — это код для браузера. Он нужен
+// и на главной (блок «Маршрут на день»), и на /marshrut, а страницы собраны
+// по-разному: главная — шаблонной строкой, маршрут — сложением строк. Чтобы
+// не держать две копии, функция живёт здесь и вставляется в обе страницы
+// своим текстом (.toString()). На сервере её не вызывают.
+//
+// список — элемент, строки которого перерисовываются через innerHTML, поэтому
+// события вешаем на него самого один раз и ловим всплытием. переставить(откуда,
+// куда) зовётся, только когда порядок правда поменялся, и сама перерисовывает
+// список. Мышь и палец — через Pointer Events; прокрутку пальцем на ручке
+// гасит touch-action:none в стилях. С клавиатуры — стрелками на ручке.
+function перетаскиваниеСтрок(список, переставить){
+  var т = null;   // что тянем сейчас
+  function строки(){
+    return Array.prototype.filter.call(список.children, function(э){ return !э.classList.contains('drag-ph'); });
+  }
+  function строкаИз(э){
+    while(э && э.parentNode !== список) э = э.parentNode;
+    return э;
+  }
+  function ручкаИз(e){
+    var р = e.target && e.target.closest ? e.target.closest('.drag') : null;
+    return р && список.contains(р) ? р : null;
+  }
+  function снять(){
+    document.removeEventListener('pointermove', ход);
+    document.removeEventListener('pointerup', отпустили);
+    document.removeEventListener('pointercancel', отмена);
+  }
+  function конец(применить){
+    if(!т) return;
+    var d = т; т = null; снять();
+    d.строка.classList.remove('dragging');
+    d.строка.style.cssText = d.стиль;
+    // Пока тянули, список могли перерисовать (пришла точка из другой
+    // вкладки) — тогда строки уже другие, и переставлять нечего.
+    if(d.заместитель.parentNode !== список || d.строка.parentNode !== список){
+      if(d.заместитель.parentNode) d.заместитель.parentNode.removeChild(d.заместитель);
+      return;
+    }
+    список.insertBefore(d.строка, d.заместитель);
+    список.removeChild(d.заместитель);
+    var куда = строки().indexOf(d.строка);
+    if(применить && куда >= 0 && куда !== d.откуда) переставить(d.откуда, куда);
+  }
+  function ход(e){
+    if(!т || e.pointerId !== т.ид) return;
+    e.preventDefault();
+    т.строка.style.top = (т.верх + e.clientY - т.y0) + 'px';
+    // заместитель встаёт перед первой строкой, чья середина ниже указателя
+    var перед = null, другие = строки();
+    for(var i = 0; i < другие.length; i++){
+      if(другие[i] === т.строка) continue;
+      var r = другие[i].getBoundingClientRect();
+      if(e.clientY < r.top + r.height / 2){ перед = другие[i]; break; }
+    }
+    if(т.заместитель.parentNode === список) список.insertBefore(т.заместитель, перед);
+  }
+  function отпустили(e){ if(т && e.pointerId === т.ид) конец(true); }
+  function отмена(e){ if(т && e.pointerId === т.ид) конец(false); }
+
+  список.addEventListener('pointerdown', function(e){
+    var ручка = ручкаИз(e);
+    if(!ручка || т) return;
+    if(e.pointerType === 'mouse' && e.button !== 0) return;
+    var строка = строкаИз(ручка);
+    if(!строка) return;
+    e.preventDefault();
+    var r = строка.getBoundingClientRect();
+    var заместитель = document.createElement('div');
+    заместитель.className = 'drag-ph';
+    заместитель.style.height = r.height + 'px';
+    т = { ид: e.pointerId, строка: строка, заместитель: заместитель, откуда: строки().indexOf(строка),
+          y0: e.clientY, верх: r.top, стиль: строка.style.cssText };
+    список.insertBefore(заместитель, строка.nextSibling);
+    // строка едет за указателем поверх страницы, на её месте — пустая полоска
+    строка.classList.add('dragging');
+    строка.style.position = 'fixed';
+    строка.style.left = r.left + 'px';
+    строка.style.top = r.top + 'px';
+    строка.style.width = r.width + 'px';
+    строка.style.zIndex = '1000';
+    try{ ручка.setPointerCapture(e.pointerId); }catch(err){}
+    document.addEventListener('pointermove', ход, { passive: false });
+    document.addEventListener('pointerup', отпустили);
+    document.addEventListener('pointercancel', отмена);
+  });
+
+  список.addEventListener('keydown', function(e){
+    if(e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    var ручка = ручкаИз(e);
+    if(!ручка || т) return;
+    e.preventDefault();
+    var откуда = строки().indexOf(строкаИз(ручка));
+    var куда = откуда + (e.key === 'ArrowUp' ? -1 : 1);
+    if(откуда < 0 || куда < 0 || куда >= строки().length) return;
+    переставить(откуда, куда);
+    // список перерисован — возвращаем фокус на ручку той же точки
+    var р = список.querySelectorAll('.drag')[куда];
+    if(р) р.focus();
+  });
+}
+
+async function marshrutPage(ids, ручной){
   const все = await placesRaw();
   const найденные = ids.map(function(t){
     if(/^[0-9]+$/.test(t)){
@@ -3256,8 +3361,9 @@ async function marshrutPage(ids){
     return своюТочкуИзСсылки(t);
   }).filter(Boolean);
   // Ссылкой делятся, и точки в ней идут как попало. Считаем порядок объезда
-  // здесь же: от первой каждый раз к ближайшей из оставшихся.
-  const точки = порядокОбъезда(найденные);
+  // здесь же: от первой каждый раз к ближайшей из оставшихся. Если порядок
+  // расставлен руками (o=1), оставляем как в ссылке.
+  const точки = порядокОбъезда(найденные, ручной);
 
   let сумма = 0;
   точки.forEach((p, i) => { if(i) сумма += distKm(точки[i-1].lat, точки[i-1].lng, p.lat, p.lng); });
@@ -3267,7 +3373,8 @@ async function marshrutPage(ids){
 
   const строки = точки.map(function(p, i){
     const шаг = i ? distKm(точки[i-1].lat, точки[i-1].lng, p.lat, p.lng) : 0;
-    return '<div class="it"><span class="n">' + (i+1) + '</span>'
+    return '<div class="it"><button class="drag" type="button" aria-label="Перетащить">⋮⋮</button>'
+      + '<span class="n">' + (i+1) + '</span>'
       + '<span class="t">' + (p.own
           ? ('<b class="ownn">📍 ' + esc(p.name) + '</b><small>своя точка · её можно перетащить на карте</small>')
           : ('<a href="/mesto/' + p.id + '-' + slugify(p.name) + '">' + esc(p.name) + '</a>'))
@@ -3300,17 +3407,30 @@ async function marshrutPage(ids){
     + '.ownn{font-weight:600}'
     + '.pin.own{background:#1c1917;box-shadow:0 0 0 2px #9a3412,0 1px 4px rgba(0,0,0,.4)}'
     + '#rmap.placing,#rmap.placing .leaflet-grab,#rmap.placing .leaflet-interactive{cursor:crosshair}'
-    + '#rmap{height:min(58vh,440px);border-radius:14px;overflow:hidden;margin:0 0 16px;border:1px solid #e9e2d8}'+ '.pin{width:26px;height:26px;border-radius:50%;background:#9a3412;color:#fff;font-weight:700;font-size:13px;'+   'display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)}'+ '.it{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid #e9e2d8}'+ '.it:first-child{border-top:0}'+ '.it .n{width:24px;height:24px;flex:none;border-radius:50%;background:#9a3412;color:#fff;font-size:12.5px;'+   'font-weight:700;display:inline-flex;align-items:center;justify-content:center}'+ '.it .t{display:flex;flex-direction:column;line-height:1.25;min-width:0}'+ '.it .t a{text-decoration:none;font-weight:600;color:#1c1917}'+ '.it .t small{color:#9c948c;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'+ '.it .km{margin-left:auto;color:#9c948c;font-size:13px;white-space:nowrap}'+ '.it .x{font:inherit;font-size:22px;line-height:1;background:none;border:0;color:#9c948c;cursor:pointer;padding:0 4px}'+ '.it .x:hover{color:#9a3412}'+ '.add{margin:16px 0 0;position:relative}'+ '.add input{width:100%;font:inherit;padding:12px 14px;border:1px solid #e9e2d8;border-radius:10px;background:#fff;color:inherit}'+ '.sug{position:absolute;left:0;right:0;top:100%;background:#fff;border:1px solid #e9e2d8;border-radius:10px;'+   'margin-top:4px;max-height:270px;overflow:auto;z-index:5;display:none;box-shadow:0 8px 24px rgba(41,32,24,.12)}'+ '.sug button{display:block;width:100%;text-align:left;font:inherit;background:none;border:0;padding:9px 13px;cursor:pointer}'+ '.sug button:hover{background:#f8f4ef}'+ '.sug small{color:#9c948c;display:block;font-size:12.5px}'+ '.go{display:inline-block;margin-top:18px;background:#9a3412;color:#fff;text-decoration:none;font-weight:700;'+   'padding:14px 22px;border-radius:11px}'+ '.go.off{opacity:.4;pointer-events:none}'
-+ '.go2{display:inline-block;margin:18px 0 0 10px;background:#fff;border:1px solid #e9e2d8;color:#1c1917;'+   'text-decoration:none;font-weight:700;padding:13px 21px;border-radius:11px}'+ '.go2:hover{border-color:#9a3412;color:#9a3412}'+ '@media (max-width:520px){.go,.go2{display:block;margin-left:0;text-align:center}}'+ '.empty{background:#fff;border:1px dashed #d9cec0;border-radius:14px;padding:22px;color:#57534e;margin-bottom:8px}'+ '@media (prefers-color-scheme:dark){body{background:#14110e;color:#f6f2ed}'+   '.back,.add input,.sug,.empty,.ownb{background:#1d1916;border-color:#332c25;color:#f6f2ed}'+ '.how{color:#c2b7ab}'+   '.it{border-color:#332c25}.it .t a{color:#f6f2ed}.sub,.it .t small,.it .km{color:#c2b7ab}'+   '.sug button:hover{background:#241f1a}a{color:#e2703a}#rmap{border-color:#332c25}}' + '</style></head><body><div class="w">'
+    + '#rmap{height:min(58vh,440px);border-radius:14px;overflow:hidden;margin:0 0 16px;border:1px solid #e9e2d8}'+ '.pin{width:26px;height:26px;border-radius:50%;background:#9a3412;color:#fff;font-weight:700;font-size:13px;'+   'display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)}'+ '.it{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid #e9e2d8}'+ '.it:first-child{border-top:0}'+ '.it .n{width:24px;height:24px;flex:none;border-radius:50%;background:#9a3412;color:#fff;font-size:12.5px;'+   'font-weight:700;display:inline-flex;align-items:center;justify-content:center}'+ '.it .t{display:flex;flex-direction:column;line-height:1.25;min-width:0}'+ '.it .t a{text-decoration:none;font-weight:600;color:#1c1917}'+ '.it .t small{color:#9c948c;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'+ '.it .km{margin-left:auto;color:#9c948c;font-size:13px;white-space:nowrap}'+ '.it .x{font:inherit;font-size:22px;line-height:1;background:none;border:0;color:#9c948c;cursor:pointer;padding:0 4px}'+ '.it .x:hover{color:#9a3412}'
+    + '.it .drag{font:inherit;font-size:17px;line-height:1;letter-spacing:-4px;background:none;border:0;color:#9c948c;'
+    +   'cursor:grab;padding:8px 10px 8px 6px;margin-left:-6px;touch-action:none;user-select:none;-webkit-user-select:none}'
+    + '.it .drag:hover,.it .drag:focus-visible{color:#9a3412}'
+    + '.it.dragging{background:#fff;border-radius:10px;border-top-color:transparent;box-shadow:0 8px 24px rgba(41,32,24,.18)}'
+    + '.it.dragging .drag{cursor:grabbing}'
+    + '.drag-ph{border:1px dashed #d9cec0;border-radius:10px;background:#f3ede5}'
+    + '.sumrow{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 14px;margin:0 0 8px}.sumrow .sub{margin:0}'
+    + '.auto{font:inherit;font-size:14px;background:none;border:0;padding:0;color:#9a3412;text-decoration:underline;cursor:pointer}'
+    + '.add{margin:16px 0 0;position:relative}'+ '.add input{width:100%;font:inherit;padding:12px 14px;border:1px solid #e9e2d8;border-radius:10px;background:#fff;color:inherit}'+ '.sug{position:absolute;left:0;right:0;top:100%;background:#fff;border:1px solid #e9e2d8;border-radius:10px;'+   'margin-top:4px;max-height:270px;overflow:auto;z-index:5;display:none;box-shadow:0 8px 24px rgba(41,32,24,.12)}'+ '.sug button{display:block;width:100%;text-align:left;font:inherit;background:none;border:0;padding:9px 13px;cursor:pointer}'+ '.sug button:hover{background:#f8f4ef}'+ '.sug small{color:#9c948c;display:block;font-size:12.5px}'+ '.go{display:inline-block;margin-top:18px;background:#9a3412;color:#fff;text-decoration:none;font-weight:700;'+   'padding:14px 22px;border-radius:11px}'+ '.go.off{opacity:.4;pointer-events:none}'
++ '.go2{display:inline-block;margin:18px 0 0 10px;background:#fff;border:1px solid #e9e2d8;color:#1c1917;'+   'text-decoration:none;font-weight:700;padding:13px 21px;border-radius:11px}'+ '.go2:hover{border-color:#9a3412;color:#9a3412}'+ '@media (max-width:520px){.go,.go2{display:block;margin-left:0;text-align:center}}'+ '.empty{background:#fff;border:1px dashed #d9cec0;border-radius:14px;padding:22px;color:#57534e;margin-bottom:8px}'+ '@media (prefers-color-scheme:dark){body{background:#14110e;color:#f6f2ed}'+   '.back,.add input,.sug,.empty,.ownb{background:#1d1916;border-color:#332c25;color:#f6f2ed}'+ '.how{color:#c2b7ab}'+   '.it{border-color:#332c25}.it .t a{color:#f6f2ed}.sub,.it .t small,.it .km{color:#c2b7ab}'+   '.sug button:hover{background:#241f1a}a{color:#e2703a}#rmap{border-color:#332c25}'
+    +   '.it.dragging{background:#1d1916}.drag-ph{background:#241f1a;border-color:#332c25}.auto{color:#e2703a}}'
+     + '</style></head><body><div class="w">'
     + '<a class="back" id="back" href="/?country=places">← Ко всем местам</a>'
     + '<h1>Маршрут на день</h1>'
     + '<p class="how">Порядок объезда посчитан сам: от первой точки к ближайшей. '
+    +   'Свой порядок — перетащите точку за ⋮⋮ слева. '
     +   'Линия и километраж — по настоящим дорогам, не по прямой. Точку можно доложить '
     +   'поиском внизу или убрать крестиком, а потом открыть весь маршрут в Яндекс.Картах. '
     +   'Держите эту страницу открытой рядом со списком мест — новые точки появятся здесь сами.</p>'
-    + '<p class="sub" id="rsub">' + (точки.length
+    + '<div class="sumrow"><p class="sub" id="rsub">' + (точки.length
         ? (точки.length + ' точек · около ' + Math.round(сумма) + ' км между ними')
         : 'Пока пусто') + '</p>'
+    +   '<button class="auto" id="rAuto" type="button" style="display:none">Упорядочить автоматически</button></div>'
     + '<div class="empty" id="rEmpty"' + (точки.length ? ' style="display:none"' : '') + '>'
     +   '<b>Маршрут пока пуст.</b><br>Добавьте места поиском ниже — или отметьте их кнопкой '
     +   '«в маршрут» в разделе <a href="/?country=places">Что посетить</a>.</div>'
@@ -3334,7 +3454,18 @@ async function marshrutPage(ids){
           return (пара[1].cities || []).filter(function(г){ return TOWN_CENTERS[г]; })
             .map(function(г){ return [г, пара[0], TOWN_CENTERS[г][0], TOWN_CENTERS[г][1]]; });
         })) + ';'
-    + 'var СЕРВЕРНЫЕ = ' + JSON.stringify(точки) + ';'+ 'function прочитать(){try{var v=JSON.parse(localStorage.getItem("route")||"[]");'+   'return Array.isArray(v)?v.filter(function(p){return p&&p.lat&&p.lng;}):[];}catch(e){return [];}}'+ 'var ПО_ССЫЛКЕ = /[?&]p=/.test(location.search);'+ 'var МОЙ = прочитать();'+ 'var Т = ПО_ССЫЛКЕ ? СЕРВЕРНЫЕ : МОЙ;'+ 'if(ПО_ССЫЛКЕ && МОЙ.length > СЕРВЕРНЫЕ.length && СЕРВЕРНЫЕ.every(function(p){'+   'return МОЙ.some(function(x){return String(x.id)===String(p.id);});})) Т = МОЙ;'+ 'var карта = null, слой = null, линия = null;'+ 'function км(a,b){var t=Math.PI/180,x=(b.lat-a.lat)*t,y=(b.lng-a.lng)*t;'+   'var h=Math.sin(x/2)*Math.sin(x/2)+Math.cos(a.lat*t)*Math.cos(b.lat*t)*Math.sin(y/2)*Math.sin(y/2);'+   'return 6371*2*Math.asin(Math.sqrt(h));}'+ 'function esc(t){return String(t==null?"":t).replace(/[&<>"]/g,function(c){'+   'return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c];});}'+ 'var РЕЖИМ=false, НЕ_ДВИГАТЬ=false;'
+    + 'var СЕРВЕРНЫЕ = ' + JSON.stringify(точки) + ';'
+    + 'var РУЧНОЙ_ПО_ССЫЛКЕ = ' + (ручной ? 'true' : 'false') + ';'
+    // Порядок точек: "auto" — объезд по близости, "manual" — как расставил человек.
+    // Режим один на маршрут и хранится рядом с ним, в routeOrder: главная страница
+    // и эта вкладка должны показывать один и тот же порядок.
+    + 'function прочитатьПорядок(){try{return localStorage.getItem("routeOrder")==="manual"?"manual":"auto";}catch(e){return "auto";}}'
+    + 'var ПОРЯДОК = прочитатьПорядок();'
+    + 'function поставитьПорядок(р){ПОРЯДОК=р;try{localStorage.setItem("routeOrder",р);}catch(e){}}'
+    + 'function прочитать(){try{var v=JSON.parse(localStorage.getItem("route")||"[]");'+   'return Array.isArray(v)?v.filter(function(p){return p&&p.lat&&p.lng;}):[];}catch(e){return [];}}'+ 'var ПО_ССЫЛКЕ = /[?&]p=/.test(location.search);'
+    // по ссылке с o=1 точки расставлены руками; без o сохранённый режим не трогаем
+    + 'if(ПО_ССЫЛКЕ && РУЧНОЙ_ПО_ССЫЛКЕ) поставитьПорядок("manual");'
+    + 'var МОЙ = прочитать();'+ 'var Т = ПО_ССЫЛКЕ ? СЕРВЕРНЫЕ : МОЙ;'+ 'if(ПО_ССЫЛКЕ && МОЙ.length > СЕРВЕРНЫЕ.length && СЕРВЕРНЫЕ.every(function(p){'+   'return МОЙ.some(function(x){return String(x.id)===String(p.id);});})) Т = МОЙ;'+ 'var карта = null, слой = null, линия = null;'+ 'function км(a,b){var t=Math.PI/180,x=(b.lat-a.lat)*t,y=(b.lng-a.lng)*t;'+   'var h=Math.sin(x/2)*Math.sin(x/2)+Math.cos(a.lat*t)*Math.cos(b.lat*t)*Math.sin(y/2)*Math.sin(y/2);'+   'return 6371*2*Math.asin(Math.sqrt(h));}'+ 'function esc(t){return String(t==null?"":t).replace(/[&<>"]/g,function(c){'+   'return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c];});}'+ 'var РЕЖИМ=false, НЕ_ДВИГАТЬ=false;'
     + 'function своя(p){return String(p&&p.id).charAt(0)==="m";}'
     + 'function вСсылку(p){return своя(p)?(p.id+"~"+encodeURIComponent(p.name||"")):p.id;}'
     + 'function чистоеИмя(t){return String(t||"").replace(/[<>~,]/g," ").replace(/\\s+/g," ").trim().slice(0,60);}'
@@ -3355,7 +3486,9 @@ async function marshrutPage(ids){
     +   'var m=s.match(/^\\s*(-?\\d{1,2}\\.\\d+)[\\s,;]+(-?\\d{1,3}\\.\\d+)\\s*$/);'
     +   'if(!m)return null;var a=+m[1],b=+m[2];'
     +   'if(Math.abs(a)>90||Math.abs(b)>180)return null;return [a,b];}'
-    + 'function сохранить(){try{localStorage.setItem("route",JSON.stringify(Т));}catch(e){}'+   'var q = Т.length ? ("?p=" + Т.map(вСсылку).join(",")) : "";'+   'history.replaceState(null, "", "/marshrut" + q);}'+ 'function убрать(id){Т = Т.filter(function(p){return String(p.id)!==String(id);});нарисовать();сохранить();}'+ 'function добавить(p){if(Т.some(function(x){return String(x.id)===String(p.id);}))return;'+   'Т = Т.concat([{id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}]);нарисовать();сохранить();}'+ 'function порядок(){if(Т.length<3)return;var left=Т.slice(1),out=[Т[0]];'+   'while(left.length){var c=out[out.length-1],bi=0,bd=Infinity;'+     'left.forEach(function(p,i){var d=км(c,p);if(d<bd){bd=d;bi=i;}});'+     'out.push(left.splice(bi,1)[0]);}Т=out;}'+ 'function нарисовать(){порядок();'+   'var сумма=0, строки="";'+   'Т.forEach(function(p,i){var шаг=i?км(Т[i-1],p):0;сумма+=шаг;'+     'строки += "<div class=\\"it\\"><span class=\\"n\\">"+(i+1)+"</span>"'+       '+"<span class=\\"t\\">"+(своя(p)?("<b class=\\"ownn\\">📍 "+esc(p.name)+"</b><small>своя точка · её можно перетащить на карте</small>"):("<a href=\\"/mesto/"+p.id+"\\">"+esc(p.name)+"</a>"))'+       '+(p.addr?("<small>"+esc(p.addr)+"</small>"):"")+"</span>"'+       '+"<span class=\\"km\\">"+(i?("+"+Math.round(шаг)+" км"):"старт")+"</span>"'+       '+"<button class=\\"x\\" type=\\"button\\" title=\\"убрать\\" data-id=\\""+p.id+"\\">×</button></div>";});'+   'document.getElementById("rlist").innerHTML = строки; подписатьШаги();'+   'document.getElementById("rsub").textContent = Т.length'+     '? (Т.length + " точек · около " + Math.round(сумма) + " км между ними")'+     ': "Пока пусто";'+   'var g = document.getElementById("rGo");'+   'g.href = "https://yandex.by/maps/?rtext=" + Т.map(function(p){return p.lat+","+p.lng;}).join("~") + "&rtt=auto";'+   'g.className = "go" + (Т.length ? "" : " off");'+   'кудаЗаЖильём();'
+    + 'function сохранить(){try{localStorage.setItem("route",JSON.stringify(Т));}catch(e){}'+   'var q = Т.length ? ("?p=" + Т.map(вСсылку).join(",") + (ПОРЯДОК==="manual"?"&o=1":"")) : "";'+   'history.replaceState(null, "", "/marshrut" + q);}'+ 'function убрать(id){Т = Т.filter(function(p){return String(p.id)!==String(id);});нарисовать();сохранить();}'+ 'function добавить(p){if(Т.some(function(x){return String(x.id)===String(p.id);}))return;'+   'Т = Т.concat([{id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}]);нарисовать();сохранить();}'+ 'function порядок(){if(ПОРЯДОК==="manual"||Т.length<3)return;var left=Т.slice(1),out=[Т[0]];'+   'while(left.length){var c=out[out.length-1],bi=0,bd=Infinity;'+     'left.forEach(function(p,i){var d=км(c,p);if(d<bd){bd=d;bi=i;}});'+     'out.push(left.splice(bi,1)[0]);}Т=out;}'+ 'function нарисовать(){порядок();'+   'var сумма=0, строки="";'+   'Т.forEach(function(p,i){var шаг=i?км(Т[i-1],p):0;сумма+=шаг;'+     'строки += "<div class=\\"it\\"><button class=\\"drag\\" type=\\"button\\" aria-label=\\"Перетащить\\">⋮⋮</button><span class=\\"n\\">"+(i+1)+"</span>"'+       '+"<span class=\\"t\\">"+(своя(p)?("<b class=\\"ownn\\">📍 "+esc(p.name)+"</b><small>своя точка · её можно перетащить на карте</small>"):("<a href=\\"/mesto/"+p.id+"\\">"+esc(p.name)+"</a>"))'+       '+(p.addr?("<small>"+esc(p.addr)+"</small>"):"")+"</span>"'+       '+"<span class=\\"km\\">"+(i?("+"+Math.round(шаг)+" км"):"старт")+"</span>"'+       '+"<button class=\\"x\\" type=\\"button\\" title=\\"убрать\\" data-id=\\""+p.id+"\\">×</button></div>";});'+   'document.getElementById("rlist").innerHTML = строки; подписатьШаги();'+   'document.getElementById("rsub").textContent = Т.length'+     '? (Т.length + " точек · около " + Math.round(сумма) + " км между ними")'+     ': "Пока пусто";'
+    +   'document.getElementById("rAuto").style.display = (ПОРЯДОК==="manual"&&Т.length>2) ? "" : "none";'
+    +   'var g = document.getElementById("rGo");'+   'g.href = "https://yandex.by/maps/?rtext=" + Т.map(function(p){return p.lat+","+p.lng;}).join("~") + "&rtt=auto";'+   'g.className = "go" + (Т.length ? "" : " off");'+   'кудаЗаЖильём();'
     + '  document.getElementById("rEmpty").style.display = Т.length ? "none" : "";'+   'document.getElementById("rmap").style.display = (Т.length||РЕЖИМ) ? "" : "none";'+   'рисоватьКарту();}'+ 'function рисоватьКарту(){if((!Т.length&&!РЕЖИМ)||typeof L==="undefined")return;'+   'if(!карта){карта=L.map("rmap",{scrollWheelZoom:false});'+     'карта.attributionControl.setPrefix("");'+     'L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,'+       'attribution:"&copy; OpenStreetMap"}).addTo(карта);слой=L.layerGroup().addTo(карта);карта.on("click",поКарте);}'+   'слой.clearLayers(); if(линия){карта.removeLayer(линия);линия=null;}'+   'var пути=[];'+   'Т.forEach(function(p,i){пути.push([p.lat,p.lng]);'+     'L.marker([p.lat,p.lng],{icon:L.divIcon({className:"",iconSize:[26,26],iconAnchor:[13,13],'+       'html:"<div class=\\"pin"+(своя(p)?" own":"")+"\\">"+(i+1)+"</div>"}),draggable:своя(p)})'
     +   '.bindTooltip(p.name).on("dragend",function(e){передвинуть(p,e.target.getLatLng());}).addTo(слой);});'+   'if(пути.length>1) линия=L.polyline(пути,{color:"#9a3412",weight:3,opacity:.7}).addTo(карта);'+   'setTimeout(function(){карта.invalidateSize();'+     'if(НЕ_ДВИГАТЬ)НЕ_ДВИГАТЬ=false;else if(!пути.length)карта.setView([53.7,27.95],6);'
     +     'else if(пути.length>1)карта.fitBounds(пути,{padding:[40,40]});else карта.setView(пути[0],13);},60);'+   'подорогам();}'+ 'function кудаЗаЖильём(){var a=document.getElementById("rStay"); if(!a)return;'
@@ -3371,18 +3504,48 @@ async function marshrutPage(ids){
     + '  if(!л){a.href="/";return;}'
     + '  a.href="/?region="+encodeURIComponent(л[1])+"&city="+encodeURIComponent(л[0]);'
     + '  a.textContent="Искать жильё в городе "+л[0]+" →";}'
-    + 'var дорогаЗа = "", ПЕРЕГОНЫ = null;'+ 'function подписатьШаги(){if(!ПЕРЕГОНЫ)return;'
+    + 'var дорогаЗа = "", ПЕРЕГОНЫ = null, ДОРОГА = null;'
+    // Перегоны по дорогам годятся только для того порядка, для которого их
+    // посчитали: после перестановки старые цифры встали бы не к тем парам точек.
+    + 'function ключДороги(){return Т.map(function(p){return p.lat+","+p.lng;}).join(";");}'
+    + 'function подписатьШаги(){if(!ПЕРЕГОНЫ||!ДОРОГА||ДОРОГА.к!==ключДороги())return;'
     + '  var э=document.querySelectorAll("#rlist .it .km");'
     + '  for(var i=1;i<э.length;i++){ var v=ПЕРЕГОНЫ[i-1];'
     + '    if(typeof v==="number") э[i].textContent="+"+Math.round(v)+" км"; }}'
-    + 'async function подорогам(){if(Т.length<2){ПЕРЕГОНЫ=null;return;}'+   'var к = Т.map(function(p){return p.lat+","+p.lng;}).join(";");'+   'if(к===дорогаЗа)return; дорогаЗа=к;'+   'try{var d=await (await fetch("/api/route?p="+encodeURIComponent(к))).json();'+     'if(!d.ok||к!==дорогаЗа)return;'+     'if(линия){карта.removeLayer(линия);}'+     'линия=L.polyline(d.line,{color:"#9a3412",weight:4,opacity:.75}).addTo(карта);'+     'карта.fitBounds(линия.getBounds(),{padding:[40,40]});'+     'ПЕРЕГОНЫ = d.legs || null; подписатьШаги();'
-    + '     var ч=Math.floor(d.minutes/60), м=d.minutes%60;'+     'document.getElementById("rsub").textContent = Т.length+" точек · "+d.km'+       '+" км по дорогам · за рулём около "+(ч?(ч+" ч "+м+" мин"):(м+" мин"));'+   '}catch(e){}}'+ 'var поле=document.getElementById("rAdd"), список=document.getElementById("rSug"), таймер=null;'+ 'поле.addEventListener("input", function(){clearTimeout(таймер);таймер=setTimeout(искать,400);});'+ 'async function искать(){var q=поле.value.trim();'+   'if(q.length<2){список.style.display="none";return;}'
+    + 'function показатьДорогу(d){if(линия){карта.removeLayer(линия);}'+     'линия=L.polyline(d.line,{color:"#9a3412",weight:4,opacity:.75}).addTo(карта);'+     'карта.fitBounds(линия.getBounds(),{padding:[40,40]});'+     'ПЕРЕГОНЫ = d.legs || null; подписатьШаги();'
+    + '     var ч=Math.floor(d.minutes/60), м=d.minutes%60;'+     'document.getElementById("rsub").textContent = Т.length+" точек · "+d.km'+       '+" км по дорогам · за рулём около "+(ч?(ч+" ч "+м+" мин"):(м+" мин"));}'
+    // Та же дорога уже посчитана (перерисовали без перестановки) — показываем
+    // её сразу, иначе вместо линии по дорогам осталась бы прямая.
+    + 'async function подорогам(){if(Т.length<2){ПЕРЕГОНЫ=null;return;}'
+    +   'var к = ключДороги();'
+    +   'if(ДОРОГА&&ДОРОГА.к===к){показатьДорогу(ДОРОГА.d);return;}'
+    +   'if(к===дорогаЗа)return; дорогаЗа=к;'
+    +   'try{var d=await (await fetch("/api/route?p="+encodeURIComponent(к))).json();'
+    +     'if(!d.ok||к!==дорогаЗа)return; ДОРОГА={к:к,d:d}; показатьДорогу(d);'
+    +   '}catch(e){}}'
+    + 'var поле=document.getElementById("rAdd"), список=document.getElementById("rSug"), таймер=null;'+ 'поле.addEventListener("input", function(){clearTimeout(таймер);таймер=setTimeout(искать,400);});'+ 'async function искать(){var q=поле.value.trim();'+   'if(q.length<2){список.style.display="none";return;}'
     +   'var к=координаты(q);'
     +   'if(к){список.innerHTML="<button type=\\"button\\" data-c=\\""+к[0]+","+к[1]+"\\">📍 Поставить точку по координатам"'
     +     '+"<small>"+к[0]+", "+к[1]+"</small></button>";список.style.display="";return;}'+   'try{var d=await (await fetch("/api/places?q="+encodeURIComponent(q))).json();'+     'var найдено=(d.items||[]).slice(0,8);'+     'if(!найдено.length){список.style.display="none";return;}'+     'список.innerHTML=найдено.map(function(p){return "<button type=\\"button\\" data-p=\\""'+       '+esc(JSON.stringify({id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}))+"\\">"'+       '+esc(p.name)+"<small>"+esc(p.addr||"")+"</small></button>";}).join("");'+     'список.style.display="";}catch(e){список.style.display="none";}}'+ 'document.addEventListener("click", function(e){'+   'var x=e.target.closest(".it .x"); if(x){убрать(x.getAttribute("data-id"));return;}'+   'var b=e.target.closest(".sug button");'
     +   'if(b&&b.getAttribute("data-c")){var c=b.getAttribute("data-c").split(",");'
     +     'поле.value="";список.style.display="none";поставить(+c[0],+c[1]);return;}'
-    +   'if(e.target.closest("#rOwn")){режим(!РЕЖИМ);return;}'+   'if(b){try{добавить(JSON.parse(b.getAttribute("data-p")));}catch(err){}'+     'поле.value="";список.style.display="none";return;}'+   'if(!e.target.closest(".add")) список.style.display="none";});'+ 'нарисовать();'+ '(function(){var a=document.getElementById("back");if(!a)return;'+ 'try{ var r=document.referrer, с=localStorage.getItem("backTo");'+ '  if(r && r.indexOf(location.origin)===0 && /^\\/(\\?|$)/.test(r.slice(location.origin.length))) a.href=r;'+ '  else if(с && с.charAt(0)==="/") a.href=с; }catch(e){}})();'+ 'window.addEventListener("storage", function(e){if(e.key && e.key!=="route")return;'+   'var н=прочитать(); if(!н.length && Т.length) return; Т=н; нарисовать();});'+ 'document.addEventListener("visibilitychange", function(){'+   'if(document.visibilityState!=="visible")return; var н=прочитать();'+   'if(н.length!==Т.length){Т=н;нарисовать();}});' + '</' + 'script>'
+    +   'if(e.target.closest("#rOwn")){режим(!РЕЖИМ);return;}'
+    +   'if(e.target.closest("#rAuto")){поставитьПорядок("auto");нарисовать();сохранить();return;}'
+    +   'if(b){try{добавить(JSON.parse(b.getAttribute("data-p")));}catch(err){}'+     'поле.value="";список.style.display="none";return;}'+   'if(!e.target.closest(".add")) список.style.display="none";});'
+    + перетаскиваниеСтрок.toString()
+    // Перестановка руками: дальше порядок как расставлен, новые точки — в конец.
+    + 'function переставить(откуда,куда){var p=Т.splice(откуда,1)[0];Т.splice(куда,0,p);'
+    +   'поставитьПорядок("manual");нарисовать();сохранить();}'
+    + 'перетаскиваниеСтрок(document.getElementById("rlist"), переставить);'
+    + 'нарисовать();'+ '(function(){var a=document.getElementById("back");if(!a)return;'+ 'try{ var r=document.referrer, с=localStorage.getItem("backTo");'+ '  if(r && r.indexOf(location.origin)===0 && /^\\/(\\?|$)/.test(r.slice(location.origin.length))) a.href=r;'+ '  else if(с && с.charAt(0)==="/") a.href=с; }catch(e){}})();'+ 'window.addEventListener("storage", function(e){if(e.key && e.key!=="route" && e.key!=="routeOrder")return;'
+    +   'ПОРЯДОК=прочитатьПорядок(); if(e.key==="routeOrder"){нарисовать();return;}'
+    +   'var н=прочитать(); if(!н.length && Т.length) return; Т=н; нарисовать();});'
+    + 'document.addEventListener("visibilitychange", function(){'+   'if(document.visibilityState!=="visible")return; var н=прочитать(), п=прочитатьПорядок();'
+    // в другой вкладке могли переставить те же точки или сменить режим
+    +   'var ключ=function(с){return с.map(function(x){return String(x.id);}).join(",");};'
+    +   'var набор=function(с){return с.map(function(x){return String(x.id);}).sort().join(",");};'
+    +   'var другие=н.length!==Т.length||(п==="manual"&&набор(н)===набор(Т)&&ключ(н)!==ключ(Т));'
+    +   'if(!другие&&п===ПОРЯДОК)return; ПОРЯДОК=п; if(другие)Т=н; нарисовать();});' + '</' + 'script>'
     + '</div></body></html>';
 }
 
@@ -4835,6 +4998,15 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
 .rt-item .km{margin-left:auto;color:var(--txt-3);font-size:13px;white-space:nowrap}
 .rt-item .x{font:inherit;background:none;border:0;color:var(--txt-3);cursor:pointer;padding:0 2px}
 .rt-item .x:hover{color:var(--accent)}
+.rt-item .drag{font:inherit;font-size:16px;line-height:1;letter-spacing:-4px;background:none;border:0;color:var(--txt-3);
+  cursor:grab;padding:6px 9px 6px 5px;margin-left:-5px;touch-action:none;user-select:none;-webkit-user-select:none}
+.rt-item .drag:hover,.rt-item .drag:focus-visible{color:var(--accent)}
+.rt-item.dragging{background:var(--surface);border-radius:var(--radius-sm);border-top-color:transparent;
+  box-shadow:0 8px 24px rgba(41,32,24,.18)}
+.rt-item.dragging .drag{cursor:grabbing}
+#rtList .drag-ph{border:1px dashed var(--line);border-radius:var(--radius-sm);background:var(--surface-2)}
+.rt-auto{font:inherit;font-size:13px;background:none;border:0;padding:0;color:var(--accent);
+  text-decoration:underline;cursor:pointer}
 .rt-go{display:inline-block;margin-top:12px;background:var(--accent);color:var(--accent-ink);
   text-decoration:none;font-weight:700;font-size:14.5px;border-radius:var(--radius-sm);padding:11px 18px}
 .rt-go:hover{background:var(--accent-2)}
@@ -5225,6 +5397,7 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
     <div class="rt-head">
       <b>Маршрут на день</b>
       <span id="rtSum"></span>
+      <button type="button" id="rtAuto" class="rt-auto" style="display:none">Упорядочить автоматически</button>
       <button type="button" id="rtClear" class="rt-clear">очистить</button>
     </div>
     <div id="rtList"></div>
@@ -6355,6 +6528,18 @@ function allStay(btn){
 window.__route = [];
 try{ window.__route = JSON.parse(localStorage.getItem('route') || '[]'); }catch(e){}
 
+// Порядок точек: 'auto' — объезд по близости, 'manual' — как расставил человек,
+// перетащив точку за ⋮⋮. Хранится рядом с маршрутом (routeOrder) и общий
+// со страницей /marshrut. Держим и в памяти: если хранилище закрыто,
+// перестановка всё равно должна работать, пока страница открыта.
+window.__routeOrder = 'auto';
+try{ if(localStorage.getItem('routeOrder') === 'manual') window.__routeOrder = 'manual'; }catch(e){}
+function порядокВручную(){ return window.__routeOrder === 'manual'; }
+function поставитьПорядокМаршрута(р){
+  window.__routeOrder = р;
+  try{ localStorage.setItem('routeOrder', р); }catch(e){}
+}
+
 // Расстояние по прямой, километры. На сервере такая функция есть, но она
 // там и остаётся: страница живёт в браузере и до неё не дотянется.
 function кмМежду(a1, o1, a2, o2){
@@ -6528,9 +6713,10 @@ function clearRoute(){
   drawRoute();
 }
 
-// порядок объезда: от первой точки каждый раз к ближайшей из оставшихся
+// порядок объезда: от первой точки каждый раз к ближайшей из оставшихся;
+// если порядок расставлен руками — список как есть, новые точки в конце
 function orderRoute(list){
-  if(list.length < 3) return list.slice();
+  if(list.length < 3 || порядокВручную()) return list.slice();
   const left = list.slice(1), out = [list[0]];
   while(left.length){
     const cur = out[out.length - 1];
@@ -6589,7 +6775,8 @@ function drawRoute(){
   const строки = list.map(function(p, i){
     const шаг = i ? кмМежду(list[i-1].lat, list[i-1].lng, p.lat, p.lng) : 0;
     сумма += шаг;
-    return '<div class="rt-item"><span class="n">' + (i+1) + '</span>'
+    return '<div class="rt-item"><button class="drag" type="button" aria-label="Перетащить">⋮⋮</button>'
+      + '<span class="n">' + (i+1) + '</span>'
       + '<span class="t"><b>' + (своя(p) ? '📍 ' : '') + esc2(p.name) + '</b>'
       +   (адресТочки(p) ? ('<small>' + esc2(адресТочки(p)) + '</small>') : '') + '</span>'
       + '<span class="km">' + (i ? ('+' + Math.round(шаг) + ' км') : 'старт') + '</span>'
@@ -6599,7 +6786,10 @@ function drawRoute(){
   $('#rtSum').textContent = list.length + ' точ. · около ' + Math.round(сумма) + ' км между ними';
   // Ведём на свою страницу: там маршрут видно на карте и можно доложить
   // точку, не возвращаясь в список. В Яндекс уходим уже оттуда.
-  const адрес = '/marshrut?p=' + list.map(вСсылку).join(',');
+  // o=1 — порядок расставлен руками, страница маршрута не должна его пересортировать
+  const адрес = '/marshrut?p=' + list.map(вСсылку).join(',') + (порядокВручную() ? '&o=1' : '');
+  const авто = $('#rtAuto');
+  if(авто) авто.style.display = (порядокВручную() && list.length > 2) ? '' : 'none';
   $('#routeGo').href = адрес;
   if(bar){
     bar.href = адрес;
@@ -6616,6 +6806,45 @@ function dropRoute(id){
   syncPins();
   drawRoute();
 }
+
+// Перестановка руками. Строки списка идут в том же порядке, что и
+// window.__route (drawRoute кладёт туда упорядоченный список), поэтому
+// номер строки — это номер точки. Дальше порядок не пересчитывается.
+function переставитьМаршрут(откуда, куда){
+  const list = (window.__route || []).slice();
+  const p = list.splice(откуда, 1)[0];
+  if(!p) return;
+  list.splice(куда, 0, p);
+  window.__route = list;
+  поставитьПорядокМаршрута('manual');
+  try{ localStorage.setItem('route', JSON.stringify(list)); }catch(e){}
+  drawRoute();
+}
+
+function упорядочитьАвтоматически(){
+  поставитьПорядокМаршрута('auto');
+  drawRoute();
+  try{ localStorage.setItem('route', JSON.stringify(window.__route)); }catch(e){}
+}
+
+// Маршрут правят и во вкладке /marshrut: докладывают точки, переставляют.
+// Без этого главная держала бы старый порядок и со следующей точкой
+// записала бы его поверх нового.
+window.addEventListener('storage', function(e){
+  if(e.key && e.key !== 'route' && e.key !== 'routeOrder') return;
+  try{ window.__routeOrder = localStorage.getItem('routeOrder') === 'manual' ? 'manual' : 'auto'; }catch(err){}
+  if(e.key !== 'routeOrder'){
+    try{
+      const н = JSON.parse(localStorage.getItem('route') || '[]');
+      if(Array.isArray(н)) window.__route = н;
+    }catch(err){}
+    (window.__places || []).forEach(function(p, i){ markRoute(i, inRoute(p.id)); });
+    syncPins();
+  }
+  drawRoute();
+});
+
+${перетаскиваниеСтрок.toString()}
 
 // Копируем координаты в буфер. Если браузер не разрешил (так бывает на
 // старых телефонах) — выделяем текст, чтобы человек скопировал сам.
@@ -6852,6 +7081,8 @@ function applyUrl(){
     });
   });
   $('#rtClear').addEventListener('click', clearRoute);
+  $('#rtAuto').addEventListener('click', упорядочитьАвтоматически);
+  перетаскиваниеСтрок($('#rtList'), переставитьМаршрут);
 
   let plTimer = null;
   $('#plQ').addEventListener('input', function(){
@@ -7362,7 +7593,8 @@ http.createServer(async (req,res)=>{
     const ids = (u.searchParams.get('p') || '').split(',')
       .map(x => x.trim()).filter(Boolean).slice(0, 20);
     let html = '';
-    try{ html = await marshrutPage(ids); }catch(e){ html = ''; }
+    // o=1 — порядок точек расставлен руками, пересортировывать нельзя
+    try{ html = await marshrutPage(ids, u.searchParams.get('o') === '1'); }catch(e){ html = ''; }
     if(!html){ res.writeHead(500); res.end('Не получилось собрать маршрут'); return; }
     res.writeHead(200, {'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'no-cache'});
     res.end(html); return;
