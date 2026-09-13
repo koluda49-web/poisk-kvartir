@@ -2740,7 +2740,8 @@ async function placesRaw(){
 // чаще раза в POPULAR_SAVE_MS: на каждую точку в маршруте переписывать файл
 // и ставить отправку в GitHub — лишняя работа.
 const POPULAR_SAVE_MS = +process.env.POPULAR_SAVE_MS || 600000;
-const ГОЛОСОВ_МАКС = 50000;
+// Каждый голос кладёт два ключа (посетитель и адрес) — лимит на 50 000 голосов.
+const ГОЛОСОВ_МАКС = 100000;
 // Номер места — только цифры: иначе в файл можно было бы насыпать что угодно.
 const номерМеста = function(id){ const с = String(id == null ? '' : id); return /^[0-9]{1,9}$/.test(с) ? с : ''; };
 // Файл могли поправить руками: берём только номера и целые неотрицательные числа.
@@ -3341,6 +3342,7 @@ async function mestoPageBuild(id){
     + '.where{color:#57534e;margin:0 0 16px}'
     + '.hero{width:100%;max-height:460px;object-fit:cover;border-radius:14px;display:block;margin:0 0 16px}'
     + '.txt{max-width:70ch}'
+    + '.inr{margin:12px 0 0;font-weight:600}'
     + '.facts{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0}'
     + '.facts a,.facts span{background:#fff;border:1px solid #e9e2d8;border-radius:999px;padding:8px 15px;'
     +   'font-size:14px;text-decoration:none;color:#1c1917}'
@@ -3381,6 +3383,9 @@ async function mestoPageBuild(id){
     + снимки
     + (текст ? '' : '')
     + (текст ? ('<div class="txt"><p>' + esc(текст) + '</p></div>') : '')
+    + (МАРШРУТЫ_С_МЕСТОМ[String(p.id)] || []).map(function(м){
+        return '<p class="inr">Входит в маршрут: <a href="/m/' + м.slug + '">' + esc(м.title) + ' →</a></p>';
+      }).join('')
     + '<div class="facts">'
     +   '<a href="' + route + '" target="_blank" rel="noopener">Проложить маршрут →</a>'
     +   '<span>' + p.lat.toFixed(6) + ', ' + p.lng.toFixed(6) + '</span>'
@@ -3507,6 +3512,261 @@ function своюТочкуИзСсылки(t){
   if(!isFinite(lat) || !isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
   const name = String(m[3] || '').replace(/[<>~,]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'Своя точка';
   return { id: 'm' + lat.toFixed(5) + '_' + lng.toFixed(5), name, addr: '', lat, lng, own: 1 };
+}
+
+// Карточка точки на странице маршрута (/marshrut, /m/<slug>) — код для
+// браузера, вставляется в страницу своим текстом, как перетаскиваниеСтрок.
+// Зачем: из ролика приходят посмотреть, что это за места, а название точки
+// раньше уводило на отдельную страницу. Теперь нажатие на название или на
+// метку раскрывает под строкой снимки, описание и кнопки (открыта одна
+// карточка), а на карте — окошко с тем же в сжатом виде. Повторное нажатие
+// закрывает. Описание и снимки берём из /api/place при первом раскрытии
+// и держим в памяти страницы; у своей точки спрашивать нечего.
+// Пользуется глобальными Т, карта, ИНФО, esc, своя, убрать, источникЖилья.
+function карточкаТочки(){
+  var ЗАПРОСЫ = {}, ГОТОВО = {}, СБОЙ = {};
+  var ОТКРЫТА = '', ПОПАП = null, ПОПАП_ИД = '';
+  var список = document.getElementById('rlist');
+
+  function точка(id){
+    for(var i = 0; i < Т.length; i++) if(String(Т[i].id) === String(id)) return Т[i];
+    return null;
+  }
+  function инфо(p){ return (typeof ИНФО === 'object' && ИНФО && ИНФО[String(p.id)]) || {}; }
+  function адресМеста(p){ var и = инфо(p); return '/mesto/' + p.id + (и.slug ? ('-' + и.slug) : ''); }
+  function координаты(p){ return (+p.lat).toFixed(5) + ', ' + (+p.lng).toFixed(5); }
+  // для окошка на карте — до 160 знаков без обрыва слова
+  function короче(т){
+    т = String(т || '');
+    if(т.length <= 160) return т;
+    т = т.slice(0, 159); var пр = т.lastIndexOf(' ');
+    return (пр > 60 ? т.slice(0, пр) : т).replace(/[\s,;:—-]+$/, '') + '…';
+  }
+  function строкаТочки(id){
+    var ряды = список.querySelectorAll('.it');
+    for(var i = 0; i < Т.length; i++) if(String(Т[i].id) === String(id)) return ряды[i] || null;
+    return null;
+  }
+
+  function загрузить(p){
+    var id = String(p.id);
+    if(!ЗАПРОСЫ[id]){
+      ЗАПРОСЫ[id] = fetch('/api/place?id=' + encodeURIComponent(id))
+        .then(function(r){ return r.json(); })
+        .then(function(d){ ГОТОВО[id] = d || {}; delete СБОЙ[id]; return ГОТОВО[id]; })
+        // сбой не запоминаем: при следующем раскрытии спросим снова
+        .catch(function(){ delete ЗАПРОСЫ[id]; СБОЙ[id] = 1; return null; });
+    }
+    return ЗАПРОСЫ[id];
+  }
+
+  function снимки(pics, имя){
+    var с = (pics || []).filter(Boolean).slice(0, 12);
+    if(!с.length) return '';
+    // первый кадр с адресом, остальные — с пометкой: грузятся, когда до них долистают
+    return '<div class="pc-ph">'
+      + с.map(function(u, i){
+          return '<img class="pc-im' + (i ? '' : ' on') + '"' + (i ? (' data-src="' + esc(u) + '"') : (' src="' + esc(u) + '"'))
+            + ' alt="' + esc(имя) + '">';
+        }).join('')
+      + (с.length > 1
+          ? ('<button class="pc-arr pc-l" type="button" aria-label="Предыдущий снимок">‹</button>'
+             + '<button class="pc-arr pc-r" type="button" aria-label="Следующий снимок">›</button>'
+             + '<span class="pc-n">1/' + с.length + '</span>')
+          : '')
+      + '</div>';
+  }
+
+  function htmlКарточки(p){
+    var id = String(p.id);
+    if(своя(p)){
+      return '<div class="pc" data-id="' + esc(id) + '">'
+        + '<p class="pc-m">Своя точка · ' + координаты(p) + '</p>'
+        + '<div class="pc-b"><button class="pc-drop" type="button">Убрать из маршрута</button></div></div>';
+    }
+    var d = ГОТОВО[id], и = инфо(p), ждём = !d && !СБОЙ[id];
+    var текст = (d && d.text) || и.t || '';
+    var мета = [и.cat, p.addr || (d && d.addr) || ''].filter(Boolean).join(' · ');
+    return '<div class="pc" data-id="' + esc(id) + '">'
+      + (d ? снимки(d.pics, p.name) : (ждём ? '<div class="pc-ph pc-wait">Загружаю снимки…</div>' : ''))
+      + (мета ? ('<p class="pc-m">' + esc(мета) + '</p>') : '')
+      + (текст ? ('<p class="pc-t">' + esc(текст) + '</p>') : (ждём ? '<p class="pc-t pc-wait">Загружаю описание…</p>' : ''))
+      + '<div class="pc-b"><a class="pc-more" href="' + esc(адресМеста(p)) + '">Подробнее →</a>'
+      +   '<button class="pc-stay" type="button" aria-expanded="false">Жильё рядом</button>'
+      +   '<button class="pc-drop" type="button">Убрать из маршрута</button></div>'
+      + '<div class="pc-st" hidden></div></div>';
+  }
+
+  function htmlОкошка(p){
+    var id = String(p.id);
+    if(своя(p)){
+      return '<div class="pp" data-id="' + esc(id) + '"><b>📍 ' + esc(p.name) + '</b>'
+        + '<small>Своя точка · ' + координаты(p) + '</small>'
+        + '<div class="pp-b"><button class="pp-drop" type="button">Убрать из маршрута</button></div></div>';
+    }
+    var d = ГОТОВО[id], и = инфо(p), снимок = d && d.pics && d.pics[0];
+    var кратко = и.d || короче(d && d.text);
+    return '<div class="pp" data-id="' + esc(id) + '">'
+      + (снимок ? ('<img class="pp-im" src="' + esc(снимок) + '" alt="">') : '')
+      + '<b>' + esc(p.name) + '</b>' + (p.addr ? ('<small>' + esc(p.addr) + '</small>') : '')
+      + (кратко ? ('<p>' + esc(кратко) + '</p>') : ((!d && !СБОЙ[id]) ? '<p>Загружаю описание…</p>' : ''))
+      + '<div class="pp-b"><a href="' + esc(адресМеста(p)) + '">Подробнее →</a>'
+      +   '<button class="pp-drop" type="button">Убрать из маршрута</button></div></div>';
+  }
+
+  // Карточку кладём в саму строку: номера строк и перетаскивание за ⋮⋮
+  // остаются как были. Открытый блок «Жильё рядом» переносим в новую разметку.
+  function вставить(p){
+    var ряд = строкаТочки(p.id); if(!ряд) return null;
+    var было = ряд.querySelector('.pc'), жильё = было && было.querySelector('.pc-st');
+    if(было) ряд.removeChild(было);
+    ряд.insertAdjacentHTML('beforeend', htmlКарточки(p));
+    var к = ряд.querySelector('.pc');
+    if(жильё && !жильё.hidden){
+      к.replaceChild(жильё, к.querySelector('.pc-st'));
+      var кн = к.querySelector('.pc-stay'); if(кн) кн.setAttribute('aria-expanded', 'true');
+    }
+    ряд.classList.add('open');
+    var н = ряд.querySelector('.nm'); if(н) н.setAttribute('aria-expanded', 'true');
+    return к;
+  }
+  function закрытьОкошко(){
+    ПОПАП_ИД = '';
+    if(ПОПАП && карта && карта.hasLayer(ПОПАП)) карта.closePopup(ПОПАП);
+  }
+  function закрыть(){
+    ОТКРЫТА = '';
+    Array.prototype.slice.call(список.querySelectorAll('.pc')).forEach(function(к){
+      var ряд = к.parentNode; ряд.removeChild(к); ряд.classList.remove('open');
+      var н = ряд.querySelector('.nm'); if(н) н.setAttribute('aria-expanded', 'false');
+    });
+    закрытьОкошко();
+  }
+  function окошко(p){
+    if(!карта || typeof L === 'undefined') return;
+    if(!ПОПАП){
+      ПОПАП = L.popup({ maxWidth: 260, minWidth: 210, autoPanPadding: [16, 16] });
+      карта.on('popupclose', function(e){ if(e.popup === ПОПАП) ПОПАП_ИД = ''; });
+    }
+    ПОПАП_ИД = String(p.id);
+    ПОПАП.setLatLng([p.lat, p.lng]).setContent(htmlОкошка(p));
+    if(!карта.hasLayer(ПОПАП)) ПОПАП.openOn(карта);
+    // Leaflet не пускает нажатия из окошка дальше карты — слушаем на нём самом
+    var el = ПОПАП.getElement();
+    if(el && !el.__точка){
+      el.__точка = 1;
+      el.addEventListener('click', function(e){
+        if(!e.target.closest('.pp-drop')) return;
+        var pp = e.target.closest('.pp'); if(pp) убрать(pp.getAttribute('data-id'));
+      });
+    }
+  }
+  function открыть(p){
+    закрыть();
+    var id = ОТКРЫТА = String(p.id);
+    вставить(p);
+    окошко(p);
+    if(своя(p) || ГОТОВО[id]) return;
+    загрузить(p).then(function(){
+      if(ОТКРЫТА !== id) return;
+      var сейчас = точка(id); if(!сейчас) return;
+      вставить(сейчас);
+      if(ПОПАП_ИД === id) ПОПАП.setContent(htmlОкошка(сейчас));
+    });
+  }
+  function переключить(p){ if(ОТКРЫТА === String(p.id)) закрыть(); else открыть(p); }
+
+  function листать(ph, шаг){
+    if(!ph) return;
+    var с = ph.querySelectorAll('.pc-im'); if(с.length < 2) return;
+    var н = 0;
+    for(var i = 0; i < с.length; i++) if(с[i].classList.contains('on')) н = i;
+    с[н].classList.remove('on');
+    н = (н + шаг + с.length) % с.length;
+    [н, (н + 1) % с.length].forEach(function(j){
+      var э = с[j]; if(э && !э.getAttribute('src') && э.getAttribute('data-src')) э.src = э.getAttribute('data-src');
+    });
+    с[н].classList.add('on');
+    var сч = ph.querySelector('.pc-n'); if(сч) сч.textContent = (н + 1) + '/' + с.length;
+  }
+
+  // «Жильё рядом» — как у места на главной: до четырёх вариантов в 30 км
+  // и ссылка на всё жильё области.
+  function жильё(к, p, кнопка){
+    var б = к.querySelector('.pc-st'); if(!б) return;
+    if(!б.hidden){ б.hidden = true; кнопка.setAttribute('aria-expanded', 'false'); return; }
+    б.hidden = false; кнопка.setAttribute('aria-expanded', 'true');
+    if(б.getAttribute('data-ok')) return;
+    б.innerHTML = '<p class="pc-m">Ищу жильё рядом…</p>';
+    fetch('/api/places/stay?lat=' + p.lat + '&lng=' + p.lng + '&r=30').then(function(r){ return r.json(); }).then(function(d){
+      var items = ((d && d.items) || []).slice(0, 4);
+      var все = (d && d.region)
+        ? ('<a class="pc-all" href="/?region=' + encodeURIComponent(d.region) + '&type=flat&source=both">Всё жильё рядом →</a>') : '';
+      б.setAttribute('data-ok', '1');
+      if(!items.length){ б.innerHTML = '<p class="pc-m">В 30 км жилья сейчас не нашлось.</p>' + все; return; }
+      б.innerHTML = '<div class="nr-list">' + items.map(function(x){
+        var ф = x.photos && x.photos[0];
+        return '<a class="nc" href="' + esc(x.link) + '" target="_blank" rel="noopener">'
+          + (ф ? ('<img src="' + esc(ф) + '" alt="" loading="lazy">') : '<div class="ni"></div>')
+          + '<span class="p">' + esc(x.title || x.name || 'Жильё на сутки') + '</span>'
+          + '<span class="d">' + (x.от ? 'от ' : '') + esc(x.price) + ' BYN</span>'
+          + '<span class="s">' + esc(источникЖилья(x.src))
+          +   (x.approx ? (x.area ? (' · ' + esc(x.area)) : '') : (' · ' + String(x.km).replace('.', ',') + ' км')) + '</span></a>';
+      }).join('') + '</div>' + все;
+    }).catch(function(){ б.innerHTML = '<p class="pc-m">Жильё рядом сейчас не загрузилось.</p>'; });
+  }
+
+  список.addEventListener('click', function(e){
+    var н = e.target.closest('.nm');
+    if(н && список.contains(н)){
+      // с Ctrl, Shift или средней кнопкой ссылку открывают в новой вкладке — не мешаем
+      if(e.button > 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+      e.preventDefault();
+      var ряд = н.closest('.it');
+      var p = Т[Array.prototype.indexOf.call(список.querySelectorAll('.it'), ряд)];
+      if(p) переключить(p);
+      return;
+    }
+    var к = e.target.closest('.pc'); if(!к) return;
+    var т = точка(к.getAttribute('data-id')); if(!т) return;
+    if(e.target.closest('.pc-drop')){ убрать(т.id); return; }
+    var ж = e.target.closest('.pc-stay'); if(ж){ жильё(к, т, ж); return; }
+    var а = e.target.closest('.pc-arr'); if(а) листать(к.querySelector('.pc-ph'), а.classList.contains('pc-l') ? -1 : 1);
+  });
+  // своя точка — не ссылка: Enter и пробел раскрывают её так же
+  список.addEventListener('keydown', function(e){
+    var н = e.target.closest && e.target.closest('.nm'); if(!н) return;
+    if(e.key === ' ' || (e.key === 'Enter' && н.tagName !== 'A')){ e.preventDefault(); н.click(); }
+  });
+  // листание снимков пальцем
+  var x0 = null, y0 = 0;
+  список.addEventListener('touchstart', function(e){
+    x0 = e.target.closest('.pc-ph') ? e.touches[0].clientX : null; y0 = e.touches[0].clientY;
+  }, { passive: true });
+  список.addEventListener('touchend', function(e){
+    if(x0 === null) return;
+    var т = e.changedTouches[0], dx = т.clientX - x0, dy = т.clientY - y0; x0 = null;
+    if(Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) листать(e.target.closest('.pc-ph'), dx < 0 ? 1 : -1);
+  }, { passive: true });
+  // снимок жилья не загрузился — заглушка вместо битой картинки
+  список.addEventListener('error', function(e){
+    var t = e.target; if(!t || t.tagName !== 'IMG' || !t.closest('.nc')) return;
+    var d = document.createElement('div'); d.className = 'ni'; t.parentNode.replaceChild(d, t);
+  }, true);
+
+  // Метка на карте: то же раскрытие, что и название в списке
+  window.меткаТочки = function(p){ переключить(точка(p.id) || p); };
+  // Список перерисован (правка, перестановка, точка из другой вкладки):
+  // открытая карточка остаётся открытой, если её точка ещё в маршруте.
+  window.вернутьКарточку = function(){
+    if(!ОТКРЫТА) return;
+    var p = точка(ОТКРЫТА);
+    if(!p){ ОТКРЫТА = ''; закрытьОкошко(); return; }
+    вставить(p);
+    if(ПОПАП && ПОПАП_ИД === ОТКРЫТА) ПОПАП.setLatLng([p.lat, p.lng]);
+  };
+  // для проверок
+  window.__карточкаТочки = { открыта: function(){ return ОТКРЫТА; }, запрошено: function(){ return Object.keys(ЗАПРОСЫ); } };
 }
 
 // Перетаскивание строк маршрута за ручку ⋮⋮ — это код для браузера. Он нужен
@@ -3866,12 +4126,13 @@ function снимокДляСоцсетей(pic){
 
 // ── Дорога маршрута ───────────────────────────────────────────────────────
 // Точки из запроса «lat,lng;lat,lng;…»: только похожие на Беларусь и соседей,
-// не больше 12 — открытый маршрутизатор длинные списки не любит.
+// не больше 30 (как в ссылке на маршрут). Открытый маршрутизатор длинные
+// списки не любит — больше 12 точек считаем частями, см. маршрутЧастями().
 function парыМаршрута(p){
   return String(p || '').split(';')
     .map(x => x.split(',').map(Number))
     .filter(c => c.length === 2 && c[0] > 40 && c[0] < 70 && c[1] > 15 && c[1] < 45)
-    .slice(0, 12);
+    .slice(0, 30);
 }
 
 // Считает открытый маршрутизатор OSRM; ответ с дорогой держим сутки — дороги
@@ -3903,6 +4164,45 @@ async function маршрутПоДорогам(пары){
   }, 24 * 60 * 60 * 1000);
 }
 
+// Маршрут длиннее 12 точек (Браславщина за два дня — 25) считаем частями
+// по 12 точек, соседние части делят конечную точку. Каждая часть — обычный
+// маршрутПоДорогам со своим суточным кэшем, ответ склеиваем в тот же вид:
+// км и минуты складываем, перегоны и линию — подряд. Части спрашиваем
+// по очереди: пачка одновременных запросов открытому OSRM — верный отказ.
+const ЧАСТЬ_МАРШРУТА = 12;
+function частиМаршрута(пары){
+  if(пары.length <= ЧАСТЬ_МАРШРУТА) return [пары];
+  const части = [];
+  for(let i = 0; i < пары.length - 1; i += ЧАСТЬ_МАРШРУТА - 1) части.push(пары.slice(i, i + ЧАСТЬ_МАРШРУТА));
+  return части;
+}
+async function маршрутЧастями(пары){
+  const части = частиМаршрута(пары);
+  if(части.length === 1) return маршрутПоДорогам(пары);
+  const итог = { ok:true, km:0, minutes:0, legs:[], legMinutes:[], line:[] };
+  for(const ч of части){
+    const d = await маршрутПоДорогам(ч);
+    итог.km += d.km; итог.minutes += d.minutes;
+    итог.legs = итог.legs.concat(d.legs); итог.legMinutes = итог.legMinutes.concat(d.legMinutes);
+    // первая вершина следующей части — та же точка, что последняя у предыдущей
+    итог.line = итог.line.concat(итог.line.length ? d.line.slice(1) : d.line);
+  }
+  итог.km = Math.round(итог.km * 10) / 10;
+  return итог;
+}
+// Километры по дорогам, только если маршрут уже посчитан и лежит в кэше:
+// для карточек списка маршрутов в OSRM ради этого не ходим.
+function кмИзКэша(пары){
+  let км = 0;
+  for(const ч of частиМаршрута(пары)){
+    const ключ = 'osrm|' + ч.map(c => c[0].toFixed(5) + ',' + c[1].toFixed(5)).join(';');
+    const hit = SEARCH_CACHE.get(ключ);
+    if(!hit || !hit.data || !hit.data.ok) return null;
+    км += hit.data.km;
+  }
+  return км;
+}
+
 // Места «по пути»: не дальше 5 км от дороги, ближайшие первыми, до 12.
 // Кэш свой, а не cached(): там пустой список считается неудачей и живёт
 // минуты, а «рядом с дорогой ничего нет» — такой же ответ, как любой другой.
@@ -3924,7 +4224,7 @@ async function местаПоПути(пары, skip){
       СЧЁТ_ДОРОГ.поПути++;
       let линия = null;
       try{
-        const d = await маршрутПоДорогам(пары);
+        const d = await маршрутЧастями(пары);
         if(d && d.ok && Array.isArray(d.line) && d.line.length > 1) линия = d.line;
       }catch(e){}
       const data = { ok:true, items: ближеКЛинии(await placesRaw(), линия || пары, пары, пропустить) };
@@ -4001,6 +4301,20 @@ async function marshrutPage(ids, опции){
   // расставлен руками (o=1), оставляем как в ссылке.
   const точки = порядокОбъезда(найденные, ручной);
 
+  // Что знаем о точках справочника: категория и кусок адреса страницы места,
+  // а у готовых маршрутов (/m/<slug>) ещё и описание — короткое для строки
+  // и JSON-LD, полное для раскрывающейся карточки. Поисковику описание нужно
+  // в HTML сразу, а человеку — без лишнего запроса при первом нажатии.
+  const тексты = о.тексты || {};
+  const инфо = {};
+  точки.forEach(function(p){
+    if(p.own) return;
+    const м = все.find(x => String(x.id) === String(p.id));
+    const полный = String(тексты[String(p.id)] || '');
+    инфо[p.id] = { cat: (м && м.cat) || '', slug: slugify(p.name) };
+    if(полный){ инфо[p.id].t = полный; инфо[p.id].d = короткоеОписание(полный); }
+  });
+
   let сумма = 0;
   точки.forEach((p, i) => { if(i) сумма += distKm(точки[i-1].lat, точки[i-1].lng, p.lat, p.lng); });
 
@@ -4011,10 +4325,13 @@ async function marshrutPage(ids, опции){
     const шаг = i ? distKm(точки[i-1].lat, точки[i-1].lng, p.lat, p.lng) : 0;
     return '<div class="it"><button class="drag" type="button" aria-label="Перетащить">⋮⋮</button>'
       + '<span class="n">' + (i+1) + '</span>'
+      // Название — ссылка на страницу места (её видит поисковик), но нажатие
+      // раскрывает карточку точки здесь же, не уводя со страницы маршрута.
       + '<span class="t">' + (p.own
-          ? ('<b class="ownn">📍 ' + esc(p.name) + '</b><small>своя точка · её можно перетащить на карте</small>')
-          : ('<a href="/mesto/' + p.id + '-' + slugify(p.name) + '">' + esc(p.name) + '</a>'))
-      + (p.addr ? ('<small>' + esc(p.addr) + '</small>') : '') + '</span>'
+          ? ('<b class="ownn nm" role="button" tabindex="0" aria-expanded="false">📍 ' + esc(p.name) + '</b><small>своя точка · её можно перетащить на карте</small>')
+          : ('<a class="nm" href="/mesto/' + p.id + '-' + slugify(p.name) + '" role="button" aria-expanded="false">' + esc(p.name) + '</a>'))
+      + (p.addr ? ('<small>' + esc(p.addr) + '</small>') : '')
+      + (инфо[p.id] && инфо[p.id].d ? ('<span class="ds">' + esc(инфо[p.id].d) + '</span>') : '') + '</span>'
       + '<span class="km">' + (i ? ('+' + Math.round(шаг) + ' км') : 'старт') + '</span>'
       + '<button class="x" type="button" title="убрать" data-id="' + p.id + '">×</button></div>';
   }).join('');
@@ -4034,7 +4351,18 @@ async function marshrutPage(ids, опции){
     const сФото = ids.map(function(t){ return все.find(x => String(x.id) === t); })
       .filter(function(p){ return p && p.pic; })[0];
     const снимок = сФото ? снимокДляСоцсетей(сФото.pic) : '';
-    const описание = String(о.вступление || '');
+    const описание = String(о.описание || о.вступление || '');
+    // Точки маршрута списком: у места справочника — его страница и короткое описание
+    const списокТочек = { '@context':'https://schema.org', '@type':'ItemList', name: заголовок,
+      numberOfItems: точки.length,
+      itemListElement: точки.map(function(p, i){
+        const и = инфо[p.id] || {};
+        return { '@type':'ListItem', position: i + 1,
+                 item: { '@type': p.own ? 'Place' : 'TouristAttraction', name: p.name,
+                         description: и.d || undefined,
+                         url: p.own ? undefined : (SITE_URL + '/mesto/' + p.id + '-' + и.slug),
+                         geo: { '@type':'GeoCoordinates', latitude: p.lat, longitude: p.lng } } };
+      }) };
     голова = '<meta name="description" content="' + esc(описание) + '">'
       + '<meta name="robots" content="index,follow">'
       + '<link rel="canonical" href="' + esc(адрес) + '">'
@@ -4043,7 +4371,8 @@ async function marshrutPage(ids, опции){
       + '<meta property="og:description" content="' + esc(описание) + '">'
       + '<meta property="og:url" content="' + esc(адрес) + '">'
       + (снимок ? ('<meta property="og:image" content="' + esc(снимок) + '">'
-                   + '<meta name="twitter:card" content="summary_large_image">') : '');
+                   + '<meta name="twitter:card" content="summary_large_image">') : '')
+      + '<script type="application/ld+json">' + JSON.stringify(списокТочек).replace(/</g, '\\u003c') + '</' + 'script>';
   } else {
     голова = '<meta name="description" content="Маршрут на день по Беларуси'
       +   (точки.length ? (': ' + точки.length + ' точек, около ' + Math.round(сумма) + ' км между ними') : '')
@@ -4073,6 +4402,34 @@ async function marshrutPage(ids, опции){
     + '.it .drag:hover,.it .drag:focus-visible{color:#9a3412}'
     + '.it.dragging{background:#fff;border-radius:10px;border-top-color:transparent;box-shadow:0 8px 24px rgba(41,32,24,.18)}'
     + '.it.dragging .drag{cursor:grabbing}'
+    // карточка точки: раскрывается прямо в строке, на всю её ширину
+    + '.it{flex-wrap:wrap}.it .t{flex:1 1 0}'
+    + '.it .t a.nm,.it .t b.nm{cursor:pointer}.it .t a.nm:hover,.it.open .t a.nm{color:#9a3412}'
+    + '.it .t .ds{font-size:13px;line-height:1.35;color:#57534e;margin-top:2px;'
+    +   'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}'
+    + '.it.open .t .ds{display:none}'
+    + '.pc{flex:0 0 100%;min-width:0;margin:6px 0 2px;padding:10px;background:#fff;border:1px solid #e9e2d8;border-radius:12px}'
+    + '.pc-ph{position:relative;height:200px;border-radius:9px;overflow:hidden;background:#f0eae1;margin:0 0 8px;touch-action:pan-y}'
+    + '.pc-ph.pc-wait{display:flex;align-items:center;justify-content:center;color:#9c948c;font-size:13.5px}'
+    + '.pc-im{display:none;width:100%;height:100%;object-fit:cover}.pc-im.on{display:block}'
+    + '.pc-arr{position:absolute;top:50%;transform:translateY(-50%);width:36px;height:36px;border:0;border-radius:999px;'
+    +   'background:rgba(28,25,23,.55);color:#fff;font-size:22px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}'
+    + '.pc-l{left:8px}.pc-r{right:8px}'
+    + '.pc-n{position:absolute;right:10px;bottom:10px;background:rgba(28,25,23,.6);color:#fff;font-size:12px;padding:2px 8px;border-radius:999px}'
+    + '.pc-m{margin:0 0 4px;color:#9c948c;font-size:13px}'
+    + '.pc-t{margin:0 0 8px;font-size:14.5px;line-height:1.45;max-width:70ch}.pc-t.pc-wait{color:#9c948c}'
+    + '.pc-b{display:flex;flex-wrap:wrap;gap:8px}'
+    + '.pc-b a,.pc-b button{font:inherit;font-size:14px;font-weight:700;cursor:pointer;background:#fff;color:#9a3412;'
+    +   'border:1px solid #e9e2d8;border-radius:9px;padding:7px 11px;text-decoration:none}'
+    + '.pc-b a:hover,.pc-b button:hover{border-color:#9a3412}.pc-b .pc-drop{color:#57534e;font-weight:600}'
+    + '.pc-st{margin:10px 0 0}.pc-st[hidden]{display:none}.pc-all{display:inline-block;margin-top:6px;font-weight:600;font-size:14.5px}'
+    + '.pp{font-size:13.5px;line-height:1.4;color:#1c1917}.pp-im{width:100%;height:110px;object-fit:cover;border-radius:8px;display:block;margin:0 0 6px}'
+    + '.pp b{display:block;font-size:15px;line-height:1.25}.pp small{display:block;color:#9c948c;font-size:12px}'
+    + '.pp p{margin:5px 0 7px;color:#57534e}.pp-b{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center}'
+    + '.pp-b a,.pp-b button{font:inherit;font-weight:600;background:none;border:0;padding:0;color:#9a3412;cursor:pointer;text-decoration:underline}'
+    + '.about{margin:22px 0 0;max-width:70ch}.about h2{font-size:17px;line-height:1.25;margin:0 0 6px;letter-spacing:-.01em}'
+    + '.about p{margin:0 0 10px}.about[hidden]{display:none}'
+    + '#rBackOrder[hidden]{display:none}'
     + '.drag-ph{border:1px dashed #d9cec0;border-radius:10px;background:#f3ede5}'
     + '.sumrow{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 14px;margin:0 0 8px}.sumrow .sub{margin:0}'
     + '.auto{font:inherit;font-size:14px;background:none;border:0;padding:0;color:#9a3412;text-decoration:underline;cursor:pointer}'
@@ -4153,29 +4510,40 @@ async function marshrutPage(ids, опции){
     +   '.nc .na{background:#1d1916;border-color:#332c25;color:#e2703a}'
     +   '.pl input[type=time],.pl select,.ff input,.night{background:#1d1916;border-color:#332c25;color:#f6f2ed}.pl input[type=time]{color-scheme:dark}'
     +   '.plt td{border-color:#332c25}.plt th,.plt tr.rd td,.plt .tm small,.pi small{color:#a39a90}'
-    +   '.ff label,.nmsg{color:#c2b7ab}.pl h3,.dh,.plt .pn{color:#e2703a}.night h3,a.nc .d{color:#f6f2ed}}'
+    +   '.ff label,.nmsg{color:#c2b7ab}.pl h3,.dh,.plt .pn{color:#e2703a}.night h3,a.nc .d{color:#f6f2ed}'
+    +   '.pc{background:#1d1916;border-color:#332c25}.pc-ph{background:#241f1a}.it .t .ds,.pc-b .pc-drop{color:#c2b7ab}'
+    +   '.pc-b a,.pc-b button{background:#241f1a;border-color:#332c25;color:#e2703a}.it .t a.nm:hover,.it.open .t a.nm{color:#e2703a}}'
      + '</style></head><body><div class="w">'
     + '<a class="back" id="back" href="/?country=places">← Ко всем местам</a>'
     + (изВидео
         ? ('<h1>' + esc(заголовок) + '</h1>'
            + (о.вступление ? ('<p class="intro">' + esc(о.вступление) + '</p>') : '')
-           + '<p class="how"><span id="rHowOrder">Точки стоят в том порядке, как в видео. </span>'
+           + '<p class="how"><span id="rHowOrder">Точки стоят в рекомендуемом порядке. </span>'
            +   'Свой порядок — перетащите точку за ⋮⋮ слева. ')
         : ('<h1>Маршрут на день</h1>'
            + '<p class="how">Порядок объезда посчитан сам: от первой точки к ближайшей. '
            +   'Свой порядок — перетащите точку за ⋮⋮ слева. '))
+    +   'Нажмите на название точки — откроются снимки и описание. '
     +   'Линия и километраж — по настоящим дорогам, не по прямой. Точку можно доложить '
     +   'поиском внизу или убрать крестиком, а потом открыть весь маршрут в Яндекс.Картах. '
     +   (изВидео ? '</p>' : 'Держите эту страницу открытой рядом со списком мест — новые точки появятся здесь сами.</p>')
     + '<div class="sumrow"><p class="sub" id="rsub">' + (точки.length
         ? (точки.length + ' точек · около ' + Math.round(сумма) + ' км между ними')
         : 'Пока пусто') + '</p>'
-    +   '<button class="auto" id="rAuto" type="button" style="display:none">Упорядочить автоматически</button></div>'
+    +   '<button class="auto" id="rAuto" type="button" style="display:none">Упорядочить автоматически</button>'
+    +   '<button class="auto" id="rBackOrder" type="button" hidden>Вернуть мой порядок</button></div>'
     + '<div class="empty" id="rEmpty"' + (точки.length ? ' style="display:none"' : '') + '>'
     +   '<b>Маршрут пока пуст.</b><br>Добавьте места поиском ниже — или отметьте их кнопкой '
     +   '«в маршрут» в разделе <a href="/?country=places">Что посетить</a>.</div>'
     + '<div id="rmap"' + (точки.length ? '' : ' style="display:none"') + '></div>'
     + '<div id="rlist">' + строки + '</div>'
+    // Готовый маршрут: рассказ о нём обычным текстом под списком
+    + (изВидео && ((о.текст && о.текст.length) || о.подробно)
+        ? ('<section class="about" id="rAbout"><h2>О маршруте</h2>'
+           + (о.текст || []).map(function(а){ return '<p>' + esc(а) + '</p>'; }).join('')
+           + (о.подробно ? ('<p><a href="' + esc(о.подробно) + '">Подробный рассказ о маршруте →</a></p>') : '')
+           + '</section>')
+        : '')
     // «По пути» наполняется в браузере: список зависит от маршрута на экране
     + '<section class="nr" id="rNear" hidden aria-labelledby="rNearH">'
     +   '<h2 id="rNearH">По пути — до 5 км от дороги</h2><div class="nr-list" id="rNearList"></div></section>'
@@ -4233,6 +4601,9 @@ async function marshrutPage(ids, опции){
         })) + ';'
     + 'var СЕРВЕРНЫЕ = ' + JSON.stringify(точки) + ';'
     + 'var РУЧНОЙ_ПО_ССЫЛКЕ = ' + (ручной ? 'true' : 'false') + ';'
+    + 'var ИНФО = ' + JSON.stringify(инфо).replace(/</g, '\\u003c') + ';'
+    // двухдневный готовый маршрут открывается сразу с ночёвкой после этой точки
+    + 'var НОЧЁВКА_МАРШРУТА = ' + (изВидео ? (Math.floor(+о.ночёвка) || 0) : 0) + ';'
     // Маршрут из видео (/m/<slug>): показываем ровно его, даже если у человека
     // сохранён другой, и ничего не пишем в хранилище, пока он сам не поменяет.
     + 'var ИЗ_ВИДЕО = ' + (изВидео ? 'true' : 'false') + ';'
@@ -4288,14 +4659,31 @@ async function marshrutPage(ids, опции){
     +   'var m=s.match(/^\\s*(-?\\d{1,2}\\.\\d+)[\\s,;]+(-?\\d{1,3}\\.\\d+)\\s*$/);'
     +   'if(!m)return null;var a=+m[1],b=+m[2];'
     +   'if(Math.abs(a)>90||Math.abs(b)>180)return null;return [a,b];}'
-    + 'function сохранить(){try{localStorage.setItem("route",JSON.stringify(Т));'
+    // «Вернуть мой порядок»: порядок до «Упорядочить автоматически» — в памяти
+    // и в routePrevOrder (общий с главной). Годится, пока маршрут тот же набор
+    // точек в автоматическом порядке; любая другая правка его стирает.
+    + 'var ПРЕЖНИЙ_ПОРЯДОК=null;'
+    + 'function прежнийПорядок(){try{var v=JSON.parse(localStorage.getItem("routePrevOrder")||"null");'
+    +   'return Array.isArray(v)?v.map(String):null;}catch(e){return ПРЕЖНИЙ_ПОРЯДОК;}}'
+    + 'function можноВернутьПорядок(){var п=прежнийПорядок();if(!п||ПОРЯДОК!=="auto"||Т.length<3)return false;'
+    +   'var т=Т.map(function(x){return String(x.id);});'
+    +   'return п.slice().sort().join(",")===т.slice().sort().join(",")&&п.join(",")!==т.join(",");}'
+    + 'function забытьПрежнийПорядок(){ПРЕЖНИЙ_ПОРЯДОК=null;try{localStorage.removeItem("routePrevOrder");}catch(e){}}'
+    + 'function запомнитьПорядокДоАвто(){ПРЕЖНИЙ_ПОРЯДОК=Т.map(function(x){return String(x.id);});'
+    +   'try{localStorage.setItem("routePrevOrder",JSON.stringify(ПРЕЖНИЙ_ПОРЯДОК));}catch(e){}}'
+    + 'function вернутьМойПорядок(){var п=прежнийПорядок();if(!п||!можноВернутьПорядок())return;'
+    +   'var по={};Т.forEach(function(x){по[String(x.id)]=x;});'
+    +   'Т=п.map(function(id){return по[id];}).filter(Boolean);'
+    +   'забытьПрежнийПорядок();поставитьПорядок("manual");нарисовать();сохранить();}'
+    + 'function сохранить(){if(!можноВернутьПорядок())забытьПрежнийПорядок();try{localStorage.setItem("route",JSON.stringify(Т));'
     // первая правка на странице по ссылке или из видео: вместе с точками
     // сохраняем и порядок, в котором они сейчас стоят на экране
     +   'if(!СВЯЗАН)localStorage.setItem("routeOrder",ПОРЯДОК);}catch(e){}'
     +   'СВЯЗАН=true;запомнитьВиденное();обновитьАдрес();}'
     // адрес страницы — это ссылка на маршрут: точки и, если порядок ручной, o=1
-    + 'function обновитьАдрес(){var q = Т.length ? ("?p=" + Т.map(вСсылку).join(",") + (ПОРЯДОК==="manual"?"&o=1":"") + (ДВА_ДНЯ?"&d="+НОЧЁВКА:"")) : "";'+   'history.replaceState(null, "", "/marshrut" + q);}'+ 'function убрать(id){Т = Т.filter(function(p){return String(p.id)!==String(id);});нарисовать();сохранить();}'+ 'function добавить(p){if(Т.some(function(x){return String(x.id)===String(p.id);}))return;'+   'Т = Т.concat([{id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}]);нарисовать();сохранить();отметитьДобавление(p);}'+ 'function порядок(){if(ПОРЯДОК==="manual"||Т.length<3)return;var left=Т.slice(1),out=[Т[0]];'+   'while(left.length){var c=out[out.length-1],bi=0,bd=Infinity;'+     'left.forEach(function(p,i){var d=км(c,p);if(d<bd){bd=d;bi=i;}});'+     'out.push(left.splice(bi,1)[0]);}Т=out;}'+ 'function нарисовать(){порядок();'+   'var сумма=0, строки="";'+   'Т.forEach(function(p,i){var шаг=i?км(Т[i-1],p):0;сумма+=шаг;'+     'строки += "<div class=\\"it\\"><button class=\\"drag\\" type=\\"button\\" aria-label=\\"Перетащить\\">⋮⋮</button><span class=\\"n\\">"+(i+1)+"</span>"'+       '+"<span class=\\"t\\">"+(своя(p)?("<b class=\\"ownn\\">📍 "+esc(p.name)+"</b><small>своя точка · её можно перетащить на карте</small>"):("<a href=\\"/mesto/"+p.id+"\\">"+esc(p.name)+"</a>"))'+       '+(p.addr?("<small>"+esc(p.addr)+"</small>"):"")+"</span>"'+       '+"<span class=\\"km\\">"+(i?("+"+Math.round(шаг)+" км"):"старт")+"</span>"'+       '+"<button class=\\"x\\" type=\\"button\\" title=\\"убрать\\" data-id=\\""+p.id+"\\">×</button></div>";});'+   'document.getElementById("rlist").innerHTML = строки; подписатьШаги();'+   'document.getElementById("rsub").textContent = Т.length'+     '? (Т.length + " точек · около " + Math.round(сумма) + " км между ними")'+     ': "Пока пусто";'
+    + 'function обновитьАдрес(){var q = Т.length ? ("?p=" + Т.map(вСсылку).join(",") + (ПОРЯДОК==="manual"?"&o=1":"") + (ДВА_ДНЯ?"&d="+НОЧЁВКА:"")) : "";'+   'history.replaceState(null, "", "/marshrut" + q);}'+ 'function убрать(id){Т = Т.filter(function(p){return String(p.id)!==String(id);});нарисовать();сохранить();}'+ 'function добавить(p){if(Т.some(function(x){return String(x.id)===String(p.id);}))return;'+   'Т = Т.concat([{id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}]);нарисовать();сохранить();отметитьДобавление(p);}'+ 'function порядок(){if(ПОРЯДОК==="manual"||Т.length<3)return;var left=Т.slice(1),out=[Т[0]];'+   'while(left.length){var c=out[out.length-1],bi=0,bd=Infinity;'+     'left.forEach(function(p,i){var d=км(c,p);if(d<bd){bd=d;bi=i;}});'+     'out.push(left.splice(bi,1)[0]);}Т=out;}'+ 'function нарисовать(){порядок();'+   'var сумма=0, строки="";'+   'Т.forEach(function(p,i){var шаг=i?км(Т[i-1],p):0;сумма+=шаг;'+     'строки += "<div class=\\"it\\"><button class=\\"drag\\" type=\\"button\\" aria-label=\\"Перетащить\\">⋮⋮</button><span class=\\"n\\">"+(i+1)+"</span>"'+       '+"<span class=\\"t\\">"+(своя(p)?("<b class=\\"ownn nm\\" role=\\"button\\" tabindex=\\"0\\" aria-expanded=\\"false\\">📍 "+esc(p.name)+"</b><small>своя точка · её можно перетащить на карте</small>"):("<a class=\\"nm\\" href=\\"/mesto/"+p.id+((ИНФО[p.id]&&ИНФО[p.id].slug)?("-"+ИНФО[p.id].slug):"")+"\\" role=\\"button\\" aria-expanded=\\"false\\">"+esc(p.name)+"</a>"))'+       '+(p.addr?("<small>"+esc(p.addr)+"</small>"):"")+((ИНФО[p.id]&&ИНФО[p.id].d)?("<span class=\\"ds\\">"+esc(ИНФО[p.id].d)+"</span>"):"")+"</span>"'+       '+"<span class=\\"km\\">"+(i?("+"+Math.round(шаг)+" км"):"старт")+"</span>"'+       '+"<button class=\\"x\\" type=\\"button\\" title=\\"убрать\\" data-id=\\""+p.id+"\\">×</button></div>";});'+   'document.getElementById("rlist").innerHTML = строки; подписатьШаги(); вернутьКарточку();'+   'document.getElementById("rsub").textContent = Т.length'+     '? (Т.length + " точек · около " + Math.round(сумма) + " км между ними")'+     ': "Пока пусто";'
     +   'document.getElementById("rAuto").style.display = (ПОРЯДОК==="manual"&&Т.length>2) ? "" : "none";'
+    +   'document.getElementById("rBackOrder").hidden = !можноВернутьПорядок();'
     +   'var g = document.getElementById("rGo");'+   'g.href = "https://yandex.by/maps/?rtext=" + Т.map(function(p){return p.lat+","+p.lng;}).join("~") + "&rtt=auto";'+   'g.className = "go" + (Т.length ? "" : " off");'
     // пустой маршрут: кнопки не только серые, но и не нажимаются (и с клавиатуры тоже);
     // пока картинка собирается, «Сохранить картинкой» не включаем обратно
@@ -4303,7 +4691,7 @@ async function marshrutPage(ids, опции){
     +   'if(!Т.length)закрытьМеню();'
     +   'кудаЗаЖильём();'
     + '  document.getElementById("rEmpty").style.display = Т.length ? "none" : "";'+   'document.getElementById("rmap").style.display = (Т.length||РЕЖИМ) ? "" : "none";'+   'рисоватьКарту();поПутиПозже();планИТопливо();}'+ 'function рисоватьКарту(){if((!Т.length&&!РЕЖИМ)||typeof L==="undefined")return;'+   'if(!карта){карта=L.map("rmap",{scrollWheelZoom:false});'+     'карта.attributionControl.setPrefix("");'+     'L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,'+       'attribution:"&copy; OpenStreetMap"}).addTo(карта);слой=L.layerGroup().addTo(карта);карта.on("click",поКарте);}'+   'слой.clearLayers(); if(линия){карта.removeLayer(линия);линия=null;}'+   'var пути=[];'+   'Т.forEach(function(p,i){пути.push([p.lat,p.lng]);'+     'L.marker([p.lat,p.lng],{icon:L.divIcon({className:"",iconSize:[26,26],iconAnchor:[13,13],'+       'html:"<div class=\\"pin"+(своя(p)?" own":"")+"\\">"+(i+1)+"</div>"}),draggable:своя(p)})'
-    +   '.bindTooltip(p.name).on("dragend",function(e){передвинуть(p,e.target.getLatLng());}).addTo(слой);});'+   'if(пути.length>1) линия=L.polyline(пути,{color:"#9a3412",weight:3,opacity:.7}).addTo(карта);'+   'setTimeout(function(){карта.invalidateSize();'+     'if(НЕ_ДВИГАТЬ)НЕ_ДВИГАТЬ=false;else if(!пути.length)карта.setView([53.7,27.95],6);'
+    +   '.bindTooltip(p.name).on("dragend",function(e){передвинуть(p,e.target.getLatLng());}).on("click",function(){меткаТочки(p);}).addTo(слой);});'+   'if(пути.length>1) линия=L.polyline(пути,{color:"#9a3412",weight:3,opacity:.7}).addTo(карта);'+   'setTimeout(function(){карта.invalidateSize();'+     'if(НЕ_ДВИГАТЬ)НЕ_ДВИГАТЬ=false;else if(!пути.length)карта.setView([53.7,27.95],6);'
     +     'else if(пути.length>1)карта.fitBounds(пути,{padding:[40,40]});else карта.setView(пути[0],13);},60);'+   'подорогам();}'+ 'function кудаЗаЖильём(){var a=document.getElementById("rStay"); if(!a)return;'
     + '  if(!Т.length){a.href="/";a.textContent="Искать жильё на сутки →";return;}'
     // Берём город, который в среднем ближе всех к точкам маршрута: у поездки
@@ -4396,7 +4784,8 @@ async function marshrutPage(ids, опции){
     +   'if(b&&b.getAttribute("data-c")){var c=b.getAttribute("data-c").split(",");'
     +     'поле.value="";список.style.display="none";поставить(+c[0],+c[1]);return;}'
     +   'if(e.target.closest("#rOwn")){режим(!РЕЖИМ);return;}'
-    +   'if(e.target.closest("#rAuto")){поставитьПорядок("auto");нарисовать();сохранить();return;}'
+    +   'if(e.target.closest("#rAuto")){запомнитьПорядокДоАвто();поставитьПорядок("auto");нарисовать();сохранить();return;}'
+    +   'if(e.target.closest("#rBackOrder")){вернутьМойПорядок();return;}'
     +   'if(b){try{добавить(JSON.parse(b.getAttribute("data-p")));}catch(err){}'+     'поле.value="";список.style.display="none";return;}'+   'if(!e.target.closest(".add")) список.style.display="none";});'
     + перетаскиваниеСтрок.toString()
     // Перестановка руками: дальше порядок как расставлен, новые точки — в конец.
@@ -4408,6 +4797,7 @@ async function marshrutPage(ids, опции){
     + 'function безВидео(н){if(!ИЗ_ВИДЕО||наборИд(н)===наборИд(Т))return; ИЗ_ВИДЕО=false;'
     +   'var h=document.querySelector("h1"); if(h)h.textContent="Маршрут на день";'
     +   'var и=document.querySelector(".intro"); if(и)и.hidden=true;'
+    +   'var ра=document.getElementById("rAbout"); if(ра)ра.hidden=true;'
     +   'var о=document.getElementById("rHowOrder"); if(о)о.textContent="Порядок объезда посчитан сам: от первой точки к ближайшей. ";'
     +   'document.title=н.length?("Маршрут на день: "+н.slice(0,3).map(function(p){return p.name;}).join(", ")'
     +     '+(н.length>3?(" и ещё "+(н.length-3)):"")):"Маршрут на день по Беларуси";}'
@@ -4417,7 +4807,7 @@ async function marshrutPage(ids, опции){
     // иначе (встроенные браузеры, компьютер) — своё меню.
     + 'function точекСлово(n){var a=n%10,b=n%100;'
     +   'return (a===1&&b!==11)?"точка":(a>=2&&a<=4&&(b<12||b>14))?"точки":"точек";}'
-    + 'function текстМаршрута(){return "Маршрут на день: "+Т.length+" "+точекСлово(Т.length);}'
+    + 'function текстМаршрута(){return (ДВА_ДНЯ?"Маршрут на два дня: ":"Маршрут на день: ")+Т.length+" "+точекСлово(Т.length);}'
     // Заголовок страницы на момент нажатия: у маршрута из видео — его название,
     // у обычного — как в <title>, но по точкам, что сейчас на экране
     // (<title> собран сервером для точек из ссылки и после правок устаревает).
@@ -4521,6 +4911,8 @@ async function marshrutPage(ids, опции){
     // выезда, «пробыть» и расход в хранилище, а деление на дни приходит с адресом.
     + 'var ДВА_ДНЯ=false, НОЧЁВКА=0, НОЧЁВКА_САМА=true, РАССТ_САМО=true;'
     + '(function(){var m=location.search.match(/[?&]d=(\\d+)/);if(m&&+m[1]>=1){ДВА_ДНЯ=true;НОЧЁВКА=+m[1];НОЧЁВКА_САМА=false;}'
+    // своего d в адресе нет — двухдневный готовый маршрут включает два дня сам
+    +   'else if(ИЗ_ВИДЕО&&НОЧЁВКА_МАРШРУТА>0&&Т.length>2){ДВА_ДНЯ=true;НОЧЁВКА=НОЧЁВКА_МАРШРУТА;НОЧЁВКА_САМА=false;}'
     +   'var v="";try{v=localStorage.getItem("routeStart")||"";}catch(e){}'
     +   'if(/^\\d\\d:\\d\\d$/.test(v))document.getElementById("rStart").value=v;'
     +   'var т=читатьОбъект("routeFuel");'
@@ -4696,6 +5088,7 @@ async function marshrutPage(ids, опции){
     // таблица перерисована — фокус обратно на выбор той же точки
     +   'var н=document.querySelectorAll("#rPlan select.ps");'
     +   'for(var i=0;i<н.length;i++)if(н[i].getAttribute("data-id")===id){try{н[i].focus({preventScroll:true});}catch(err){}break;}});'
+    + карточкаТочки.toString() + 'карточкаТочки();'
     + 'перетаскиваниеСтрок(document.getElementById("rlist"), переставить);'
     + 'нарисовать();'+ '(function(){var a=document.getElementById("back");if(!a)return;'+ 'try{ var r=document.referrer, с=localStorage.getItem("backTo");'+ '  if(r && r.indexOf(location.origin)===0 && /^\\/(\\?|$)/.test(r.slice(location.origin.length))) a.href=r;'+ '  else if(с && с.charAt(0)==="/") a.href=с; }catch(e){}})();'+ 'window.addEventListener("storage", function(e){if(e.key && e.key!=="route" && e.key!=="routeOrder")return;'
     // режим чужого маршрута к открытому по ссылке не относится
@@ -4738,69 +5131,151 @@ const МАРШРУТ_ПО = {};
 // в виде m<широта>_<долгота>~Имя, как в ссылке /marshrut.
 const ВИДЕО_ФАЙЛ = path.join(__dirname, 'маршруты-из-видео.json');
 let ВИДЕО_МАРШРУТЫ = [];
+// Теперь это «Рекомендуемые маршруты»: у записи ещё days (1 или 2),
+// overnightAfter (ночёвка после точки N при двух днях), description (для
+// поисковика), text (абзацы под маршрутом), note (строка на карточке),
+// detailsUrl (подробный рассказ). Файл правят руками — чистим при чтении.
 try{
   ВИДЕО_МАРШРУТЫ = JSON.parse(fs.readFileSync(ВИДЕО_ФАЙЛ, 'utf8'))
-    .filter(function(м){ return м && /^[a-z0-9-]+$/.test(м.slug || '') && Array.isArray(м.points); });
+    .filter(function(м){ return м && /^[a-z0-9-]+$/.test(м.slug || '') && Array.isArray(м.points); })
+    .map(function(м){
+      const дни = +м.days === 2 ? 2 : 1;
+      const ночь = Math.floor(+м.overnightAfter);
+      return Object.assign({}, м, {
+        days: дни,
+        overnightAfter: (дни === 2 && ночь >= 1 && ночь < м.points.length) ? ночь : 0,
+        description: String(м.description || м.intro || ''),
+        text: (Array.isArray(м.text) ? м.text : []).map(String).filter(Boolean),
+        note: String(м.note || ''),
+        // только свой адрес: ссылка из файла не должна уводить на чужой сайт
+        detailsUrl: /^\/[a-z0-9-]+$/.test(м.detailsUrl || '') ? м.detailsUrl : '' });
+    });
 }catch(e){ console.error('маршруты из видео не прочитались:', e.message); }
 // без прототипа: иначе /m/constructor или /m/__proto__ «находились» и падали с 500
 const ВИДЕО_ПО = Object.create(null);
 ВИДЕО_МАРШРУТЫ.forEach(function(м){ ВИДЕО_ПО[м.slug] = м; });
 
+// до 30 точек: двухдневный маршрут по Браславщине — 25
 function точкиВидео(м){
-  return м.points.map(function(t){ return String(t).trim(); }).filter(Boolean).slice(0, 20);
+  return м.points.map(function(t){ return String(t).trim(); }).filter(Boolean).slice(0, 30);
 }
 
-// «14 сентября» — год пишем, только если он не текущий
-const МЕСЯЦЕВ = ['января','февраля','марта','апреля','мая','июня','июля','августа',
-                 'сентября','октября','ноября','декабря'];
-function датаВидео(iso){
-  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if(!m || !МЕСЯЦЕВ[+m[2] - 1]) return '';
-  return (+m[3]) + ' ' + МЕСЯЦЕВ[+m[2] - 1] + (+m[1] !== new Date().getFullYear() ? (' ' + m[1]) : '');
+// Номер места → рекомендуемые маршруты, в которые оно входит: страница места
+// ведёт на маршрут («Входит в маршрут: …»).
+const МАРШРУТЫ_С_МЕСТОМ = Object.create(null);
+ВИДЕО_МАРШРУТЫ.forEach(function(м){
+  точкиВидео(м).forEach(function(t){
+    if(!/^[0-9]+$/.test(t)) return;
+    (МАРШРУТЫ_С_МЕСТОМ[t] = МАРШРУТЫ_С_МЕСТОМ[t] || []);
+    if(МАРШРУТЫ_С_МЕСТОМ[t].indexOf(м) < 0) МАРШРУТЫ_С_МЕСТОМ[t].push(м);
+  });
+});
+
+// Короткое описание точки для строки маршрута и JSON-LD: первое предложение
+// текста места, не длиннее 160 знаков и без обрыва слова. Точка после «г»,
+// «в», «д» и прочих сокращений предложение не заканчивает.
+function короткоеОписание(текст){
+  const т = String(текст || '').replace(/\s+/g, ' ').trim();
+  if(!т) return '';
+  let конец = т.length;
+  const re = /[.!?…](?=\s+[А-ЯЁA-Z«"0-9]|$)/g;
+  let m;
+  while((m = re.exec(т))){
+    const слово = (т.slice(0, m.index).match(/(\S+)$/) || ['', ''])[1];
+    if(m[0] === '.' && /^[а-яё]{1,3}$/.test(слово)) continue;   // г. в. вв. д. ул.
+    конец = m.index + 1; break;
+  }
+  let пред = т.slice(0, конец).trim();
+  if(пред.length > 160){
+    пред = пред.slice(0, 159);
+    const пробел = пред.lastIndexOf(' ');
+    if(пробел > 60) пред = пред.slice(0, пробел);
+    пред = пред.replace(/[\s,;:—–-]+$/, '') + '…';
+  }
+  return пред;
+}
+
+// Описания точек маршрута для страницы /m/<slug>: они должны быть в HTML сразу.
+// Ответы kudin.by кэшируются на сутки (placeDetail); первый раз ждём не дольше
+// 3,5 с — не успевшие точки идут без описания, а их ответ ляжет в кэш.
+async function описанияТочек(ids){
+  const номера = ids.filter(function(t){ return /^[0-9]+$/.test(t); });
+  const итог = Object.create(null);
+  const все = Promise.all(номера.map(function(id){
+    return placeDetail(id).then(function(d){ итог[id] = String((d && d.text) || ''); }).catch(function(){});
+  }));
+  await Promise.race([все, new Promise(function(r){ setTimeout(r, 3500).unref(); })]);
+  return итог;
 }
 
 async function видеоМаршрутPage(slug){
   const м = ВИДЕО_ПО[slug];
   if(!м) return '';
-  return marshrutPage(точкиВидео(м), { ручной: true, заголовок: м.title,
-                                        вступление: м.intro, адрес: '/m/' + м.slug });
+  const ids = точкиВидео(м);
+  return marshrutPage(ids, { ручной: true, заголовок: м.title,
+                             вступление: м.intro, адрес: '/m/' + м.slug,
+                             описание: м.description, текст: м.text, подробно: м.detailsUrl,
+                             ночёвка: м.days === 2 ? м.overnightAfter : 0,
+                             тексты: await описанияТочек(ids) });
 }
 
-// Страница /m — все маршруты из видео карточками.
+// Точки рекомендуемого маршрута, которые правда нашлись: справочник и свои.
+// Нужны карточкам на /m и ленте на главной.
+function точкиМаршрута(м, все){
+  return точкиВидео(м).map(function(t){
+    if(/^[0-9]+$/.test(t)){
+      const p = все.find(x => String(x.id) === t);
+      return p ? { id:p.id, name:p.name, lat:p.lat, lng:p.lng, pic:p.pic || '' } : null;
+    }
+    return своюТочкуИзСсылки(t);
+  }).filter(Boolean);
+}
+
+// Страница /m — все рекомендуемые маршруты карточками.
 async function видеоСписокPage(){
   let все = [];
   try{ все = await placesRaw(); }catch(e){}
   const адрес = SITE_URL + '/m';
-  const desc = 'Готовые маршруты на день по Беларуси из наших роликов: точки на карте, '
+  const desc = 'Рекомендуемые маршруты по Беларуси на машине — на день и на два дня: точки на карте, '
     + 'порядок объезда, километраж по дорогам и переход в Яндекс.Карты.';
   const карточки = ВИДЕО_МАРШРУТЫ.map(function(м, i){
-    const ids = точкиВидео(м);
-    const точек = ids.filter(function(t){
-      return /^[0-9]+$/.test(t) ? все.some(x => String(x.id) === t) : !!своюТочкуИзСсылки(t);
-    }).length || ids.length;
-    const сФото = ids.map(function(t){ return все.find(x => String(x.id) === t); })
-      .filter(function(p){ return p && p.pic; })[0];
-    const дата = датаВидео(м.date);
+    const т = точкиМаршрута(м, все);
+    const точек = все.length ? т.length : точкиВидео(м).length;
+    const сФото = т.filter(function(p){ return p.pic; })[0];
+    // Километры: по дорогам — если маршрут уже считали (лежит в кэше),
+    // иначе по прямой с запасом ×1,3, как в плане дня. Ради карточки в OSRM не ходим.
+    let км = '';
+    if(т.length > 1){
+      const поДорогам = кмИзКэша(т.map(p => [p.lat, p.lng]));
+      if(поДорогам !== null) км = Math.round(поДорогам) + ' км по дорогам';
+      else {
+        let прямо = 0;
+        т.forEach(function(p, j){ if(j) прямо += distKm(т[j-1].lat, т[j-1].lng, p.lat, p.lng); });
+        км = 'около ' + Math.round(прямо * 1.3 / 5) * 5 + ' км';
+      }
+    }
     return '<a class="c" href="/m/' + м.slug + '">'
       + (сФото ? ('<img src="' + esc(сФото.pic) + '" alt=""' + (i ? ' loading="lazy"' : '') + '>')
                : '<div class="noimg"></div>')
       + '<div class="b"><h2>' + esc(м.title) + '</h2>'
-      + '<div class="m">' + (дата ? ('<span>' + esc(дата) + '</span>') : '')
-      +   '<span>' + точек + ' ' + скл(точек, 'точка', 'точки', 'точек') + '</span></div>'
+      + (м.note ? ('<p class="note">' + esc(м.note) + '</p>') : '')
+      + '<div class="m">' + (м.days === 2 ? '<span>2 дня</span>' : '')
+      +   '<span>' + точек + ' ' + скл(точек, 'место', 'места', 'мест') + '</span>'
+      +   (км ? ('<span>' + км + '</span>') : '') + '</div>'
       + '<span class="go">Смотреть маршрут →</span></div></a>';
   }).join('');
   return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-    + '<title>Маршруты из видео — готовые поездки на день по Беларуси</title>'
+    + '<title>Рекомендуемые маршруты по Беларуси на машине</title>'
     + '<meta name="description" content="' + esc(desc) + '">'
     + '<meta name="robots" content="index,follow">'
     + '<meta name="theme-color" content="#9a3412">'
     + '<link rel="canonical" href="' + адрес + '">'
     + '<meta property="og:type" content="website">'
-    + '<meta property="og:title" content="Маршруты из видео">'
+    + '<meta property="og:title" content="Рекомендуемые маршруты по Беларуси">'
     + '<meta property="og:description" content="' + esc(desc) + '">'
     + '<meta property="og:url" content="' + адрес + '">'
-    + крошки([['Главная', '/'], ['Что посетить', '/?country=places'], ['Маршруты из видео']])
+    + крошки([['Главная', '/'], ['Что посетить', '/?country=places'], ['Рекомендуемые маршруты']])
     + '<style>'
     + '*{box-sizing:border-box}'
     + 'body{margin:0;font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#faf7f3;color:#1c1917}'
@@ -4819,17 +5294,19 @@ async function видеоСписокPage(){
     + '.noimg{background:#f0eae1}'
     + '.c .b{padding:12px 14px 14px;display:flex;flex-direction:column;gap:6px;flex:1}'
     + '.c h2{font-size:17px;line-height:1.25;margin:0}'
+    + '.c .note{margin:0;color:#57534e;font-size:14.5px;line-height:1.35}'
     + '.c .m{display:flex;flex-wrap:wrap;gap:6px}'
     + '.c .m span{font-size:12.5px;background:#f8f4ef;border:1px solid #e9e2d8;border-radius:999px;padding:2px 9px;color:#57534e}'
     + '.c .go{margin-top:auto;padding-top:6px;color:#9a3412;font-weight:700;font-size:14px}'
     + '.empty{background:#fff;border:1px dashed #d9cec0;border-radius:14px;padding:22px;color:#57534e}'
     + '@media (prefers-color-scheme:dark){body{background:#14110e;color:#f6f2ed}.sub{color:#c2b7ab}'
-    +   '.back,.c,.empty{background:#1d1916;border-color:#332c25;color:#f6f2ed}.noimg{background:#2b251f}'
+    +   '.back,.c,.empty{background:#1d1916;border-color:#332c25;color:#f6f2ed}.noimg{background:#2b251f}.c .note{color:#c2b7ab}'
     +   '.c .m span{background:#241f1a;border-color:#332c25;color:#c2b7ab}a,.c .go{color:#e2703a}}'
     + '</style></head><body><div class="w">'
     + '<a class="back" href="/?country=places">← Ко всем местам</a>'
-    + '<h1>Маршруты из видео</h1>'
-    + '<p class="sub">Маршруты из роликов @poisk.kvartir в ТикТоке</p>'
+    + '<h1>Рекомендуемые маршруты</h1>'
+    + '<p class="sub">Готовые поездки на машине по Беларуси: точки на карте, порядок объезда и план дня. '
+    +   'Маршрут можно поменять под себя и открыть в Яндекс.Картах.</p>'
     + (карточки ? ('<div class="grid">' + карточки + '</div>')
                 : '<div class="empty">Маршрутов пока нет.</div>')
     + '</div></body></html>';
@@ -6492,12 +6969,25 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
 .pl-links{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px 14px;margin:-8px 4px 10px;font-size:13.5px}
 .pl-links a{color:var(--txt-2);text-decoration:none}
 .pl-links a:hover{color:var(--accent);text-decoration:underline}
-/* Подборки — слева чипами, «Маршруты из видео» остаётся справа. */
+/* Подборки — слева чипами, «Все маршруты» остаётся справа. */
 .pl-sets{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-right:auto}
 .pl-sets-t{color:var(--txt-2)}
 .pl-links a.pl-chip{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:3px 11px;color:var(--txt)}
 .pl-links a.pl-chip:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
 .pl-links a.pl-video{align-self:center}
+/* Рекомендуемые маршруты — лента карточек над «Чаще всего добавляют». */
+.pl-rec{margin:0 0 16px}
+.pl-rec h2{font-size:17px;line-height:1.25;margin:0 0 8px;letter-spacing:-.01em;color:var(--txt)}
+.pl-rec-list{display:flex;gap:10px;overflow-x:auto;padding:0 0 6px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch}
+.rec-c{flex:0 0 220px;display:flex;flex-direction:column;min-width:0;scroll-snap-align:start;text-decoration:none;color:var(--txt);
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-sm);overflow:hidden}
+.rec-c:hover{border-color:var(--accent)}
+.rec-c img,.rec-c .rec-ni{width:100%;height:110px;object-fit:cover;display:block;background:var(--surface-3)}
+.rec-c .rec-b{padding:8px 10px 10px;display:flex;flex-direction:column;gap:3px}
+.rec-c .rec-t{font-weight:700;font-size:15px;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.rec-c:hover .rec-t{color:var(--accent)}
+.rec-c .rec-n{font-size:13px;color:var(--txt-2);line-height:1.3}
+.rec-c .rec-k{font-size:12.5px;color:var(--txt-3)}
 /* «Чаще всего добавляют в маршрут» — лента в том же духе, что «По пути» на странице маршрута. */
 .pl-pop{margin:0 0 16px}
 .pl-pop h2{font-size:17px;line-height:1.25;margin:0 0 8px;letter-spacing:-.01em;color:var(--txt)}
@@ -6915,7 +7405,9 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
     </label>
   </form>
 
-  <div class="pl-links" id="plLinks" style="display:none"><!--ПОДБОРКИ--><a class="pl-video" href="/m">Маршруты из видео →</a></div>
+  <div class="pl-links" id="plLinks" style="display:none"><!--ПОДБОРКИ--><a class="pl-video" href="/m">Все маршруты →</a></div>
+
+<!--МАРШРУТЫ-->
 
   <section class="pl-pop" id="plPop" hidden>
     <h2>Чаще всего добавляют в маршрут</h2>
@@ -6946,6 +7438,7 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
       <b>Маршрут на день</b>
       <span id="rtSum"></span>
       <button type="button" id="rtAuto" class="rt-auto" style="display:none">Упорядочить автоматически</button>
+      <button type="button" id="rtBack" class="rt-auto" hidden>Вернуть мой порядок</button>
       <button type="button" id="rtClear" class="rt-clear">очистить</button>
     </div>
     <div id="rtList"></div>
@@ -8044,7 +8537,20 @@ function загрузитьПопулярное(){
     показатьПопулярное();
   }).catch(function(){ window.__popЗапрос = 0; });
 }
+// Рекомендуемые маршруты: карточки приходят готовыми в разметке, снимки —
+// с пометкой data-src, чтобы вкладка жилья их не тянула. Прячем там же, где
+// «Чаще всего добавляют»: не на вкладке мест и при поиске по названию.
+function показатьРекомендуемые(){
+  const box = $('#plRec'); if(!box) return;
+  const q = $('#plQ');
+  const видно = window.__mode === 'places' && !(q && q.value.trim());
+  box.hidden = !видно;
+  if(видно) box.querySelectorAll('img[data-src]').forEach(function(im){
+    im.src = im.getAttribute('data-src'); im.removeAttribute('data-src');
+  });
+}
 function показатьПопулярное(){
+  показатьРекомендуемые();
   const box = $('#plPop'), list = $('#plPopList'); if(!box || !list) return;
   const items = window.__pop || [];
   // Когда ищут по названию, лента над найденным только мешает.
@@ -8502,6 +9008,8 @@ function drawRoute(){
   const адрес = '/marshrut?p=' + list.map(вСсылку).join(',') + (порядокВручную() ? '&o=1' : '');
   const авто = $('#rtAuto');
   if(авто) авто.style.display = (порядокВручную() && list.length > 2) ? '' : 'none';
+  const назад = $('#rtBack');
+  if(назад) назад.hidden = !можноВернутьПорядок();
   $('#routeGo').href = адрес;
   if(bar){
     bar.href = адрес;
@@ -8534,9 +9042,44 @@ function переставитьМаршрут(откуда, куда){
 }
 
 function упорядочитьАвтоматически(){
+  запомнитьПорядокДоАвто();
   поставитьПорядокМаршрута('auto');
   drawRoute();
   try{ localStorage.setItem('route', JSON.stringify(window.__route)); }catch(e){}
+}
+
+// «Вернуть мой порядок»: владелец нажал «Упорядочить автоматически» и потерял
+// расставленный руками порядок. Порядок до нажатия — в памяти и в
+// routePrevOrder (его же читает /marshrut). Годится, пока в маршруте тот же
+// набор точек в автоматическом порядке; любая другая правка его стирает.
+window.__prevOrder = null;
+function прежнийПорядок(){
+  try{ const v = JSON.parse(localStorage.getItem('routePrevOrder') || 'null'); return Array.isArray(v) ? v.map(String) : null; }
+  catch(e){ return window.__prevOrder; }
+}
+function можноВернутьПорядок(){
+  const п = прежнийПорядок(), list = window.__route || [];
+  if(!п || порядокВручную() || list.length < 3) return false;
+  const т = list.map(function(x){ return String(x.id); });
+  return п.slice().sort().join(',') === т.slice().sort().join(',') && п.join(',') !== т.join(',');
+}
+function запомнитьПорядокДоАвто(){
+  window.__prevOrder = (window.__route || []).map(function(x){ return String(x.id); });
+  try{ localStorage.setItem('routePrevOrder', JSON.stringify(window.__prevOrder)); }catch(e){}
+}
+function забытьПрежнийПорядок(){
+  window.__prevOrder = null;
+  try{ localStorage.removeItem('routePrevOrder'); }catch(e){}
+}
+function вернутьМойПорядок(){
+  const п = прежнийПорядок(); if(!п || !можноВернутьПорядок()) return;
+  const по = {};
+  (window.__route || []).forEach(function(x){ по[String(x.id)] = x; });
+  window.__route = п.map(function(id){ return по[id]; }).filter(Boolean);
+  забытьПрежнийПорядок();
+  поставитьПорядокМаршрута('manual');
+  try{ localStorage.setItem('route', JSON.stringify(window.__route)); }catch(e){}
+  drawRoute();
 }
 
 // Маршрут правят и во вкладке /marshrut: докладывают точки, переставляют.
@@ -8799,6 +9342,7 @@ function applyUrl(){
   });
   $('#rtClear').addEventListener('click', clearRoute);
   $('#rtAuto').addEventListener('click', упорядочитьАвтоматически);
+  $('#rtBack').addEventListener('click', вернутьМойПорядок);
   перетаскиваниеСтрок($('#rtList'), переставитьМаршрут);
 
   let plTimer = null;
@@ -8873,6 +9417,36 @@ window.addEventListener('load',run);
 // Чипы подборок подставляем один раз при запуске: файл подборок читается
 // тоже при запуске, а внутри шаблона PAGE вставки кодом запрещены.
 const ГЛАВНАЯ = PAGE.replace('<!--ПОДБОРКИ-->', () => чипыПодборок());
+
+// Лента «Рекомендуемые маршруты» для вкладки мест. Маршруты известны при
+// запуске, а снимки первых точек — только когда справочник загрузится,
+// поэтому до того лента без снимков, а потом пересобирается один раз.
+// Страница получает её готовой разметкой: лишнего запроса нет.
+function лентаМаршрутов(все){
+  if(!ВИДЕО_МАРШРУТЫ.length) return '';
+  return '<section class="pl-rec" id="plRec" hidden aria-labelledby="plRecH">'
+    + '<h2 id="plRecH">Рекомендуемые маршруты</h2><div class="pl-rec-list">'
+    + ВИДЕО_МАРШРУТЫ.map(function(м){
+        const т = точкиМаршрута(м, все || []);
+        // справочник ещё не загрузился — считаем точки по файлу
+        const n = (все && все.length) ? т.length : точкиВидео(м).length;
+        const сФото = т.filter(function(p){ return p.pic; })[0];
+        return '<a class="rec-c" href="/m/' + м.slug + '">'
+          + (сФото ? ('<img data-src="' + esc(сФото.pic) + '" alt="">') : '<div class="rec-ni"></div>')
+          + '<span class="rec-b"><span class="rec-t">' + esc(м.title) + '</span>'
+          + (м.note ? ('<span class="rec-n">' + esc(м.note) + '</span>') : '')
+          + '<span class="rec-k">' + (м.days === 2 ? '2 дня · ' : '') + n + ' ' + скл(n, 'место', 'места', 'мест') + '</span></span></a>';
+      }).join('')
+    + '</div></section>';
+}
+let ЛЕНТА_МАРШРУТОВ = лентаМаршрутов([]), лентаСоСнимками = false;
+function обновитьЛентуМаршрутов(){
+  if(лентаСоСнимками) return;
+  placesRaw().then(function(все){
+    if(!все || !все.length) return;
+    ЛЕНТА_МАРШРУТОВ = лентаМаршрутов(все); лентаСоСнимками = true;
+  }).catch(function(){});
+}
 
 // ── «Предложить место»: приём и проверка ─────────────────────────────────
 // Форма открыта всем, поэтому ограничения здесь, а не в браузере: длины,
@@ -9516,7 +10090,10 @@ http.createServer(async (req,res)=>{
     const groups = {};
     (await placesRaw()).forEach(p => { if(p.group) groups[p.group] = (groups[p.group]||0) + 1; });
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
-    res.end(JSON.stringify({ total: list.length, groups, items: list.slice(0, 300) })); return;
+    // alt — служебные написания для поиска: в ответе они не нужны
+    const items = list.slice(0, 300).map(p => { if(p.alt === undefined) return p;
+                                               const o = Object.assign({}, p); delete o.alt; return o; });
+    res.end(JSON.stringify({ total: list.length, groups, items })); return;
   }
   // «Чаще всего добавляют в маршрут»: до 12 мест, которые добавили хотя бы
   // двое. Меньше четырёх таких — пусто: лента из двух карточек выглядит
@@ -9555,7 +10132,7 @@ http.createServer(async (req,res)=>{
     const пары = парыМаршрута(u.searchParams.get('p'));
     let ответ = { ok:false };
     if(пары.length >= 2){
-      try{ ответ = await маршрутПоДорогам(пары); }catch(e){ ответ = { ok:false }; }
+      try{ ответ = await маршрутЧастями(пары); }catch(e){ ответ = { ok:false }; }
     }
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
     res.end(JSON.stringify(ответ)); return;
@@ -9572,8 +10149,9 @@ http.createServer(async (req,res)=>{
   }
   if(u.pathname === '/marshrut'){
     // Номера точек справочника и свои точки вида m53.99750_25.38580~Имя
+    // до 30: двухдневный рекомендуемый маршрут — 25 точек, и ссылка на него после правки не должна их терять
     const ids = (u.searchParams.get('p') || '').split(',')
-      .map(x => x.trim()).filter(Boolean).slice(0, 20);
+      .map(x => x.trim()).filter(Boolean).slice(0, 30);
     let html = '';
     // o=1 — порядок точек расставлен руками, пересортировывать нельзя
     try{ html = await marshrutPage(ids, u.searchParams.get('o') === '1'); }catch(e){ html = ''; }
@@ -9600,7 +10178,7 @@ http.createServer(async (req,res)=>{
     }
     res.writeHead(404, {'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'no-cache'});
     res.end(notFoundPage(u.pathname, 'Такого маршрута нет')
-      .replace('<a href="/?country=places">', '<a href="/m">Маршруты из видео</a><a href="/?country=places">'));
+      .replace('<a href="/?country=places">', '<a href="/m">Рекомендуемые маршруты</a><a href="/?country=places">'));
     return;
   }
   // Сезонные подборки: /podborka/<slug>
@@ -9691,7 +10269,8 @@ http.createServer(async (req,res)=>{
   // Главную отдаём уже с квартирами: список лежит в памяти после прогрева,
   // и человеку не приходится ждать запроса, а поисковик видит содержимое.
   // Вкладываем только первую страницу выдачи — этого хватает на первый экран.
-  let page = ГЛАВНАЯ;
+  обновитьЛентуМаршрутов();
+  let page = ГЛАВНАЯ.replace('<!--МАРШРУТЫ-->', () => ЛЕНТА_МАРШРУТОВ);
   if(u.pathname === '/' && ![...u.searchParams.keys()].length){
     try{
       const pu = new URL('/api/search?region=minsk&city=&type=flat&rooms=&guests=&max=&source=both', 'http://localhost');
@@ -9703,7 +10282,7 @@ http.createServer(async (req,res)=>{
       // $' и $` означают «весь текст после/до совпадения». Название объявления
       // пишут люди, и заголовок вида «Квартира 30$' центр» вставил бы в страницу
       // её собственный хвост, закрыв тег script и сломав сайт целиком.
-      page = ГЛАВНАЯ.replace('/*ПРЕДЗАГРУЗКА*/', () => inject);
+      page = page.replace('/*ПРЕДЗАГРУЗКА*/', () => inject);
     }catch(e){ /* не вышло — страница просто загрузится как раньше */ }
   }
   // Отпечаток страницы: браузер пришлёт его обратно, и если ничего
