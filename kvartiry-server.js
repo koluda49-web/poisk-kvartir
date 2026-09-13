@@ -3446,7 +3446,8 @@ function картинкаМаршрута(д){
   return Promise.race([ждём, new Promise(function(r){ setTimeout(r, д.ждатьПлитки || 6000); })]).then(function(){
     к.save();
     к.beginPath(); к.rect(0, 0, Ш, КАРТА); к.clip();
-    к.fillStyle = '#efe9e1'; к.fillRect(0, 0, Ш, КАРТА);
+    // цвет суши, как у OSM: недошедшие плитки не оставят на карте белых квадратов
+    к.fillStyle = '#f2efe9'; к.fillRect(0, 0, Ш, КАРТА);
     var пришло = 0;
     плитки.forEach(function(п){
       if(!п.img) return;
@@ -3959,10 +3960,15 @@ async function marshrutPage(ids, опции){
     + 'function закрытьКартинку(){var о=ОКНО_КАРТИНКИ;if(!о)return;ОКНО_КАРТИНКИ=null;'
     +   'о.el.remove();URL.revokeObjectURL(о.u);document.documentElement.style.overflow=о.прокрутка;'
     +   'var b=document.getElementById("rPng");if(b)b.focus();}'
-    + 'function показатьКартинку(blob){закрытьКартинку();var u=URL.createObjectURL(blob), el=document.createElement("div");'
+    // Картинка в окне — data:-адресом: в Android WebView (ТикТок) долгое нажатие
+    // на blob:-картинку не предлагает «Сохранить изображение». «Скачать» — по blob:.
+    + 'function вДанные(blob){return new Promise(function(готово,беда){var f=new FileReader();'
+    +   'f.onload=function(){готово(String(f.result));};f.onerror=function(){беда(f.error);};f.readAsDataURL(blob);});}'
+    + 'async function показатьКартинку(blob){var данные=await вДанные(blob);закрытьКартинку();'
+    +   'var u=URL.createObjectURL(blob), el=document.createElement("div");'
     +   'el.className="pngv";el.id="rPngView";el.setAttribute("role","dialog");el.setAttribute("aria-modal","true");'
     +   'el.setAttribute("aria-label","Картинка маршрута");'
-    +   'el.innerHTML="<div class=\\"pngb\\"><img id=\\"rPngImg\\" alt=\\"Картинка маршрута\\" src=\\""+u+"\\">"'
+    +   'el.innerHTML="<div class=\\"pngb\\"><img id=\\"rPngImg\\" alt=\\"Картинка маршрута\\" src=\\""+данные+"\\">"'
     +     '+"<p>Нажмите на картинку и удерживайте, чтобы сохранить в галерею</p>"'
     +     '+"<div class=\\"pngk\\"><a class=\\"go\\" id=\\"rPngDl\\" href=\\""+u+"\\" download=\\"маршрут.png\\">Скачать</a>"'
     +     '+"<button class=\\"go2\\" id=\\"rPngClose\\" type=\\"button\\">Закрыть</button></div></div>";'
@@ -3981,8 +3987,8 @@ async function marshrutPage(ids, опции){
     // Встроенные браузеры (ТикТок и др.) файлами делиться не умеют и скачивание
     // по <a download> часто молча глотают. Поэтому показываем саму картинку:
     // долгое нажатие на неё сохраняет в галерею, «Скачать» — для компьютера.
+    +     'if(!отдали)await показатьКартинку(blob);'
     +     'b.textContent="Сохранить картинкой";'
-    +     'if(!отдали)показатьКартинку(blob);'
     +   '}catch(e){b.textContent="Не получилось, ещё раз?";}'
     +   'b.disabled=false;});'
     + 'перетаскиваниеСтрок(document.getElementById("rlist"), переставить);'

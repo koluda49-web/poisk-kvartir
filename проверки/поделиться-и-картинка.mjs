@@ -178,13 +178,15 @@ const окно = JSON.parse(await js(`(function(){
     закрыть: !!document.getElementById('rPngClose'), высота: r.height, экран: innerHeight, влезает: r.top >= 0 && r.bottom <= innerHeight && r.right <= innerWidth,
     фиксировано: getComputedStyle(v).position === 'fixed' });
 })()`));
-check('в окне картинка 1080×1920 (blob:)', окно.w === 1080 && окно.h === 1920 && /^blob:/.test(окно.src), окно.w + '×' + окно.h + ' ' + окно.src.slice(0, 30));
+check('в окне картинка 1080×1920', окно.w === 1080 && окно.h === 1920, окно.w + '×' + окно.h);
+// data:, а не blob: — иначе долгое нажатие в Android WebView не сохраняет картинку
+check('картинка в окне — data:image/png', /^data:image\/png;base64,/.test(окно.src), окно.src.slice(0, 30));
 check('подсказка про долгое нажатие', окно.текст.includes('Нажмите на картинку и удерживайте, чтобы сохранить в галерею'));
-check('кнопка «Скачать» — <a download="маршрут.png"> на ту же картинку', окно.dl === 'маршрут.png' && окно.href === окно.src && окно.текст.includes('Скачать'));
+check('кнопка «Скачать» — <a download="маршрут.png"> с blob:-адресом', окно.dl === 'маршрут.png' && /^blob:/.test(окно.href) && окно.текст.includes('Скачать'), окно.href.slice(0, 30));
 check('кнопка «Закрыть» есть', окно.закрыть && окно.текст.includes('Закрыть'));
 check('окно помещается на экран телефона (картинка ≤ 70vh)', окно.фиксировано && окно.влезает && окно.высота <= окно.экран * 0.7 + 1, JSON.stringify({ h: окно.высота, экран: окно.экран, влезает: окно.влезает }));
 await js(`document.getElementById('rPngClose').click(); 1`);
-check('«Закрыть» убирает окно и отзывает адрес картинки', await js(`!document.getElementById('rPngView') && window.__отозваны.indexOf(${JSON.stringify(окно.src)}) >= 0`));
+check('«Закрыть» убирает окно и отзывает адрес картинки', await js(`!document.getElementById('rPngView') && window.__отозваны.indexOf(${JSON.stringify(окно.href)}) >= 0`));
 check('после закрытия прокрутка страницы снова работает', await js(`document.documentElement.style.overflow !== 'hidden'`));
 await окноОткрыто();
 await js(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 1`);
