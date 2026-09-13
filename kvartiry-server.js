@@ -4253,8 +4253,8 @@ async function marshrutPage(ids, опции){
     +   'var v="";try{v=localStorage.getItem("routeStart")||"";}catch(e){}'
     +   'if(/^\\d\\d:\\d\\d$/.test(v))document.getElementById("rStart").value=v;'
     +   'var т=читатьОбъект("routeFuel");'
-    +   'if(typeof т.use==="string")document.getElementById("rFuelUse").value=т.use;'
-    +   'if(typeof т.price==="string")document.getElementById("rFuelPrice").value=т.price;})();'
+    +   'if(typeof т.use==="number"&&isFinite(т.use)&&т.use>=0)document.getElementById("rFuelUse").value=String(т.use);'
+    +   'if(typeof т.price==="number"&&isFinite(т.price)&&т.price>=0)document.getElementById("rFuelPrice").value=т.price.toFixed(2);})();'
     + 'function минутыВыезда(){var m=/^(\\d\\d):(\\d\\d)/.exec(document.getElementById("rStart").value||"");'
     +   'return m?(+m[1]*60+(+m[2])):540;}'
     // 25:10 — это 01:10 следующего дня, так и пишем
@@ -4271,10 +4271,14 @@ async function marshrutPage(ids, опции){
     +     'var м=(d&&Array.isArray(d.legMinutes)&&typeof d.legMinutes[i-1]==="number")?d.legMinutes[i-1]:null;'
     +     'out.push({км:к!==null?к:прямо, мин:м!==null?м:Math.round(прямо), примерно:м===null});}'
     +   'return out;}'
-    // ночёвка по умолчанию — после точки, где набралась половина пути
-    + 'function ночёвкаПоУмолчанию(){var п=перегоны(),всего=0,нак=0;п.forEach(function(x){всего+=x.км;});'
-    +   'for(var i=0;i<Т.length-1;i++){if(i)нак+=п[i-1].км;if(нак>=всего/2)return i+1;}'
-    +   'return Т.length-1;}'
+    // Ночёвка по умолчанию — там, где дни выходят ровнее всего по километрам.
+    // «Первая точка, где набралась половина» на маршруте с длинным перегоном
+    // в конце давала 143 км в первый день и 21 км во второй. Поровну — раньше.
+    + 'function ночёвкаПоУмолчанию(){var п=перегоны(),всего=0,нак=0,лучшая=1,разница=Infinity;'
+    +   'п.forEach(function(x){всего+=x.км;});'
+    +   'for(var N=1;N<Т.length;N++){if(N>1)нак+=п[N-2].км;var р=Math.abs(нак-(всего-нак));'
+    +     'if(р<разница-1e-9){разница=р;лучшая=N;}}'
+    +   'return лучшая;}'
     // Адрес — ссылка на маршрут. На /marshrut его целиком собирает обновитьАдрес();
     // на /m/<slug> до первой правки меняем только d: путь ролика остаётся.
     + 'function адресДней(){if(location.pathname==="/marshrut"){обновитьАдрес();return;}'
@@ -4351,8 +4355,10 @@ async function marshrutPage(ids, опции){
     +   'жильёЗа=setTimeout(function(){загрузитьЖильё(p,к);},600);}'
     + 'async function загрузитьЖильё(p,к){var d=null;'
     +   'try{d=await (await fetch("/api/places/stay?lat="+p.lat+"&lng="+p.lng+"&r=30")).json();}catch(e){d=null;}'
-    // сбой — не запоминаем: при следующей перерисовке спросим снова
-    +   'if(!d||!Array.isArray(d.items)){if(к===жильёКлюч){жильёКлюч="";сообщениеЖилья("Жильё рядом сейчас не загрузилось.");}return;}'
+    // Сбой в кэш не кладём, но и на каждую перерисовку (набор времени выезда)
+    // не переспрашиваем: ключ остаётся, снова спросим при смене ночёвки
+    // или повторном включении двух дней.
+    +   'if(!d||!Array.isArray(d.items)){if(к===жильёКлюч)сообщениеЖилья("Жильё рядом сейчас не загрузилось.");return;}'
     +   'ЖИЛЬЁ[к]=d; if(к===жильёКлюч)показатьЖильё(d);}'
     + 'function источникЖилья(s){return s==="H101"?"101Hotels":s==="CheckIn"?"Check-in":String(s||"");}'
     + 'function показатьЖильё(d){var items=d.items.slice(0,4), л=document.getElementById("rNightList");'
@@ -4365,8 +4371,12 @@ async function marshrutPage(ids, опции){
     +         '+"<span class=\\"p\\">"+esc(x.title||x.name||"Жильё на сутки")+"</span>"'
     +         '+"<span class=\\"d\\">"+(x.от?"от ":"")+esc(x.price)+" BYN</span>"'
     +         '+"<span class=\\"s\\">"+esc(источникЖилья(x.src))+(x.approx?(x.area?(" · "+esc(x.area)):""):(" · "+String(x.km).replace(".",",")+" км"))+"</span></a>";}).join("");}'
-    // «Всё жильё рядом» — туда же, куда кнопка «Жильё рядом» у места на главной: жильё области
-    +   'var a=document.getElementById("rNightAll"); a.href=d.region?("/?region="+encodeURIComponent(d.region)):"/"; a.hidden=false;}'
+    // «Всё жильё рядом» — то же, что «Жильё рядом» → «Посмотреть жильё в этой
+    // области» у места на главной (allStay): область, квартиры, оба источника,
+    // остальные фильтры пустые. Тип и источник пишем явно: без них главная
+    // оставляет значения полей по умолчанию, а тип там не «квартира».
+    +   'var a=document.getElementById("rNightAll");'
+    +   'a.href="/?"+(d.region?("region="+encodeURIComponent(d.region)+"&"):"")+"type=flat&source=both"; a.hidden=false;}'
     + 'document.getElementById("rNightList").addEventListener("error",function(e){var t=e.target;'
     +   'if(!t||t.tagName!=="IMG")return;var d=document.createElement("div");d.className="ni";t.replaceWith(d);},true);'
     // Топливо: три поля, итог сразу при вводе. Запятая — тоже десятичный знак.
@@ -4381,18 +4391,29 @@ async function marshrutPage(ids, опции){
     +   'if(isNaN(р)||isNaN(л)||isNaN(ц)){о.textContent="—";return;}'
     +   'var литры=р*л/100;'
     +   'о.textContent="≈ "+(Math.round(литры*10)/10).toFixed(1)+" л · ≈ "+(Math.round(литры*ц*100)/100).toFixed(2)+" BYN";}'
-    + 'function запомнитьТопливо(){записатьОбъект("routeFuel",{use:document.getElementById("rFuelUse").value,'
-    +   'price:document.getElementById("rFuelPrice").value});посчитатьТопливо();}'
+    // В хранилище — только числа: недописанное «2,» или мусор не должны
+    // пережить перезагрузку. Неправильное поле оставляет прежнее значение.
+    + 'function запомнитьТопливо(){var т=читатьОбъект("routeFuel"), р=число(document.getElementById("rFuelUse").value),'
+    +   'ц=число(document.getElementById("rFuelPrice").value), н={};'
+    +   'if(!isNaN(р))н.use=р;else if(typeof т.use==="number"&&isFinite(т.use))н.use=т.use;'
+    +   'if(!isNaN(ц))н.price=ц;else if(typeof т.price==="number"&&isFinite(т.price))н.price=т.price;'
+    +   'записатьОбъект("routeFuel",н);посчитатьТопливо();}'
     + 'document.getElementById("rFuelUse").addEventListener("input",запомнитьТопливо);'
     + 'document.getElementById("rFuelPrice").addEventListener("input",запомнитьТопливо);'
     // расстояние поправили руками — дальше не трогаем, пока не нажмут «↺ по маршруту»
     + 'document.getElementById("rFuelKm").addEventListener("input",function(){РАССТ_САМО=false;'
     +   'document.getElementById("rFuelAuto").hidden=false;посчитатьТопливо();});'
     + 'document.getElementById("rFuelAuto").addEventListener("click",function(){РАССТ_САМО=true;топливо();});'
-    + 'function сменаВыезда(){var v=document.getElementById("rStart").value||"";'
+    + 'function сменаВыезда(){var п=document.getElementById("rStart"), v=п.value||"";'
     +   'if(/^\\d\\d:\\d\\d/.test(v)){try{localStorage.setItem("routeStart",v.slice(0,5));}catch(e){}}планИТопливо();}'
+    // Поле очистили — план считается от 09:00, и в поле возвращаем 09:00. Пока
+    // человек в поле, не мешаем (стёр часы, чтобы набрать другие); сразу —
+    // если очистили не набором (кнопка «Очистить» в выборе времени на телефоне).
+    + 'function пустойВыезд(){var п=document.getElementById("rStart");if(п.value)return;п.value="09:00";сменаВыезда();}'
     + 'document.getElementById("rStart").addEventListener("input",сменаВыезда);'
-    + 'document.getElementById("rStart").addEventListener("change",сменаВыезда);'
+    + 'document.getElementById("rStart").addEventListener("change",function(){сменаВыезда();'
+    +   'if(document.activeElement!==this)пустойВыезд();});'
+    + 'document.getElementById("rStart").addEventListener("blur",пустойВыезд);'
     + 'document.getElementById("rPlan").addEventListener("change",function(e){var t=e.target;'
     +   'if(t.id==="rTwo"){ДВА_ДНЯ=t.checked&&Т.length>2;НОЧЁВКА=0;НОЧЁВКА_САМА=true;планИТопливо();адресДней();return;}'
     +   'if(t.id==="rNightN"){НОЧЁВКА=+t.value;НОЧЁВКА_САМА=false;планИТопливо();адресДней();return;}'

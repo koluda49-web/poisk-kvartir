@@ -39,6 +39,8 @@ ws.addEventListener('message', e => {
   if (m.id && pend.has(m.id)) { const p = pend.get(m.id); pend.delete(m.id); m.error ? p.rej(new Error(m.error.message)) : p.res(m.result); }
 });
 await send('Page.enable'); await send('Runtime.enable');
+// фокус в безголовом Chrome — как в открытой вкладке: иначе blur у полей может не прийти
+await send('Emulation.setFocusEmulationEnabled', { enabled: true });
 await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
 const js = async e => (await send('Runtime.evaluate', { expression: e, returnByValue: true, awaitPromise: true })).result?.value;
 const ждать = async (усл, раз = 60) => { for (let i = 0; i < раз; i++) { if (await js(усл)) return true; await sleep(250); } return false; };
@@ -55,6 +57,25 @@ const времена = (где = '#rPlan1') => js(`JSON.stringify([...document.q
 const дорогаЕсть = () => js(`!!(ДОРОГА && ДОРОГА.к === ключДороги() && Array.isArray(ДОРОГА.d.legMinutes))`);
 const ввести = (id, v) => js(`(function(){ var e = document.getElementById('${id}'); e.value = ${JSON.stringify(v)};
   e.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+// Ночёвка «ровнее всего», посчитанная здесь, а не функцией страницы: км перегонов
+// по дорогам (legs), если дорога для этого порядка пришла, иначе по прямой ×1,3.
+// N — после какой точки (1..n−1), |день 1 − день 2| наименьшая, при равенстве — раньше.
+const ровнаяНочёвка = async () => {
+  const { точки, legs } = await js(`({ точки: Т.map(function(p){ return [p.lat, p.lng]; }),
+    legs: (ДОРОГА && ДОРОГА.к === ключДороги() && Array.isArray(ДОРОГА.d.legs)) ? ДОРОГА.d.legs : null })`);
+  const t = Math.PI / 180;
+  const прямая = (a, b) => { const x = (b[0] - a[0]) * t, y = (b[1] - a[1]) * t;
+    const h = Math.sin(x / 2) ** 2 + Math.cos(a[0] * t) * Math.cos(b[0] * t) * Math.sin(y / 2) ** 2;
+    return 6371 * 2 * Math.asin(Math.sqrt(h)) * 1.3; };
+  const ноги = точки.slice(1).map((p, i) => (legs && typeof legs[i] === 'number') ? legs[i] : прямая(точки[i], p));
+  const всего = ноги.reduce((s, x) => s + x, 0);
+  let лучший = null;
+  for (let N = 1; N < точки.length; N++) {
+    const день1 = ноги.slice(0, N - 1).reduce((s, x) => s + x, 0), р = Math.abs(день1 - (всего - день1));
+    if (!лучший || р < лучший.р - 1e-9) лучший = { N, р, день1: Math.round(день1), день2: Math.round(всего - день1) };
+  }
+  return лучший;
+};
 const запросовЖилья = () => js(`performance.getEntriesByType('resource').filter(function(e){ return e.name.indexOf('/api/places/stay') >= 0; }).length`);
 
 await send('Page.navigate', { url: SITE + '/marshrut' });
@@ -128,6 +149,18 @@ check('выезд 23:30: приезд первой 23:30', (await времена
 check('выезд в localStorage.routeStart', (await js(`localStorage.getItem('routeStart')`)) === '23:30');
 await открыть(SITE + '/marshrut?p=5069,910026,910027', `Т.length === 3 && document.querySelectorAll('#rPlan1 tr.pp').length === 3`);
 check('выезд пережил перезагрузку', (await js(`document.getElementById('rStart').value`)) === '23:30');
+// очистили поле — пока в нём фокус, не мешаем; ушли из поля — снова 09:00
+await js(`document.getElementById('rStart').focus(); 1`);
+await ввести('rStart', '');
+check('пустой выезд: план считается от 09:00', (await времена())[0][0] === '09:00');
+check('пустой выезд: пока в поле фокус, 09:00 не подставляется', (await js(`document.getElementById('rStart').value`)) === '');
+await js(`document.getElementById('rStart').blur(); 1`);
+check('пустой выезд: после ухода из поля в нём 09:00', (await js(`document.getElementById('rStart').value`)) === '09:00');
+check('пустой выезд: в routeStart 09:00', (await js(`localStorage.getItem('routeStart')`)) === '09:00');
+// очистка без фокуса (кнопка «Очистить» в выборе времени на телефоне) — сразу 09:00
+await ввести('rStart', '11:15');
+await js(`(function(){ var e = document.getElementById('rStart'); e.blur(); e.value = ''; e.dispatchEvent(new Event('change', { bubbles: true })); })(); 1`);
+check('очистка без фокуса: сразу 09:00', (await js(`document.getElementById('rStart').value + '|' + localStorage.getItem('routeStart')`)) === '09:00|09:00');
 await ввести('rStart', '09:00');
 await js(`localStorage.removeItem('routeStay'); ПРОБЫТЬ = {}; планИТопливо(); 1`);
 
@@ -151,13 +184,29 @@ check('после правки видно «↺ по маршруту»', await 
 await js(`document.getElementById('rFuelAuto').click(); 1`);
 check('«↺ по маршруту» вернул расстояние маршрута', (await js(`document.getElementById('rFuelKm').value`)) === String(await js(`расстояниеМаршрута()`)));
 check('«↺ по маршруту» спрятался', await js(`document.getElementById('rFuelAuto').hidden`));
+const хранилищеТоплива = async () => JSON.parse((await js(`localStorage.getItem('routeFuel')`)) || 'null');
 await ввести('rFuelPrice', 'abc');
 check('неправильная цена → «—»', (await js(`document.getElementById('rFuelSum').textContent`)) === '—');
+{
+  const т = await хранилищеТоплива();
+  check('мусор в цене не попадает в routeFuel (там прежнее число 2.6)', т && т.price === 2.6 && т.use === 7.5, JSON.stringify(т));
+}
 await ввести('rFuelPrice', '2,75');
 await ввести('rFuelUse', '6,2');
-check('расход и цена в localStorage.routeFuel', (await js(`localStorage.getItem('routeFuel')`)) === JSON.stringify({ use: '6,2', price: '2,75' }), await js(`localStorage.getItem('routeFuel')`));
+{
+  const т = await хранилищеТоплива();
+  check('расход и цена в localStorage.routeFuel числами', т && т.use === 6.2 && т.price === 2.75 && Object.keys(т).length === 2, JSON.stringify(т));
+}
+await ввести('rFuelUse', '');
+check('пустой расход не стирает сохранённый', (await хранилищеТоплива())?.use === 6.2, JSON.stringify(await хранилищеТоплива()));
+await ввести('rFuelUse', '6,2');
 await открыть(SITE + '/marshrut?p=5069,910026,910027', `Т.length === 3 && !document.getElementById('rFuel').hidden`);
-check('расход и цена пережили перезагрузку', (await js(`document.getElementById('rFuelUse').value + ' ' + document.getElementById('rFuelPrice').value`)) === '6,2 2,75');
+check('расход и цена пережили перезагрузку', (await js(`document.getElementById('rFuelUse').value + ' ' + document.getElementById('rFuelPrice').value`)) === '6.2 2.75',
+  await js(`document.getElementById('rFuelUse').value + ' ' + document.getElementById('rFuelPrice').value`));
+// испорченное хранилище (старый формат строками, мусор) — поля по умолчанию
+await js(`localStorage.setItem('routeFuel', JSON.stringify({ use: 'abc', price: '2,60' })); 1`);
+await открыть(SITE + '/marshrut?p=5069,910026,910027', `Т.length === 3 && !document.getElementById('rFuel').hidden`);
+check('нечисловой routeFuel не подставляется', (await js(`document.getElementById('rFuelUse').value + ' ' + document.getElementById('rFuelPrice').value`)) === '7.5 2.60');
 await js(`localStorage.removeItem('routeFuel'); 1`);
 
 // ── два дня на четырёх точках ──
@@ -169,12 +218,8 @@ check('до включения: одна кнопка Яндекса', await js(
 await js(`document.getElementById('rTwo').click(); 1`);
 const N = await js(`НОЧЁВКА`);
 const ждёмN = await js(`ночёвкаПоУмолчанию()`);
-check('ночёвка по умолчанию — где набралась половина пути', N === ждёмN && N >= 1 && N <= 3, N + ' / ' + ждёмN);
-const половина = await js(`(function(){ var п = перегоны(), всего = 0, нак = 0; п.forEach(function(x){ всего += x.км; });
-  for(var i = 0; i < НОЧЁВКА - 1; i++) нак += п[i].км; var до = нак - (НОЧЁВКА > 1 ? п[НОЧЁВКА - 2].км : 0);
-  // после последней точки ночевать негде: если половина набирается только к ней — ночёвка после предпоследней
-  return (нак >= всего / 2 || НОЧЁВКА === Т.length - 1) && (НОЧЁВКА === 1 || до < всего / 2); })()`);
-check('ночёвка: у точки N накоплено ≥ половины (или это предпоследняя), у предыдущей — меньше', половина, await js(`JSON.stringify(перегоны().map(function(x){ return Math.round(x.км); }))`) + ' N=' + N);
+const самаяРовная = await ровнаяНочёвка();
+check('ночёвка по умолчанию — где дни ровнее всего по км', N === самаяРовная.N && N === ждёмN, 'на странице ' + N + ', посчитано ' + JSON.stringify(самаяРовная));
 const заголовки = await js(`JSON.stringify([...document.querySelectorAll('#rlist .dh')].map(function(e){ return e.textContent; }))`).then(JSON.parse);
 check('в списке заголовки «День 1 · X км» и «День 2 · Y км»', заголовки.length === 2 && /^День 1 · \d+ км$/.test(заголовки[0]) && /^День 2 · \d+ км$/.test(заголовки[1]), заголовки.join(' | '));
 check('заголовок «День 2» стоит перед точкой N+1', await js(`(function(){ var л = document.getElementById('rlist'), д = л.querySelectorAll('.dh');
@@ -214,7 +259,7 @@ if (карточек) {
     === JSON.stringify(стэй.items.slice(0, 4).map(x => x.link)));
 } else console.log('  (жилья в 30 км нет — карточки не проверены)');
 check('«Всё жильё рядом →» ведёт на поиск области, как кнопка у места на главной', await js(`(function(){ var a = document.getElementById('rNightAll'); var d = ЖИЛЬЁ[Т[НОЧЁВКА - 1].lat + ',' + Т[НОЧЁВКА - 1].lng];
-  return !a.hidden && a.textContent === 'Всё жильё рядом →' && a.getAttribute('href') === (d && d.region ? '/?region=' + encodeURIComponent(d.region) : '/'); })()`), await js(`document.getElementById('rNightAll').getAttribute('href')`));
+  return !a.hidden && a.textContent === 'Всё жильё рядом →' && a.getAttribute('href') === (d && d.region ? '/?region=' + encodeURIComponent(d.region) + '&type=flat&source=both' : '/?type=flat&source=both'); })()`), await js(`document.getElementById('rNightAll').getAttribute('href')`));
 check('жильё запрошено один раз и с r=30', await js(`(function(){ var e = performance.getEntriesByType('resource').filter(function(e){ return e.name.indexOf('/api/places/stay') >= 0; });
   return e.length === 1 && e[0].name.indexOf('&r=30') > 0; })()`), await запросовЖилья());
 // перерисовки не спрашивают жильё повторно
@@ -248,6 +293,84 @@ check('перезагрузка: флажок включён, ночёвка п�
 check('перезагрузка: заголовки дней и две кнопки', await js(`document.querySelectorAll('#rlist .dh').length === 2 && !document.getElementById('rGo1').hidden && document.getElementById('rGo').hidden`));
 check('перезагрузка: адрес тот же', (await js(`location.href`)) === адрес, await js(`location.href`));
 
+// Сбой запроса жилья: не переспрашиваем на каждой перерисовке (набор времени
+// выезда), снова спрашиваем при смене ночёвки и при повторном включении двух дней.
+{
+  // сначала дожидаемся ответа для нынешней ночёвки: он должен лечь в кэш до подмены fetch
+  await ждать(`!!ЖИЛЬЁ[Т[НОЧЁВКА - 1].lat + ',' + Т[НОЧЁВКА - 1].lng]`, 160);
+  await js(`window.__сбоев = 0; window.__f = window.fetch; window.fetch = function(u){
+    if(String(u).indexOf('/api/places/stay') >= 0){ window.__сбоев++; return Promise.reject(new TypeError('нет сети')); }
+    return window.__f.apply(this, arguments); }; 1`);
+  const безКэша = await js(`(function(){ for(var i = 1; i < Т.length; i++){ var p = Т[i - 1]; if(i !== НОЧЁВКА && !ЖИЛЬЁ[p.lat + ',' + p.lng]) return i; } return 0; })()`);
+  const сКэшем = await js(`НОЧЁВКА`);
+  const сменить = n => js(`(function(){ var s = document.getElementById('rNightN'); s.value = '${n}'; s.dispatchEvent(new Event('change', { bubbles: true })); })(); 1`);
+  const сбоев = () => js(`window.__сбоев`);
+  if (безКэша) {
+    await сменить(безКэша);
+    await ждать(`window.__сбоев === 1 && document.getElementById('rNightMsg').textContent === 'Жильё рядом сейчас не загрузилось.'`, 20);
+    check('сбой жилья: сообщение «не загрузилось»', (await js(`document.getElementById('rNightMsg').textContent`)) === 'Жильё рядом сейчас не загрузилось.' && (await сбоев()) === 1, await сбоев());
+    for (const v of ['09:05', '09:10', '09:15']) await ввести('rStart', v);
+    await js(`нарисовать(); планИТопливо(); 1`);
+    await sleep(1000);
+    check('сбой жилья: набор выезда и перерисовки не переспрашивают', (await сбоев()) === 1, await сбоев());
+    await сменить(сКэшем); await sleep(200); await сменить(безКэша);
+    await sleep(1000);
+    check('сбой жилья: смена ночёвки — спросили снова', (await сбоев()) === 2, await сбоев());
+    await js(`ЖИЛЬЁ = {}; 1`); // чтобы и ночёвка после повторного включения была без ответа
+    await js(`document.getElementById('rTwo').click(); 1`);
+    await js(`document.getElementById('rTwo').click(); 1`);
+    await sleep(1000);
+    check('сбой жилья: повторное включение двух дней — спросили снова', (await сбоев()) === 3, await сбоев());
+    await ввести('rStart', '09:00');
+  } else console.log('  (у всех точек жильё уже в кэше — проверка сбоя пропущена)');
+  await js(`window.fetch = window.__f; 1`);
+}
+
+// «Всё жильё рядом →» даёт на главной то же, что «Жильё рядом» → «Посмотреть
+// жильё в этой области» (allStay): та же область, тип, источник, сброшенные фильтры.
+{
+  await открыть(адрес, `Т.length === 4 && document.querySelectorAll('#rlist .dh').length === 2`);
+  await ждать(`!document.getElementById('rNightAll').hidden`, 160);
+  const область = await js(`(ЖИЛЬЁ[Т[НОЧЁВКА - 1].lat + ',' + Т[НОЧЁВКА - 1].lng] || {}).region || ''`);
+  const ссылка = await js(`document.getElementById('rNightAll').getAttribute('href')`);
+  check('«Всё жильё рядом →» есть и ведёт на главную', !!область && ссылка === '/?region=' + encodeURIComponent(область) + '&type=flat&source=both', ссылка);
+  // состояние поиска жилья на главной
+  const состояние = `JSON.stringify({ mode: window.__mode || '', region: $('#region').value, city: $('#city').value, type: $('#type').value,
+    rooms: $('#rooms').value, guests: $('#guests').value, min: $('#min').value, max: $('#max').value, source: $('#source').value,
+    sort: $('#sort').value, qname: $('#qname').value, photo: !!($('#onlyPhoto') && $('#onlyPhoto').checked),
+    amen: [...document.querySelectorAll('#bar .rb-amen-cb:checked')].map(function(c){ return c.value; }) })`;
+  // человек до этого искал с узкими фильтрами — они лежат в byFilters
+  const сузить = `(function(){ var пр = function(id, v){ var e = $('#' + id); if(e){ e.value = v; } };
+    var опц = function(id){ var e = $('#' + id); return e && e.options && e.options.length ? e.options[e.options.length - 1].value : ''; };
+    пр('type', опц('type')); пр('rooms', опц('rooms')); пр('source', опц('source')); пр('min', '20'); пр('max', '300'); пр('qname', 'тест');
+    if($('#onlyPhoto')) $('#onlyPhoto').checked = true; var а = document.querySelector('#bar .rb-amen-cb'); if(а) а.checked = true;
+    syncUrl(); return localStorage.getItem('byFilters'); })()`;
+  await send('Page.navigate', { url: SITE + '/' });
+  await ждать(`document.readyState === 'complete' && typeof allStay === 'function'`, 80);
+  await sleep(800);
+  const сохранено = await js(сузить);
+  await js(`(function(){ var b = document.createElement('button'); b.setAttribute('data-r', ${JSON.stringify(область)}); allStay(b); })(); 1`);
+  await sleep(800);
+  const черезКнопку = JSON.parse(await js(состояние));
+  // тот же узкий поиск снова в byFilters, потом — со страницы маршрута по ссылке
+  await send('Page.navigate', { url: SITE + '/' });
+  await ждать(`document.readyState === 'complete' && typeof allStay === 'function'`, 80);
+  await sleep(800);
+  await js(сузить);
+  check('узкие фильтры правда сохранены перед переходом', !!сохранено && сохранено === (await js(`localStorage.getItem('byFilters')`)), сохранено);
+  await открыть(адрес, `Т.length === 4 && !document.getElementById('rNightAll').hidden`);
+  await ждать(`!document.getElementById('rNightAll').hidden`, 160);
+  await js(`document.getElementById('rNightAll').click(); 1`);
+  await ждать(`location.pathname === '/' && document.readyState === 'complete' && typeof allStay === 'function'`, 80);
+  await sleep(1200);
+  const поСсылке = JSON.parse(await js(состояние));
+  check('по ссылке пришли со страницы маршрута', (await js(`document.referrer`)).indexOf('/marshrut') > 0, await js(`document.referrer`));
+  check('«Всё жильё рядом →» = allStay: область, город, тип, источник, фильтры, вкладка', JSON.stringify(поСсылке) === JSON.stringify(черезКнопку),
+    'ссылка ' + JSON.stringify(поСсылке) + ' / кнопка ' + JSON.stringify(черезКнопку));
+  check('allStay правда сбросил узкие фильтры (сравнение не пустое)', черезКнопку.region === область && черезКнопку.qname === '' && черезКнопку.photo === false, JSON.stringify(черезКнопку));
+  await открыть(адрес, `Т.length === 4 && document.querySelectorAll('#rlist .dh').length === 2`);
+}
+
 // перетаскивание строк со вставленными заголовками: стрелка вниз на ручке первой точки
 {
   const до = await js(`ключИд(Т)`);
@@ -276,8 +399,15 @@ await ввести('rStart', '10:00');
 await ввести('rFuelUse', '8');
 check('/m: «пробыть», выезд и расход не меняют адрес', (await js(`location.pathname + location.search`)) === '/m/lida-voronovo', await js(`location.pathname + location.search`));
 check('/m: маршрут в хранилище не записан', (await js(`localStorage.getItem('route')`)) === null);
+// ждём дорогу заранее: с её приходом ночёвка по умолчанию пересчитывается
+const дорогаНаM = await ждать(`!!(ДОРОГА && ДОРОГА.к === ключДороги())`, 80);
 await js(`document.getElementById('rTwo').click(); 1`);
 const Nm = await js(`НОЧЁВКА`);
+if (дорогаНаM) {
+  const р = await ровнаяНочёвка(), дни = await js(`[...document.querySelectorAll('#rlist .dh')].map(function(e){ return e.textContent; }).join(' | ')`);
+  check('/m/lida-voronovo: ночёвка там, где дни ровнее всего', Nm === р.N, 'на странице ' + Nm + ', посчитано ' + JSON.stringify(р) + ' · ' + дни);
+  check('/m/lida-voronovo: больше не 143 и 21 км', !/День 1 · 143 км/.test(дни) && !/День 2 · 21 км/.test(дни), дни);
+} else console.log('  (OSRM не ответил на /m/lida-voronovo — ровность дней по дорогам не проверена)');
 check('/m: два дня → адрес /m/lida-voronovo?d=N', (await js(`location.pathname + location.search`)) === '/m/lida-voronovo?d=' + Nm, await js(`location.pathname + location.search`));
 check('/m: после двух дней маршрут в хранилище не записан', (await js(`localStorage.getItem('route')`)) === null);
 await открыть(SITE + '/m/lida-voronovo?d=' + Nm, `Т.length === 7 && document.querySelectorAll('#rlist .dh').length === 2`);
