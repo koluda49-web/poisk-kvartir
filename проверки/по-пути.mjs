@@ -12,6 +12,7 @@
 //   node проверки/по-пути.mjs
 //   node проверки/по-пути.mjs https://poisk-kvartir.onrender.com
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -68,29 +69,80 @@ if (дорога.ok) check('/api/route отдаёт минуты перегон�
   && дорога.legMinutes.every(m => Number.isInteger(m) && m > 0), JSON.stringify(дорога.legMinutes));
 else console.log('  (OSRM не ответил — legMinutes не проверены)');
 
-// ── без OSRM: второй экземпляр сервера с неработающим адресом маршрутизатора ──
+// ── кэш и отказ OSRM: второй экземпляр сервера с поддельным маршрутизатором ──
+// Подделка отвечает как публичный OSRM под нагрузкой: 200 и «TooManyRequests».
+// Только для маршрута от Липнишек отдаёт настоящий ответ (прямую) — чтобы
+// проверить кэш ответа по дорогам с пустым списком мест.
 {
   const корень = join(dirname(fileURLToPath(import.meta.url)), '..');
   const папка = mkdtempSync(join(tmpdir(), 'po-puti-'));
-  const порт = 8096;
+  const порт = 8193, портOSRM = 9623;
+  const запросыOSRM = [];
+  const osrm = createServer((req, res) => {
+    запросыOSRM.push(req.url);
+    const m = req.url.match(/\/route\/v1\/driving\/([^?]+)/);
+    const coords = m ? decodeURIComponent(m[1]).split(';').map(x => x.split(',').map(Number)) : [];
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (coords.length > 1 && coords[0][1] === липнишки.lat) {
+      const legs = coords.slice(1).map((c, i) => ({ distance: 1000 * км(coords[i][1], coords[i][0], c[1], c[0]), duration: 60 * км(coords[i][1], coords[i][0], c[1], c[0]) }));
+      res.end(JSON.stringify({ code: 'Ok', routes: [{ distance: legs.reduce((x, l) => x + l.distance, 0), duration: legs.reduce((x, l) => x + l.duration, 0), legs, geometry: { coordinates: coords } }] }));
+    } else res.end('{"code":"TooManyRequests","message":"Too Many Requests"}');
+  });
+  await new Promise(r => osrm.listen(портOSRM, '127.0.0.1', r));
   const сервер = spawn(process.execPath, ['kvartiry-server.js'], { cwd: корень, stdio: 'ignore', env: Object.assign({}, process.env, {
-    PORT: String(порт), OSRM_URL: 'http://127.0.0.1:9', DATA_DIR: папка, STATS_FILE: join(папка, 'stats.json'),
+    PORT: String(порт), OSRM_URL: 'http://127.0.0.1:' + портOSRM, DATA_TEST: '1', DATA_TEST_NAMES: '',
+    DATA_DIR: папка, STATS_FILE: join(папка, 'stats.json'),
     KUFAR: 'off', REALT: 'off', FLATBOOK: 'off', CHECKIN: 'off', KVARTIRKA: 'off', GH_TOKEN: '', RENDER_EXTERNAL_URL: '' }) });
   const второй = 'http://127.0.0.1:' + порт;
   let готов = false;
-  for (let i = 0; i < 90 && !готов; i++) {
+  for (let i = 0; i < 90 && !готов && сервер.exitCode === null; i++) {
     try { готов = ((await getJSON(второй + '/api/places?light=1')).items || []).length > 0; } catch {}
     if (!готов) await sleep(1000);
   }
-  check('второй экземпляр сервера поднялся', готов);
-  if (готов) {
-    const р = await getJSON(второй + '/api/route?p=' + пара(вороново, мурованка));
-    check('без OSRM /api/route → ok:false', р.ok === false);
-    const d = await getJSON(второй + '/api/route/near?p=' + пара(вороново, мурованка) + '&skip=910027,286');
+  const служебный = async () => { try { return await getJSON(второй + '/api/_route-test'); } catch { return null; } };
+  const с0 = готов ? await служебный() : null;
+  check('второй экземпляр сервера поднялся и работает', готов && сервер.exitCode === null);
+  check('на порту ' + порт + ' отвечает именно он (pid совпадает)', !!с0 && с0.pid === сервер.pid, с0 && (с0.pid + ' / ' + сервер.pid));
+  if (готов && с0 && с0.pid === сервер.pid) {
+    const pVM = пара(вороново, мурованка), pЛВ = пара(липнишки, вороново);
+    const ключOSRM = pp => 'osrm|' + pp.split(';').map(x => x.split(',').map(Number).map(n => n.toFixed(5)).join(',')).join(';');
+    const ключРядом = pp => 'near|' + pp.split(';').map(x => x.split(',').map(Number).map(n => n.toFixed(4)).join(',')).join(';') + '|';
+
+    // отказ OSRM не попадает в кэш
+    const доРоут = запросыOSRM.length;
+    const р1 = await getJSON(второй + '/api/route?p=' + pVM);
+    const р2 = await getJSON(второй + '/api/route?p=' + pVM);
+    check('OSRM «TooManyRequests» → /api/route ok:false', р1.ok === false && р2.ok === false);
+    check('отказ OSRM не кэшируется: второй запрос снова идёт в OSRM', запросыOSRM.length - доРоут === 2, (запросыOSRM.length - доРоут) + ' запросов');
+    check('отказа OSRM нет в кэше', !(await служебный()).osrmКлючи.includes(ключOSRM(pVM)));
+
+    // без дороги — по прямым, кэш 10 мин, повтор из кэша
+    const сДо = (await служебный()).счёт.поПути;
+    const d = await getJSON(второй + '/api/route/near?p=' + pVM + '&skip=910027,286');
     const it = проверитьОтвет('без OSRM', d, [вороново, мурованка], ['910027', '286']);
     check('без OSRM места по прямой всё равно есть', it.length > 0);
+    const доПовтора = запросыOSRM.length;
+    const d2 = await getJSON(второй + '/api/route/near?p=' + pVM + '&skip=286,910027');
+    const с1 = await служебный();
+    check('без OSRM повтор (skip в другом порядке) — из кэша', с1.счёт.поПути - сДо === 1 && JSON.stringify(d2) === JSON.stringify(d), 'посчитали ' + (с1.счёт.поПути - сДо));
+    check('без OSRM повтор не ходит в OSRM', запросыOSRM.length === доПовтора);
+    const запПрямые = с1.записи.find(z => z.ключ.startsWith(ключРядом(pVM)));
+    check('ответ по прямым живёт 10 мин', !!запПрямые && запПрямые.ttl === 10 * 60 * 1000, JSON.stringify(запПрямые));
+
+    // по дорогам и пусто — кэш 6 ч, повтор из кэша
+    const р3 = await getJSON(второй + '/api/route?p=' + pЛВ);
+    check('поддельный OSRM с маршрутом → legMinutes', р3.ok === true && Array.isArray(р3.legMinutes) && р3.legMinutes.length === 1, JSON.stringify(р3).slice(0, 120));
+    const сДо2 = (await служебный()).счёт.поПути;
+    const e1 = await getJSON(второй + '/api/route/near?p=' + pЛВ + '&skip=5069,910027');
+    const e2 = await getJSON(второй + '/api/route/near?p=' + pЛВ + '&skip=5069,910027');
+    const с2 = await служебный();
+    check('пустой список по дорогам: ok и пусто', e1.ok === true && e1.items.length === 0 && e2.ok === true && e2.items.length === 0, JSON.stringify(e1).slice(0, 100));
+    check('пустой список: второй запрос из кэша', с2.счёт.поПути - сДо2 === 1, 'посчитали ' + (с2.счёт.поПути - сДо2));
+    const запПусто = с2.записи.find(z => z.ключ.startsWith(ключРядом(pЛВ)));
+    check('пустой список по дорогам живёт 6 ч', !!запПусто && запПусто.ttl === 6 * 60 * 60 * 1000 && запПусто.мест === 0, JSON.stringify(запПусто));
   }
   сервер.kill();
+  osrm.close();
   await sleep(500);
   try { rmSync(папка, { recursive: true, force: true }); } catch {}
 }
@@ -154,16 +206,37 @@ await js(`нарисовать(); нарисовать(); нарисовать()
 await sleep(1200);
 check('тот же маршрут повторно не запрашивается', (await запросов()) === было, было + ' → ' + (await запросов()));
 
+// Быстрый возврат: точку добавили и сразу убрали, пока шёл запрос ленты для
+// промежуточного маршрута. Опоздавший ответ не должен заменить ленту на экране.
+{
+  const лида = точка(285);
+  const ключБыл = await js(`ПО_ПУТИ.к`), лентаБыла = await карточки();
+  await js(`window.__f = window.fetch; window.fetch = function(u){ var p = window.__f.apply(this, arguments);
+    return String(u).indexOf('/api/route/near') >= 0 ? p.then(function(r){ return new Promise(function(ok){ setTimeout(function(){ ok(r); }, 2500); }); }) : p; }; 1`);
+  await js(`добавить(${JSON.stringify({ id: лида.id, name: лида.name, addr: лида.addr, lat: лида.lat, lng: лида.lng })}); 1`);
+  await sleep(1000);
+  const вПути = await js(`поПутиЗапрос === ключПоПути() && ключПоПути() !== ${JSON.stringify(ключБыл)}`);
+  await js(`убрать('285'); 1`);
+  await sleep(1000);
+  const вернули = await js(`ключПоПути() === ${JSON.stringify(ключБыл)}`);
+  await sleep(3000);
+  check('быстрый возврат: запрос для промежуточного маршрута правда шёл', вПути && вернули);
+  check('быстрый возврат: опоздавший ответ не подменил ленту', (await js(`ПО_ПУТИ.к === ключПоПути()`))
+    && JSON.stringify(await карточки()) === JSON.stringify(лентаБыла), JSON.stringify(await карточки()));
+  await js(`window.fetch = window.__f; 1`);
+}
+
 // «+ в маршрут» в автоматическом порядке
+const доКнопки = await запросов();
 const доДобавления = await карточки();
 const первая = доДобавления[0];
 await js(`document.querySelector('#rNearList .nc[data-id="${первая}"] .na').click(); 1`);
 await sleep(100);
 check('«+ в маршрут» добавляет точку', (await иды()).includes(String(первая)), (await иды()).join(','));
 check('добавленная сразу пропала из ленты', !(await карточки()).includes(String(первая)));
-await ждать(`performance.getEntriesByType('resource').filter(function(e){ return e.name.indexOf('/api/route/near') >= 0; }).length > ${было}`, 40);
+await ждать(`performance.getEntriesByType('resource').filter(function(e){ return e.name.indexOf('/api/route/near') >= 0; }).length > ${доКнопки}`, 40);
 await sleep(1500);
-check('после добавления лента перезапрошена', (await запросов()) > было);
+check('после добавления лента перезапрошена', (await запросов()) > доКнопки);
 check('после перезапроса добавленной в ленте нет', !(await карточки()).includes(String(первая)));
 check('маршрут сохранён с новой точкой', await js(`JSON.parse(localStorage.getItem('route')||'[]').some(function(p){ return String(p.id) === '${первая}'; })`));
 

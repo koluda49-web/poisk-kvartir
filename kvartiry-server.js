@@ -3612,19 +3612,23 @@ function парыМаршрута(p){
     .slice(0, 12);
 }
 
-// Считает открытый маршрутизатор OSRM; ответ держим сутки — дороги меняются
-// реже, чем цены на квартиры. OSRM_URL — чтобы в проверке подставить
-// неработающий адрес и посмотреть, что будет без него.
+// Считает открытый маршрутизатор OSRM; ответ с дорогой держим сутки — дороги
+// меняются реже, чем цены на квартиры. OSRM_URL — чтобы в проверке подставить
+// свой адрес и посмотреть, что будет без настоящего маршрутизатора.
 const OSRM_URL = process.env.OSRM_URL || 'https://router.project-osrm.org';
+const СЧЁТ_ДОРОГ = { osrm: 0, поПути: 0 };   // сколько раз правда считали — для проверки кэша
 async function маршрутПоДорогам(пары){
   const ключ = 'osrm|' + пары.map(c => c[0].toFixed(5) + ',' + c[1].toFixed(5)).join(';');
   return cached(ключ, async ()=>{
+    СЧЁТ_ДОРОГ.osrm++;
     const coords = пары.map(c => c[1] + ',' + c[0]).join(';');
     const url = OSRM_URL + '/route/v1/driving/' + coords + '?overview=full&geometries=geojson';
     // без ответа дольше 10 с ждать нечего: страница покажет прямые
     const j = await (await fetch(url, {headers:{'User-Agent':UA}, signal: AbortSignal.timeout(10000)})).json();
     const r = j && j.routes && j.routes[0];
-    if(!r) return { ok:false };
+    // Маршрута нет — чаще всего это отказ публичного OSRM («TooManyRequests»
+    // с кодом 200). Бросаем, а не возвращаем: иначе отказ пролежал бы в кэше сутки.
+    if(!r) throw new Error('OSRM без маршрута: ' + String(j && j.code || ''));
     return { ok:true,
              km: Math.round(r.distance / 100) / 10,
              minutes: Math.round(r.duration / 60),
@@ -3638,26 +3642,39 @@ async function маршрутПоДорогам(пары){
 }
 
 // Места «по пути»: не дальше 5 км от дороги, ближайшие первыми, до 12.
-// Без OSRM считаем от прямых между точками — пусть грубее, но лента не пропадает.
+// Кэш свой, а не cached(): там пустой список считается неудачей и живёт
+// минуты, а «рядом с дорогой ничего нет» — такой же ответ, как любой другой.
+// По дорогам ответ держим 6 ч. Без OSRM считаем от прямых между точками —
+// пусть грубее, но лента не пропадает; такой ответ держим 10 мин, чтобы
+// потом попробовать дорогу снова.
+const ПО_ПУТИ_КЭШ = new Map(), ПО_ПУТИ_ИДЁТ = new Map();
+const ПО_ПУТИ_ЖИВЁТ = 6 * 60 * 60 * 1000, ПО_ПУТИ_ПРЯМЫЕ = 10 * 60 * 1000, ПО_ПУТИ_МАКС = 500;
 async function местаПоПути(пары, skip){
   const пропустить = String(skip || '').split(',').map(x => x.trim())
     .filter(x => x && x.length <= 40).slice(0, 40).sort();
   const ключ = 'near|' + пары.map(c => c[0].toFixed(4) + ',' + c[1].toFixed(4)).join(';')
     + '|' + пропустить.join(',');
-  let поПрямым = false;
-  const ответ = await cached(ключ, async ()=>{
-    let линия = null;
+  const есть = ПО_ПУТИ_КЭШ.get(ключ);
+  if(есть && Date.now() - есть.at <= есть.ttl) return есть.data;
+  if(ПО_ПУТИ_ИДЁТ.has(ключ)) return ПО_ПУТИ_ИДЁТ.get(ключ);
+  const p = (async ()=>{
     try{
-      const d = await маршрутПоДорогам(пары);
-      if(d && d.ok && Array.isArray(d.line) && d.line.length > 1) линия = d.line;
-    }catch(e){}
-    if(!линия){ линия = пары; поПрямым = true; }
-    return { ok:true, items: ближеКЛинии(await placesRaw(), линия, пары, пропустить) };
-  }, 6 * 60 * 60 * 1000);
-  // Ответ по прямым держим, только пока OSRM не ответит: следующий запрос
-  // попробует дорогу снова (сам OSRM без ответа в кэш не попадает).
-  if(поПрямым) SEARCH_CACHE.delete(ключ);
-  return ответ;
+      СЧЁТ_ДОРОГ.поПути++;
+      let линия = null;
+      try{
+        const d = await маршрутПоДорогам(пары);
+        if(d && d.ok && Array.isArray(d.line) && d.line.length > 1) линия = d.line;
+      }catch(e){}
+      const data = { ok:true, items: ближеКЛинии(await placesRaw(), линия || пары, пары, пропустить) };
+      ПО_ПУТИ_КЭШ.delete(ключ);
+      ПО_ПУТИ_КЭШ.set(ключ, { at: Date.now(), ttl: линия ? ПО_ПУТИ_ЖИВЁТ : ПО_ПУТИ_ПРЯМЫЕ, data });
+      // Map помнит порядок вставки: первым идёт самый старый
+      while(ПО_ПУТИ_КЭШ.size > ПО_ПУТИ_МАКС) ПО_ПУТИ_КЭШ.delete(ПО_ПУТИ_КЭШ.keys().next().value);
+      return data;
+    } finally { ПО_ПУТИ_ИДЁТ.delete(ключ); }
+  })();
+  ПО_ПУТИ_ИДЁТ.set(ключ, p);
+  return p;
 }
 
 function ближеКЛинии(все, линия, пары, пропустить){
@@ -4002,11 +4019,14 @@ async function marshrutPage(ids, опции){
     + 'async function поПути(){if(Т.length<2)return;var к=ключПоПути();'
     +   'if(к===ПО_ПУТИ.к){показатьПоПути();return;}'
     +   'if(к===поПутиЗапрос)return; поПутиЗапрос=к;'
-    +   'try{var d=await (await fetch("/api/route/near?"+к)).json();'
-    +     'if(к!==поПутиЗапрос)return;'
-    +     'ПО_ПУТИ={к:к,items:(d&&d.ok&&Array.isArray(d.items))?d.items:[]};'
+    +   'var d=null;try{d=await (await fetch("/api/route/near?"+к)).json();}'
     // сбой сети — не запоминаем, при следующей правке спросим снова
-    +   '}catch(e){if(к===поПутиЗапрос)поПутиЗапрос="";return;}'
+    +   'catch(e){if(к===поПутиЗапрос)поПутиЗапрос="";return;}'
+    +   'if(к===поПутиЗапрос)поПутиЗапрос="";'
+    // Пока ждали ответ, маршрут могли поменять и вернуть назад — к тому,
+    // для которого лента уже на экране. Ответ не для нынешнего маршрута не берём.
+    +   'if(к!==ключПоПути())return;'
+    +   'ПО_ПУТИ={к:к,items:(d&&d.ok&&Array.isArray(d.items))?d.items:[]};'
     +   'показатьПоПути();}'
     // Уже добавленные точки убираем сразу, не дожидаясь нового ответа.
     + 'function показатьПоПути(){var с=document.getElementById("rNear"), л=document.getElementById("rNearList");'
@@ -7972,6 +7992,14 @@ http.createServer(async (req,res)=>{
     text = String(text).replace(/<[^>]+>/g,' ').replace(/&nbsp;/g,' ').replace(/\s+/g,' ').trim();
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
     res.end(JSON.stringify({text})); return;
+  }
+  // Для проверки кэша «По пути» (только DATA_TEST=1): сколько раз правда
+  // считали и что лежит в кэше. pid — проверка убеждается, что говорит со своим сервером.
+  if(process.env.DATA_TEST === '1' && u.pathname === '/api/_route-test'){
+    const записи = [...ПО_ПУТИ_КЭШ].map(([к, v]) => ({ ключ: к, ttl: v.ttl, мест: v.data.items.length }));
+    const osrmКлючи = [...SEARCH_CACHE.keys()].filter(к => к.startsWith('osrm|'));
+    res.writeHead(200, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+    res.end(JSON.stringify({ pid: process.pid, счёт: СЧЁТ_ДОРОГ, записи, osrmКлючи })); return;
   }
   // Служебный вход для проверки хранилища. Существует только при DATA_TEST=1:
   // на рабочем сайте любой мог бы писать через него что угодно.
