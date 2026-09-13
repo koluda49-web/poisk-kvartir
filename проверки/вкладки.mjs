@@ -132,8 +132,8 @@ check('во вкладке мест видна только заглушка «�
       'уведомления: ' + onPlaces.sub + ', предложить точку: ' + onPlaces.pl);
 
 const after = await js("(function(){ document.querySelector('#plBtn').click();"
-  + " return document.querySelector('#plBtn').textContent; })()");
-check('кнопка отвечает на нажатие', /Записали/.test(after || ''), 'на кнопке: ' + after);
+  + " var f = document.querySelector('#plForm'); return !!f && f.offsetParent !== null; })()");
+check('кнопка «Предложить точку» раскрывает форму', after === true, 'форма видна: ' + after);
 
 // ── кнопка «Показать все варианты в области» ────────
 // Кнопка обещает все варианты. Если оставить прежние фильтры человека —

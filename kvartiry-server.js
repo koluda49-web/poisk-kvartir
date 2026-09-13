@@ -633,6 +633,9 @@ function statsPage(){
     '.warn{background:#fff4ee;border:1px solid #ffd3bd;border-radius:12px;padding:12px 14px;font-size:14px;margin-top:10px}.istoch{background:#fff;border:1px solid #e2e5ea;border-radius:14px;padding:12px 16px;margin:10px 0 16px;font-size:14px}.istoch span{display:inline-block;padding:2px 10px;border-radius:999px;font-size:13px;margin-right:6px}.istoch span.on{background:#e8f5ee;color:#1a7f4b}.istoch span.off{background:#fdeceb;color:#b3261e;font-weight:700}.istoch a{display:inline-block;margin:8px 8px 0 0;padding:6px 13px;border:1px solid #e2e5ea;border-radius:999px;text-decoration:none;color:#141821;font-size:13px}.istoch a:hover{border-color:#9a3412;color:#9a3412}.istoch .note{color:#8b93a3;font-size:12.5px;margin-top:8px}' +
     '</style></head><body><div class="wrap">' +
     '<h1>Статистика сайта</h1>'
+    // Места, которые предложили посетители, — там же, где владелец и так бывает.
+    + '<p class="sub"><a href="/predlozheniya?key=' + encodeURIComponent(STATS_KEY) + '">Предложенные места</a> — ждут проверки: '
+    +   (Array.isArray(ЛЮДИ.предложения) ? ЛЮДИ.предложения.filter(function(x){ return x.status === 'новое'; }).length : 0) + '</p>'
     + '<div class="istoch">'
     +   '<b>Источники сейчас:</b> '
     +   Object.keys(ИСТОЧНИКИ).map(function(и){
@@ -747,8 +750,8 @@ function statsPage(){
       tile('Уведомления о жилье', weekA.filter(function(x){ return x.e === 'subscribe'; }).length,
            'нажали «Хочу такое»') +
       tile('Свои точки на карте', weekA.filter(function(x){ return x.e === 'place_suggest'; }).length,
-           'нажали «Предложить точку»') +
-    '</div><p class="note">Обе кнопки пока заглушки. Цифры показывают, что делать раньше.</p></div>' +
+           'открыли форму «Предложить точку»') +
+    '</div><p class="note">«Хочу такое» пока заглушка: цифра показывает, скольким это нужно.</p></div>' +
 
     '<h2>Последние события</h2><div class="card"><table class="log">' +
       '<tr><td><b>когда</b></td><td><b>что</b></td><td><b>откуда</b></td><td><b>устр.</b></td><td><b>подробности</b></td></tr>' +
@@ -1912,6 +1915,62 @@ const ПРАВКИ_ТОЧЕК = {
   }
 };
 
+// ── Места от читателей ───────────────────────────────────────────────────
+// Посетитель предлагает место формой на главной, владелец смотрит его на
+// /predlozheniya и одним нажатием добавляет на сайт — без правки кода и без
+// развёртывания. Оба списка живут в постоянном хранилище: диск Render
+// стирается при каждом развёртывании, а предложение или одобренное место
+// пропасть не должны.
+//
+// Слияние по id записи. Правило хранилища: копия из GitHub — правда, а наши
+// записи до её загрузки — изменения поверх основы. Запись, которую мы
+// поменяли (статус) или добавили после основы, берём свою; запись, которую
+// мы убрали после основы, не возвращаем; всё остальное — из GitHub.
+// Чистая функция: зависит только от аргументов, аргументы не меняет.
+// Не массив или пустые записи (файл поправили руками) — не падаем, пропускаем.
+const списокЗаписей = v => (Array.isArray(v) ? v : []).filter(r => r && typeof r === 'object');
+function слитьПоId(изGitHub, доЗагрузки, основа){
+  const гх = списокЗаписей(изGitHub);
+  if(!Array.isArray(доЗагрузки)) return гх;          // своих записей не было
+  доЗагрузки = списокЗаписей(доЗагрузки);
+  const было = new Map(списокЗаписей(основа).map(r => [String(r.id), JSON.stringify(r)]));
+  const мои = new Map(доЗагрузки.map(r => [String(r.id), r]));
+  const менял = к => мои.has(к) && было.get(к) !== JSON.stringify(мои.get(к));
+  const итог = [], взято = new Set();
+  гх.forEach(function(r){
+    const к = String(r.id);
+    взято.add(к);
+    if(менял(к)) итог.push(мои.get(к));               // своё изменение побеждает
+    else if(было.has(к) && !мои.has(к)) return;         // убрали у себя — не возвращаем
+    else итог.push(r);
+  });
+  // Своих записей нет в GitHub: новые (или изменённые) — добавить; не
+  // тронутые с основы — значит, их там убрали, так и оставляем.
+  доЗагрузки.forEach(function(r){
+    const к = String(r.id);
+    if(!взято.has(к) && менял(к)){ итог.push(r); взято.add(к); }
+  });
+  return итог;
+}
+const ЛЮДИ = {};   // читать всегда через ЛЮДИ.x: после слияния массив заменяется
+ЛЮДИ.предложения = списокЗаписей(подключитьДанные('предложения', [], function(гх, до, основа){
+  return (ЛЮДИ.предложения = слитьПоId(гх, до, основа));
+}));
+ЛЮДИ.места = списокЗаписей(подключитьДанные('места-от-людей', [], function(гх, до, основа){
+  return (ЛЮДИ.места = слитьПоId(гх, до, основа));
+}));
+function сохранитьЛюдей(что, список){
+  ЛЮДИ[что] = список;
+  записатьДанные(что === 'места' ? 'места-от-людей' : 'предложения', список);
+}
+// Одобренные места — в том же виде, что EXTRA_PLACES. Битую запись
+// (руками поправленный файл) пропускаем, чтобы не уронить весь список мест.
+function местаОтЛюдей(){
+  return (Array.isArray(ЛЮДИ.места) ? ЛЮДИ.места : [])
+    .filter(p => p && p.id && p.name && isFinite(p.lat) && isFinite(p.lng));
+}
+function своиМеста(){ return EXTRA_PLACES.concat(местаОтЛюдей()); }
+
 const KUDIN = 'https://kudin.by';
 const PLACES_TTL = 6 * 60 * 60 * 1000;   // список памятников меняется раз в месяцы
 const DETAIL_TTL = 24 * 60 * 60 * 1000;
@@ -2561,14 +2620,16 @@ async function placesRaw(){
     return clean.concat(EXTRA_PLACES);
   }, PLACES_TTL);
   // Привязку делаем поверх кэша, а не внутри: иначе новый файл ждал бы
-  // шести часов, пока справочник перечитается.
-  return attachOwn(raw);
+  // шести часов, пока справочник перечитается. Места от читателей — тоже
+  // поверх: одобренное появляется сразу, и ради него не надо заново ходить
+  // в kudin.by (не ответит — сброшенный кэш оставил бы сайт без мест).
+  return attachOwn(raw.concat(местаОтЛюдей()));
 }
 
 // короткое описание одной точки; полный текст остаётся на kudin.by
 async function placeDetail(id){
   // у собственных точек описание своё, ходить за ним некуда
-  const own = EXTRA_PLACES.find(p => String(p.id) === String(id));
+  const own = своиМеста().find(p => String(p.id) === String(id));
   if(own) return { id: own.id, name: own.name, years: '', addr: own.addr,
                    text: own.text, full: false, pics: own.pic ? [own.pic] : [], more: own.src || '' };
   const правка = ПРАВКИ_ТОЧЕК[id];
@@ -3000,7 +3061,7 @@ async function mestoPageBuild(id){
     placeDetail(id).catch(() => ({ text:'', years:'', pics:[], more: KUDIN + '/?point=' + id })),
     stayNearPoint(p.lat, p.lng, 30, ''),
   ]);
-  const своё = EXTRA_PLACES.find(x => String(x.id) === String(id));
+  const своё = своиМеста().find(x => String(x.id) === String(id));
   const текст = (своё && своё.text) || d.text || '';
   const жильё = рядом.items.slice(0, 8);
   const цены = рядом.items.map(x => x.price).filter(x => x > 0).sort((a,b)=>a-b);
@@ -6142,6 +6203,14 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
 }
 .sub-btn:disabled{opacity:.6;cursor:default;background:var(--surface-3);color:var(--txt-2)}
 .sub-ok{margin-top:10px;font-size:14px;color:var(--txt-2)}
+.pl-form{text-align:left;max-width:560px;margin:14px auto 0;display:grid;gap:12px}
+.pl-f{display:grid;gap:5px;font-size:14px;color:var(--txt-2)}
+.pl-form input,.pl-form textarea{font:inherit;font-size:15px;color:var(--txt);background:var(--surface);
+  border:1px solid var(--line-strong);border-radius:var(--radius-sm);padding:9px 11px;width:100%;box-sizing:border-box}
+.pl-form textarea{resize:vertical}
+.pl-map{height:240px;border:1px solid var(--line);border-radius:var(--radius-sm);cursor:crosshair}
+.pl-form .sub-btn{justify-self:start}
+.pl-trap{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
 @media (max-width:639px){
   .ftoggle{display:flex}
   .bar.hid{display:none}
@@ -6433,12 +6502,24 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
   </div>
 
     <div class="sub-box" id="plBox" style="display:none">
-    <div class="soon">Скоро</div>
     <h3>Знаете место, которого здесь нет?</h3>
     <p>Пришлёте название и координаты — проверим и добавим на карту. Особенно ждём то,
        что не найдёшь в путеводителях: заброшки, валуны, старые мосты, смотровые точки.</p>
-    <button id="plBtn" class="sub-btn" type="button">Предложить точку</button>
-    <div class="sub-ok" id="plOk"></div>
+    <button id="plBtn" class="sub-btn" type="button" aria-expanded="false" aria-controls="plForm">Предложить точку</button>
+    <form id="plForm" class="pl-form" style="display:none" novalidate>
+      <label class="pl-f">Название
+        <input id="plName" maxlength="80" autocomplete="off"></label>
+      <label class="pl-f">Что это и чем интересно
+        <textarea id="plText" maxlength="1000" rows="4"></textarea></label>
+      <div class="pl-f">Где — нажмите на карту (метку можно перетащить) или впишите координаты
+        <div id="plMap" class="pl-map"></div>
+        <input id="plCoord" inputmode="decimal" autocomplete="off" placeholder="53.99, 25.38" aria-label="Координаты"></div>
+      <label class="pl-f">Как с вами связаться — если захотите
+        <input id="plContact" maxlength="100" autocomplete="off"></label>
+      <label class="pl-trap" aria-hidden="true">Сайт <input id="plSite" name="site" tabindex="-1" autocomplete="off"></label>
+      <button id="plSend" class="sub-btn" type="submit">Отправить</button>
+      <div class="fb-status" id="plStatus" role="status"></div>
+    </form>
   </div>
 
     <div class="sub-box">
@@ -7198,15 +7279,88 @@ $('#fToggle').addEventListener('click', function(){
 });
 if(isNarrow()) filtersCollapsed(true);
 
-// ── Заглушка подписки ─────────────────────────────────────────────────────
+// ── «Предложить место» ────────────────────────────────────────────────────
+// Сервер проверяет и хранит предложение; письмо уходит тем же путём, что
+// «Оставить пожелание», — чтобы о новом месте узнать сразу, не открывая сайт.
+// Координаты понимаем «53.99, 25.38» и «53,99 25,38». Без регулярок с обратной
+// косой: страница — шаблонная строка, и косая черта в ней съедается.
+function plCoords(q){
+  var s = String(q || '').trim();
+  if(!s) return null;
+  if(s.indexOf('.') < 0){
+    var цифра = function(c){ return c >= '0' && c <= '9'; }, out = '';
+    for(var i = 0; i < s.length; i++){
+      out += (s.charAt(i) === ',' && цифра(s.charAt(i-1)) && цифра(s.charAt(i+1))) ? '.' : s.charAt(i);
+    }
+    s = out;
+  }
+  var ч = s.split(/[ ,;]+/).filter(Boolean);
+  if(ч.length !== 2) return null;
+  var a = Number(ч[0]), b = Number(ч[1]);
+  if(!isFinite(a) || !isFinite(b) || Math.abs(a) > 90 || Math.abs(b) > 180) return null;
+  return [a, b];
+}
+function plStatus(текст, вид){ var st = $('#plStatus'); st.className = 'fb-status' + (вид ? ' ' + вид : ''); st.textContent = текст; }
+function plPin(lat, lng, вПоле){
+  var m = window.__plMap;
+  if(!m) return;
+  if(!window.__plPin){
+    window.__plPin = L.marker([lat, lng], { draggable: true }).addTo(m);
+    window.__plPin.on('dragend', function(){ var p = window.__plPin.getLatLng(); $('#plCoord').value = p.lat.toFixed(5) + ', ' + p.lng.toFixed(5); });
+  } else window.__plPin.setLatLng([lat, lng]);
+  if(вПоле) $('#plCoord').value = lat.toFixed(5) + ', ' + lng.toFixed(5);
+}
 $('#plBtn').addEventListener('click', function(){
-  this.disabled = true;
-  this.textContent = 'Записали';
-  $('#plOk').innerHTML = 'Спасибо! Форма ещё в разработке — считаем, скольким она нужна. '
-    + 'А пока напишите точку через <b>«Оставить пожелание или дополнение»</b> внизу страницы: '
-    + 'это письмо дойдёт до нас сразу.';
+  var f = $('#plForm'), открыть = f.style.display === 'none';
+  f.style.display = открыть ? '' : 'none';
+  this.setAttribute('aria-expanded', String(открыть));
+  if(!открыть) return;
   if(window.__T) window.__T('place_suggest', {});
+  // Карту строим, когда форма уже видна: у скрытого блока нет размера.
+  if(!window.__plMap && typeof L !== 'undefined'){
+    window.__plMap = L.map('plMap', { scrollWheelZoom: false }).setView([53.7, 27.95], 6);
+    window.__plMap.attributionControl.setPrefix('');
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(window.__plMap);
+    window.__plMap.on('click', function(e){ plPin(e.latlng.lat, e.latlng.lng, true); });
+  } else if(window.__plMap) window.__plMap.invalidateSize();
+  setTimeout(function(){ $('#plName').focus(); }, 50);
 });
+$('#plCoord').addEventListener('input', function(){
+  var c = plCoords(this.value);
+  if(c){ plPin(c[0], c[1], false); if(window.__plMap) window.__plMap.setView(c, Math.max(window.__plMap.getZoom(), 12)); }
+});
+// Человек начал исправлять — старая ошибка под формой только сбивает.
+$('#plForm').addEventListener('input', function(){ if($('#plStatus').classList.contains('err')) plStatus(''); });
+$('#plForm').addEventListener('submit', function(e){
+  e.preventDefault();
+  var name = $('#plName').value.trim(), text = $('#plText').value.trim(), contact = $('#plContact').value.trim();
+  var где = $('#plCoord').value.trim(), c = plCoords(где), ловушка = $('#plSite').value;
+  if(!name){ plStatus('Напишите название места.', 'err'); $('#plName').focus(); return; }
+  if(text.length < 10){ plStatus('Расскажите, что это и чем интересно, — хотя бы 10 знаков.', 'err'); $('#plText').focus(); return; }
+  if(!c){ plStatus(где ? 'Не понял координаты. Пример: 53.99, 25.38' : 'Отметьте место на карте или впишите координаты.', 'err'); return; }
+  var btn = $('#plSend');
+  btn.disabled = true; plStatus('Отправляю…');
+  fetch('/api/suggest', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name, text: text, lat: c[0], lng: c[1], contact: contact, site: ловушка }) })
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      btn.disabled = false;
+      if(!j || !j.ok){ plStatus((j && j.error) || 'Не удалось отправить, попробуйте позже.', 'err'); return; }
+      plStatus('Спасибо! Посмотрим и добавим', 'ok');
+      $('#plName').value = ''; $('#plText').value = ''; $('#plContact').value = ''; $('#plCoord').value = '';
+      if(window.__plPin){ window.__plPin.remove(); window.__plPin = null; }
+      if(ловушка) return;
+      // Письмо — вдобавок: предложение уже сохранено, сбой почты человеку не показываем.
+      fetch('https://formsubmit.co/ajax/' + atob(FB_TO), {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ _subject: 'Поиск жилья — предложено место', Название: name, Описание: text,
+                               Координаты: c[0] + ', ' + c[1], Контакт: contact || 'не указан' })
+      }).catch(function(){});
+    })
+    .catch(function(){ btn.disabled = false; plStatus('Не удалось отправить, попробуйте позже.', 'err'); });
+});
+
+// ── Заглушка подписки ─────────────────────────────────────────────────────
 
 $('#subBtn').addEventListener('click', function(){
   this.disabled = true;
@@ -8163,6 +8317,198 @@ window.__firstRun = 1;
 window.addEventListener('load',run);
 </script></body></html>`;
 
+// ── «Предложить место»: приём и проверка ─────────────────────────────────
+// Форма открыта всем, поэтому ограничения здесь, а не в браузере: длины,
+// рамка Беларуси, не больше пяти предложений в час с одного адреса и потолок
+// непроверенных — чтобы робот не набил файл, который уходит в репозиторий.
+const ПРЕДЛОЖЕНИЙ_В_ЧАС = 5, НЕПРОВЕРЕННЫХ_МАКС = 300;
+const ПРЕДЛОЖЕНИЯ_С_АДРЕСА = new Map();   // адрес → времена принятых за час (в памяти экземпляра)
+const СТАТУС_ПРЕДЛОЖЕНИЯ = { новое: 'новое', добавлено: 'добавлено', отклонено: 'отклонено' };
+
+function адресКлиента(req){
+  // За прокси Render настоящий адрес — первый в x-forwarded-for.
+  return String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()
+      || (req.socket && req.socket.remoteAddress) || '';
+}
+function читатьJSON(req, предел){
+  return new Promise(function(готово){
+    let тело = '', много = false;
+    req.on('data', c => { тело += c; if(тело.length > предел){ много = true; req.destroy(); } });
+    req.on('end', () => { if(много) return готово(null); try{ готово(JSON.parse(тело || '{}')); }catch(e){ готово(null); } });
+    req.on('close', () => готово(null));   // оборвали — второй вызов готово ничего не меняет
+  });
+}
+function ответJSON(res, код, объект){
+  res.writeHead(код, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  res.end(JSON.stringify(объект));
+}
+const строкаИз = v => typeof v === 'string' ? v.trim() : '';
+// Текст одобренного места попадает в разметку многих страниц — угловые скобки
+// выбрасываем сразу, чтобы ни одно место вывода не зависело от экранирования.
+const безСкобок = v => строкаИз(v).replace(/[<>]/g, '');
+const числоИз = v => (typeof v === 'number' || (typeof v === 'string' && v.trim() !== '')) ? Number(v) : NaN;
+
+function принятьПредложение(d, адрес){
+  if(!d || typeof d !== 'object') return { ok:false, error:'Не удалось прочитать форму — обновите страницу.' };
+  // Ловушка: поле скрыто от людей, его заполняет только робот. Отвечаем как
+  // обычно, чтобы он не понял, что его раскусили, но ничего не храним.
+  if(строкаИз(d.site)) return { ok:true };
+  const name = строкаИз(d.name), text = строкаИз(d.text), contact = строкаИз(d.contact);
+  if(!name) return { ok:false, error:'Напишите название места.' };
+  if(name.length > 80) return { ok:false, error:'Название — не длиннее 80 знаков.' };
+  if(text.length < 10) return { ok:false, error:'Расскажите, что это и чем интересно, — хотя бы 10 знаков.' };
+  if(text.length > 1000) return { ok:false, error:'Описание — не длиннее 1000 знаков.' };
+  const lat = числоИз(d.lat), lng = числоИз(d.lng);
+  if(!isFinite(lat) || !isFinite(lng)) return { ok:false, error:'Отметьте место на карте или впишите координаты.' };
+  if(!(lat >= 51 && lat <= 56.5 && lng >= 23 && lng <= 33))
+    return { ok:false, error:'Эта точка за пределами Беларуси — проверьте координаты.' };
+  if(contact.length > 100) return { ok:false, error:'Контакт — не длиннее 100 знаков.' };
+  const сейчас = Date.now();
+  const недавние = (ПРЕДЛОЖЕНИЯ_С_АДРЕСА.get(адрес) || []).filter(t => сейчас - t < 60 * 60 * 1000);
+  if(недавние.length >= ПРЕДЛОЖЕНИЙ_В_ЧАС)
+    return { ok:false, error:'С одного адреса — не больше пяти предложений в час. Попробуйте позже.' };
+  const список = Array.isArray(ЛЮДИ.предложения) ? ЛЮДИ.предложения : [];
+  if(список.filter(x => x.status === СТАТУС_ПРЕДЛОЖЕНИЯ.новое).length >= НЕПРОВЕРЕННЫХ_МАКС)
+    return { ok:false, error:'Сейчас на проверке слишком много предложений. Попробуйте через пару дней.' };
+  let id = 's' + сейчас.toString(36);
+  while(список.some(x => x.id === id)) id += 'x';
+  недавние.push(сейчас);
+  ПРЕДЛОЖЕНИЯ_С_АДРЕСА.set(адрес, недавние);
+  if(ПРЕДЛОЖЕНИЯ_С_АДРЕСА.size > 5000){
+    for(const [к, v] of ПРЕДЛОЖЕНИЯ_С_АДРЕСА) if(!v.some(t => сейчас - t < 60 * 60 * 1000)) ПРЕДЛОЖЕНИЯ_С_АДРЕСА.delete(к);
+  }
+  сохранитьЛюдей('предложения', список.concat([{ id, t: сейчас, name, text,
+    lat: Math.round(lat * 1e6) / 1e6, lng: Math.round(lng * 1e6) / 1e6, contact, status: СТАТУС_ПРЕДЛОЖЕНИЯ.новое }]));
+  return { ok:true };
+}
+
+// Место появилось или пропало: страницы, собранные из списка мест, — заново.
+// Сам список (placesRaw) подмешивает места от читателей поверх кэша и
+// сбрасывать его не нужно.
+function сброситьКэшМест(id){
+  MESTO_HTML.delete(String(id));
+  ПО_ПУТИ_КЭШ.clear();
+  МАРШРУТ_HTML.clear();
+}
+
+function одобритьПредложение(d){
+  // Номер нового места считаем от слитых данных. Пока копия из GitHub не
+  // пришла, в памяти может не быть мест, добавленных прошлым экземпляром, —
+  // номер совпал бы, и при слиянии одно из мест пропало бы.
+  if(ХРАНИЛИЩЕ.включено && !записьИмени('места-от-людей').сверено)
+    return { ok:false, error:'Места ещё загружаются из GitHub — попробуйте через минуту.' };
+  const s = (ЛЮДИ.предложения || []).find(x => x.id === строкаИз(d && d.id));
+  if(!s) return { ok:false, error:'Предложение не найдено — обновите страницу.' };
+  if(s.status === СТАТУС_ПРЕДЛОЖЕНИЯ.добавлено) return { ok:false, error:'Это место уже добавлено.' };
+  const name = безСкобок(d.name).slice(0, 120), text = безСкобок(d.text).slice(0, 2000);
+  if(!name) return { ok:false, error:'Нужно название.' };
+  // Адрес без города или района («ул. Лесная») не помогает: по нему место не
+  // найти поиском и не понять, где оно. Такой же порядок, как у своих точек.
+  if(!безСкобок(d.addr)) return { ok:false, error:'Впишите адрес — хотя бы город или район.' };
+  const места = Array.isArray(ЛЮДИ.места) ? ЛЮДИ.места : [];
+  const id = Math.max.apply(null, [920000].concat(места.map(p => +p.id).filter(n => n >= 920000 && n < 930000))) + 1;
+  const место = { id, name, lat: s.lat, lng: s.lng, addr: безСкобок(d.addr).slice(0, 150),
+                  cat: безСкобок(d.cat).slice(0, 60) || 'место', group: 'От читателей', pic: '', text };
+  сохранитьЛюдей('места', места.concat([место]));
+  сохранитьЛюдей('предложения', ЛЮДИ.предложения.map(x => x.id === s.id ? Object.assign({}, x, { status: СТАТУС_ПРЕДЛОЖЕНИЯ.добавлено }) : x));
+  сброситьКэшМест(id);
+  return { ok:true, id };
+}
+function отклонитьПредложение(d){
+  const s = (ЛЮДИ.предложения || []).find(x => x.id === строкаИз(d && d.id));
+  if(!s) return { ok:false, error:'Предложение не найдено — обновите страницу.' };
+  сохранитьЛюдей('предложения', ЛЮДИ.предложения.map(x => x.id === s.id ? Object.assign({}, x, { status: СТАТУС_ПРЕДЛОЖЕНИЯ.отклонено }) : x));
+  return { ok:true };
+}
+function убратьМесто(d){
+  const id = +(d && d.placeId);
+  const места = Array.isArray(ЛЮДИ.места) ? ЛЮДИ.места : [];
+  if(!места.some(p => +p.id === id)) return { ok:false, error:'Такого места уже нет — обновите страницу.' };
+  сохранитьЛюдей('места', места.filter(p => +p.id !== id));
+  сброситьКэшМест(id);
+  return { ok:true };
+}
+
+// Кнопки страницы проверки. Функция уходит в страницу своим текстом
+// (toString), поэтому снаружи ей ничего не видно — всё берёт из разметки.
+function скриптПроверкиМест(){
+  var ключ = new URLSearchParams(location.search).get('key') || '';
+  function отправить(что, тело, кнопка){
+    var ст = кнопка.closest('.card').querySelector('.st');
+    кнопка.disabled = true; ст.className = 'st'; ст.textContent = 'Сохраняю…';
+    fetch('/api/suggest/' + что + '?key=' + encodeURIComponent(ключ), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(тело) })
+      .then(function(r){ return r.json(); })
+      .then(function(j){ if(!j.ok) throw new Error(j.error || 'Не получилось.'); location.reload(); })
+      .catch(function(e){ кнопка.disabled = false; ст.className = 'st err'; ст.textContent = e.message; });
+  }
+  document.addEventListener('click', function(e){
+    var b = e.target.closest('button[data-act]');
+    if(!b) return;
+    e.preventDefault();
+    var к = b.closest('.card'), поле = function(n){ return к.querySelector('[name="' + n + '"]').value; };
+    if(b.dataset.act === 'approve') отправить('approve', { id: к.dataset.id, name: поле('n'), cat: поле('cat'), addr: поле('addr'), text: поле('text') }, b);
+    if(b.dataset.act === 'reject') отправить('reject', { id: к.dataset.id }, b);
+    if(b.dataset.act === 'remove' && confirm('Убрать «' + к.dataset.name + '» с сайта?')) отправить('remove', { placeId: +к.dataset.id }, b);
+  });
+}
+
+function страницаПредложений(){
+  const дата = t => new Date(t).toLocaleString('ru-RU', { timeZone: 'Europe/Minsk', day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+  const все = (Array.isArray(ЛЮДИ.предложения) ? ЛЮДИ.предложения : []).slice()
+    .sort((a, b) => (a.status === 'новое' ? 0 : 1) - (b.status === 'новое' ? 0 : 1) || b.t - a.t);
+  const новые = все.filter(x => x.status === 'новое'), разобранные = все.filter(x => x.status !== 'новое').slice(0, 50);
+  const карта = x => 'https://yandex.by/maps/?pt=' + x.lng + ',' + x.lat + '&z=16&l=map';
+  const шапка = x => '<h3>' + esc(x.name) + '</h3>'
+    + '<p class="meta">' + дата(x.t) + ' · <a href="' + esc(карта(x)) + '" target="_blank" rel="noopener">открыть на карте</a>'
+    + ' · ' + x.lat + ', ' + x.lng + '</p>'
+    + '<p class="txt">' + esc(x.text) + '</p>'
+    + '<p class="meta">Контакт: ' + (x.contact ? esc(x.contact) : 'не оставили') + '</p>';
+  const карточкаНового = x => '<div class="card" data-id="' + esc(x.id) + '">' + шапка(x)
+    + '<form class="add"><b>Добавить на сайт</b>'
+    +   '<label>Название<input name="n" maxlength="120" value="' + esc(x.name) + '"></label>'
+    +   '<label>Категория<input name="cat" maxlength="60" value="место"></label>'
+    +   '<label>Адрес — город или район<input name="addr" maxlength="150" value="" placeholder="например, д. Лесная, Минский р-н"></label>'
+    +   '<label>Текст<textarea name="text" rows="4" maxlength="2000">' + esc(x.text) + '</textarea></label>'
+    +   '<div class="btns"><button type="button" class="main" data-act="approve">Добавить на сайт</button>'
+    +   '<button type="button" data-act="reject">Отклонить</button></div>'
+    + '</form><div class="st"></div></div>';
+  const добавленные = местаОтЛюдей().slice().sort((a, b) => b.id - a.id);
+  return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<meta name="robots" content="noindex,nofollow"><title>Предложенные места</title><style>'
+    + 'body{margin:0;background:#faf7f3;color:#1c1917;font:15px/1.5 -apple-system,Segoe UI,Roboto,sans-serif}'
+    + '.wrap{max-width:780px;margin:0 auto;padding:20px 16px 60px}'
+    + 'h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:30px 0 10px}h3{font-size:17px;margin:0 0 2px}'
+    + 'a{color:#9a3412}.sub,.meta{color:#78716c;font-size:13px;margin:0 0 6px}.txt{margin:6px 0 8px;white-space:pre-wrap}'
+    + '.card{background:#fff;border:1px solid #e9e2d8;border-radius:14px;padding:14px 16px;margin:0 0 12px}'
+    + '.add{border-top:1px solid #e9e2d8;margin-top:10px;padding-top:10px;display:grid;gap:8px}'
+    + 'label{display:grid;gap:2px;font-size:13px;color:#57534e}'
+    + 'input,textarea{font:inherit;color:inherit;border:1px solid #e9e2d8;border-radius:8px;padding:7px 9px;background:#fff}'
+    + '.btns{display:flex;gap:8px;flex-wrap:wrap}'
+    + 'button{font:inherit;border:1px solid #e9e2d8;background:#fff;color:#1c1917;border-radius:8px;padding:8px 14px;cursor:pointer}'
+    + 'button.main{background:#9a3412;border-color:#9a3412;color:#fff;font-weight:600}button:disabled{opacity:.6}'
+    + '.st{font-size:13px;margin-top:6px}.st.err{color:#b42318}'
+    + '.row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}'
+    + '.tag{font-size:12px;border:1px solid #e9e2d8;border-radius:999px;padding:1px 8px;color:#57534e}'
+    + '</style></head><body><div class="wrap">'
+    + '<h1>Предложенные места</h1>'
+    + '<p class="sub">' + (новые.length ? ('Ждут проверки: ' + новые.length) : 'Новых предложений нет')
+    +   ' · <a href="/stats?key=' + encodeURIComponent(STATS_KEY) + '">статистика</a></p>'
+    + (ХРАНИЛИЩЕ.включено ? '' : '<p class="sub">Хранилище GitHub выключено (нет GH_TOKEN): после развёртывания всё это пропадёт.</p>')
+    + новые.map(карточкаНового).join('')
+    + '<h2>Уже на сайте</h2>'
+    + (добавленные.length ? добавленные.map(p => '<div class="card" data-id="' + p.id + '" data-name="' + esc(p.name) + '"><div class="row">'
+        + '<div><h3><a href="/mesto/' + p.id + '-' + slugify(p.name) + '" target="_blank" rel="noopener">' + esc(p.name) + '</a></h3>'
+        + '<p class="meta">' + esc([p.cat, p.addr].filter(Boolean).join(' · ')) + ' · №' + p.id + '</p></div>'
+        + '<button type="button" data-act="remove">Убрать с сайта</button></div><div class="st"></div></div>').join('')
+      : '<p class="sub">Пока ни одного.</p>')
+    + (разобранные.length ? ('<h2>Разобранные</h2>' + разобранные.map(x => '<div class="card"><div class="row"><h3>' + esc(x.name) + '</h3>'
+        + '<span class="tag">' + esc(x.status) + '</span></div><p class="meta">' + дата(x.t) + ' · <a href="' + esc(карта(x))
+        + '" target="_blank" rel="noopener">на карте</a></p></div>').join('')) : '')
+    + '</div><script>(' + скриптПроверкиМест.toString() + ')();</' + 'script></body></html>';
+}
+
 // Сбой в обработке одного запроса не должен ронять весь сервис
 process.on('uncaughtException',  e => console.log('Непойманная ошибка:', e && e.message));
 process.on('unhandledRejection', e => console.log('Необработанный отказ:', e && e.message));
@@ -8369,6 +8715,28 @@ http.createServer(async (req,res)=>{
               return м.split(' ')[0].toUpperCase() + '=' + (м.indexOf('скрыт') > 0 ? 'off' : 'on');
             }).join(', ') + ' и перезапустите.')
         : '\n\nЧтобы скрыть: /istochnik?key=…&realt=off\nЧтобы вернуть: …&realt=on')); return;
+  }
+  // «Предложить место»: форма на главной шлёт сюда.
+  if(u.pathname === '/api/suggest' && req.method === 'POST'){
+    const d = await читатьJSON(req, 8000);
+    ответJSON(res, 200, принятьПредложение(d, адресКлиента(req))); return;
+  }
+  // Кнопки страницы проверки — только с ключом.
+  const действиеПроверки = { '/api/suggest/approve': одобритьПредложение,
+                             '/api/suggest/reject': отклонитьПредложение,
+                             '/api/suggest/remove': убратьМесто }[u.pathname];
+  if(действиеПроверки && req.method === 'POST'){
+    if(u.searchParams.get('key') !== STATS_KEY){ ответJSON(res, 403, { ok:false, error:'Нужен ключ.' }); return; }
+    const d = await читатьJSON(req, 8000);
+    ответJSON(res, 200, d ? действиеПроверки(d) : { ok:false, error:'Не удалось прочитать запрос.' }); return;
+  }
+  if(u.pathname === '/predlozheniya'){
+    if(u.searchParams.get('key') !== STATS_KEY){
+      res.writeHead(403, {'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store','X-Robots-Tag':'noindex'});
+      res.end('Нужен ключ: /predlozheniya?key=…'); return;
+    }
+    res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','X-Robots-Tag':'noindex'});
+    res.end(страницаПредложений()); return;
   }
   if(u.pathname === '/stats'){
     if(u.searchParams.get('key') !== STATS_KEY){
