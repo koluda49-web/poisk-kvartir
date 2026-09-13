@@ -6168,7 +6168,7 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
     </a>
     <span class="kicker"><span class="dot"></span>Kufar · Realt · Flatbook · 101Hotels</span>
   </header>
-  <h1>Жильё на сутки, <span class="accent">без лишних вкладок</span></h1>
+  <h1>Жильё на сутки и маршруты по Беларуси, <span class="accent">без&nbsp;лишних вкладок</span></h1>
   <p class="lead">Квартиры, коттеджи и усадьбы на сутки из Kufar, Realt, Flatbook, Check-in и Kvartirka по Беларуси — плюс отели и жильё России с 101Hotels. Всё в одной ленте и на карте: настройте фильтры и найдите вариант под свою дату и бюджет.</p>
 
  </div>
