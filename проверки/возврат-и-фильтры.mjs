@@ -7,7 +7,10 @@
 //      а вернулся в список мест по Минску;
 //   3) тип жилья «любой» не выбирался вовсе;
 //   4) при нуле по типу выдача молчала, вместо того чтобы предложить другой;
-//   5) в карточке на карте не листались фотографии.
+//   5) в карточке на карте не листались фотографии;
+//   6) выбрал «Квартира», сходил на страницу места и вернулся — стало «любой»:
+//      «квартира» считалась значением по умолчанию и не попадала ни в адрес,
+//      ни в запомненные настройки, а в самой форме по умолчанию стоит «любой».
 //
 // Нужен Chrome. Сервер должен быть уже запущен.
 //   npm run проверка-возврата
@@ -109,6 +112,44 @@ try {
     check('настройки поиска жилья на месте', стало === было, было + ' → ' + стало);
   }
 
+  console.log('\n=== «Квартира» не превращается в «любой» ===');
+  {
+    await открыть('/?region=brest');
+    await js(`$('#type').value='flat'; run(); 1`);
+    for (let i = 0; i < 60; i++) { if (!/Ищу/.test(await js(`(document.querySelector('#stat')||{}).textContent`) || '')) break; await sleep(1000); }
+    await sleep(1500);
+    const адрес = await js('location.search');
+    check('«Квартира» записана в адрес — ссылкой можно поделиться', /type=flat/.test(адрес), адрес);
+    await send('Page.navigate', { url: SITE + '/mesto/244-nesvizhskij-zamok' });
+    await sleep(3000);
+    await js(`document.getElementById('back').click(); 1`);
+    for (let i = 0; i < 60; i++) { if (await js(`location.pathname === '/' && !!document.querySelector('#type')`)) break; await sleep(500); }
+    await sleep(2500);
+    const тип = JSON.parse(await js(`JSON.stringify({type:$('#type').value, region:$('#region').value})`));
+    check('вернулись со страницы места — по-прежнему «Квартира»', тип.type === 'flat' && тип.region === 'brest', JSON.stringify(тип));
+    // Тот же путь через запомненные настройки: пришли со страницы места на
+    // главную без фильтров в адресе — их подставляет byFilters.
+    await send('Page.navigate', { url: SITE + '/mesto/244-nesvizhskij-zamok' });
+    await sleep(3000);
+    await js(`(function(){ var a=document.createElement('a'); a.href='/'; document.body.appendChild(a); a.click(); })(); 1`);
+    for (let i = 0; i < 60; i++) { if (await js(`location.pathname === '/' && !!document.querySelector('#type')`)) break; await sleep(500); }
+    await sleep(2500);
+    const тип2 = await js(`$('#type').value`);
+    check('запомненные настройки тоже дают «Квартира»', тип2 === 'flat', 'тип: ' + тип2);
+    // и «любой» остаётся «любым»
+    await открыть('/?region=brest&type=flat');
+    await js(`$('#type').value='any'; run(); 1`);
+    await sleep(2500);
+    const адрес2 = await js('location.search');
+    await send('Page.navigate', { url: SITE + '/mesto/244-nesvizhskij-zamok' });
+    await sleep(3000);
+    await js(`document.getElementById('back').click(); 1`);
+    for (let i = 0; i < 60; i++) { if (await js(`location.pathname === '/' && !!document.querySelector('#type')`)) break; await sleep(500); }
+    await sleep(2500);
+    const тип3 = await js(`$('#type').value`);
+    check('«любой» после возврата остаётся «любым»', тип3 === 'any', 'тип: ' + тип3 + ', адрес был ' + адрес2);
+  }
+
   console.log('\n=== пришли из жилья через «Что посмотреть рядом» ===');
   {
     await открыть('/?region=brest&name=%D0%B8%D0%B2%D0%B0%D1%86%D0%B5%D0%B2%D0%B8%D1%87%D0%B8');
@@ -132,24 +173,39 @@ try {
     await открыть('/?region=minsk&type=flat');
     снимки.length = 0;
     await js(`setView('map'); 1`);
-    await sleep(10000);
+    // Сразу после запуска сервера снимки объявлений ещё подтягиваются —
+    // ждём, пока на карте появится метка со снимками, а не фиксированное время.
+    // Пару секунд даём карте встать: метки в кластере раскладываются не сразу.
+    await sleep(3000);
+    for (let i = 0; i < 90; i++) {
+      if (await js(`(function(){ var есть=false; window.__mlayer && window.__mlayer.eachLayer(function(l){ if(l.getPopup && l.getPopup() && /mp-ph1/.test(String(l.getPopup().getContent()||''))) есть=true; }); return есть; })()`)) break;
+      // окошки меток собираются при рисовании карты — подтянулись снимки, рисуем заново
+      if (i % 15 === 14) await js(`plotMap(false); 1`);
+      await sleep(1000);
+    }
     const открыл = await js(`(async function(){
       var сп=[]; window.__mlayer && window.__mlayer.eachLayer(function(l){ if(l.getPopup) сп.push(l); });
       if(!сп.length) return '';
       // Берём метку, у которой в окошке есть снимки: у части объявлений
       // фотографии не пришли вовсе, и листать там нечего.
       var м = null;
-      for(var i=0;i<сп.length;i++){
+      // сперва метка с несколькими снимками — иначе листание не проверить
+      for(var j=0;j<сп.length;j++){
+        if(/class="mp-ph"/.test(String(сп[j].getPopup().getContent()||''))){ м = сп[j]; break; }
+      }
+      for(var i=0;i<сп.length && !м;i++){
         var с = String(сп[i].getPopup().getContent()||'');
         if(/mp-ph1/.test(с)){ м = сп[i]; break; }
       }
       if(!м) м = сп[0];
-      await new Promise(function(res){ if(window.__mlayer.zoomToShowLayer) window.__mlayer.zoomToShowLayer(м,res); else res(); });
+      // zoomToShowLayer иногда не зовёт обратный вызов — тогда не висим, а открываем как есть
+      await new Promise(function(res){ setTimeout(res, 8000); if(window.__mlayer.zoomToShowLayer) window.__mlayer.zoomToShowLayer(м,res); else res(); });
       await new Promise(function(r){ setTimeout(r,1200); });
       м.openPopup();
       return 'да';
     })()`);
-    await sleep(6000);
+    for (let i = 0; i < 20; i++) { if (await js(`document.querySelectorAll('.leaflet-popup .mp-ph1').length > 0`)) break; await sleep(1000); }
+    await sleep(1000);
     const всего = await js(`document.querySelectorAll('.leaflet-popup .mp-ph1').length`);
     check('в карточке на карте есть фотографии', открыл === 'да' && всего > 0, 'снимков: ' + всего);
     const много = await js(`!!document.querySelector('.leaflet-popup .mp-ph')`);

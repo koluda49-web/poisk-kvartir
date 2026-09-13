@@ -8660,7 +8660,10 @@ favSave();
 // ── Фильтры в адресной строке ─────────────────────────────────────────────
 // Поиск можно скинуть ссылкой: /?region=brest&type=flat&max=50
 // В адрес пишем только то, что отличается от значений по умолчанию.
-const URL_DEFAULTS = { region:'minsk', city:'', type:'flat', rooms:'', guests:'', min:'', max:'', source:'both', sort:'price_asc' };
+// type — «любой», как первый вариант в самой форме. Раньше здесь стояло 'flat':
+// выбранная «Квартира» не попадала ни в адрес, ни в запомненные настройки,
+// и при возврате со страницы места форма показывала «любой».
+const URL_DEFAULTS = { region:'minsk', city:'', type:'any', rooms:'', guests:'', min:'', max:'', source:'both', sort:'price_asc' };
 function syncUrl(){
   try{
     const p=new URLSearchParams();
