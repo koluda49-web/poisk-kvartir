@@ -198,13 +198,19 @@ try {
         if(/mp-ph1/.test(с)){ м = сп[i]; break; }
       }
       if(!м) м = сп[0];
-      // zoomToShowLayer иногда не зовёт обратный вызов — тогда не висим, а открываем как есть
-      await new Promise(function(res){ setTimeout(res, 8000); if(window.__mlayer.zoomToShowLayer) window.__mlayer.zoomToShowLayer(м,res); else res(); });
-      await new Promise(function(r){ setTimeout(r,1200); });
-      м.openPopup();
+      window.__проверкаМетка = м;
       return 'да';
     })()`);
-    for (let i = 0; i < 20; i++) { if (await js(`document.querySelectorAll('.leaflet-popup .mp-ph1').length > 0`)) break; await sleep(1000); }
+    // Открываем окошко и ждём его. Пока карта ещё двигается (подгонка под
+    // метки), zoomToShowLayer может не позвать обратный вызов или окошко
+    // закроется следующим сдвигом — тогда пробуем ещё раз.
+    for (let i = 0; i < 40; i++) {
+      if (await js(`document.querySelectorAll('.leaflet-popup .mp-ph1').length > 0`)) break;
+      if (i % 8 === 0) await js(`(function(м){ if(!м) return 0;
+        if(window.__mlayer.zoomToShowLayer) window.__mlayer.zoomToShowLayer(м, function(){ setTimeout(function(){ м.openPopup(); }, 600); });
+        else м.openPopup(); return 1; })(window.__проверкаМетка)`);
+      await sleep(1000);
+    }
     await sleep(1000);
     const всего = await js(`document.querySelectorAll('.leaflet-popup .mp-ph1').length`);
     check('в карточке на карте есть фотографии', открыл === 'да' && всего > 0, 'снимков: ' + всего);
