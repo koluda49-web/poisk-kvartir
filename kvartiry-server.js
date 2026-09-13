@@ -3602,6 +3602,105 @@ function снимокДляСоцсетей(pic){
   return pic.charAt(0) === '/' ? (SITE_URL + encodeURI(pic)) : pic;
 }
 
+// ── Дорога маршрута ───────────────────────────────────────────────────────
+// Точки из запроса «lat,lng;lat,lng;…»: только похожие на Беларусь и соседей,
+// не больше 12 — открытый маршрутизатор длинные списки не любит.
+function парыМаршрута(p){
+  return String(p || '').split(';')
+    .map(x => x.split(',').map(Number))
+    .filter(c => c.length === 2 && c[0] > 40 && c[0] < 70 && c[1] > 15 && c[1] < 45)
+    .slice(0, 12);
+}
+
+// Считает открытый маршрутизатор OSRM; ответ держим сутки — дороги меняются
+// реже, чем цены на квартиры. OSRM_URL — чтобы в проверке подставить
+// неработающий адрес и посмотреть, что будет без него.
+const OSRM_URL = process.env.OSRM_URL || 'https://router.project-osrm.org';
+async function маршрутПоДорогам(пары){
+  const ключ = 'osrm|' + пары.map(c => c[0].toFixed(5) + ',' + c[1].toFixed(5)).join(';');
+  return cached(ключ, async ()=>{
+    const coords = пары.map(c => c[1] + ',' + c[0]).join(';');
+    const url = OSRM_URL + '/route/v1/driving/' + coords + '?overview=full&geometries=geojson';
+    // без ответа дольше 10 с ждать нечего: страница покажет прямые
+    const j = await (await fetch(url, {headers:{'User-Agent':UA}, signal: AbortSignal.timeout(10000)})).json();
+    const r = j && j.routes && j.routes[0];
+    if(!r) return { ok:false };
+    return { ok:true,
+             km: Math.round(r.distance / 100) / 10,
+             minutes: Math.round(r.duration / 60),
+             // длина каждого перегона: в списке рядом с точкой пишем её,
+             // а не расстояние по прямой — иначе шаги не сходятся с итогом
+             legs: (r.legs || []).map(l => Math.round(l.distance / 100) / 10),
+             // минуты каждого перегона — для плана дня по часам
+             legMinutes: (r.legs || []).map(l => Math.round(l.duration / 60)),
+             line: (r.geometry.coordinates || []).map(c => [c[1], c[0]]) };
+  }, 24 * 60 * 60 * 1000);
+}
+
+// Места «по пути»: не дальше 5 км от дороги, ближайшие первыми, до 12.
+// Без OSRM считаем от прямых между точками — пусть грубее, но лента не пропадает.
+async function местаПоПути(пары, skip){
+  const пропустить = String(skip || '').split(',').map(x => x.trim())
+    .filter(x => x && x.length <= 40).slice(0, 40).sort();
+  const ключ = 'near|' + пары.map(c => c[0].toFixed(4) + ',' + c[1].toFixed(4)).join(';')
+    + '|' + пропустить.join(',');
+  let поПрямым = false;
+  const ответ = await cached(ключ, async ()=>{
+    let линия = null;
+    try{
+      const d = await маршрутПоДорогам(пары);
+      if(d && d.ok && Array.isArray(d.line) && d.line.length > 1) линия = d.line;
+    }catch(e){}
+    if(!линия){ линия = пары; поПрямым = true; }
+    return { ok:true, items: ближеКЛинии(await placesRaw(), линия, пары, пропустить) };
+  }, 6 * 60 * 60 * 1000);
+  // Ответ по прямым держим, только пока OSRM не ответит: следующий запрос
+  // попробует дорогу снова (сам OSRM без ответа в кэш не попадает).
+  if(поПрямым) SEARCH_CACHE.delete(ключ);
+  return ответ;
+}
+
+function ближеКЛинии(все, линия, пары, пропустить){
+  const ПРЕДЕЛ = 5, ЗАПАС = 0.1;
+  let юг = 90, север = -90, запад = 180, восток = -180;
+  линия.forEach(c => { юг = Math.min(юг, c[0]); север = Math.max(север, c[0]);
+                       запад = Math.min(запад, c[1]); восток = Math.max(восток, c[1]); });
+  юг -= ЗАПАС; север += ЗАПАС; запад -= ЗАПАС; восток += ЗАПАС;
+  // Равнопромежуточная проекция вокруг середины рамки: на сотне километров
+  // ошибка — метры, а считать в разы проще, чем по сфере.
+  const R = 6371 * Math.PI / 180, cos = Math.cos((юг + север) / 2 * Math.PI / 180);
+  const xy = c => [c[1] * R * cos, c[0] * R];
+  // У OSRM вершина на каждые десятки метров — на маршруте через всю страну их
+  // десятки тысяч. Для «до 5 км» хватает вершин через 200 м: погрешность — метры.
+  const отрезки = [];
+  линия.forEach((c, i) => {
+    const q = xy(c), послед = отрезки[отрезки.length - 1];
+    if(!послед || i === линия.length - 1 || Math.hypot(q[0] - послед[0], q[1] - послед[1]) >= 0.2) отрезки.push(q);
+  });
+  if(отрезки.length === 1) отрезки.push(отрезки[0]);
+  const убрать = new Set(пропустить);
+  const out = [];
+  for(const p of все){
+    if(!(p.lat >= юг && p.lat <= север && p.lng >= запад && p.lng <= восток)) continue;
+    if(убрать.has(String(p.id))) continue;
+    // это сама точка маршрута (или она же под другим номером)
+    if(пары.some(c => distKm(c[0], c[1], p.lat, p.lng) < 0.3)) continue;
+    const [px, py] = xy([p.lat, p.lng]);
+    let лучшее = Infinity;
+    for(let i = 1; i < отрезки.length; i++){
+      const [ax, ay] = отрезки[i-1], [bx, by] = отрезки[i];
+      const dx = bx - ax, dy = by - ay, l2 = dx*dx + dy*dy;
+      const t = l2 ? Math.max(0, Math.min(1, ((px-ax)*dx + (py-ay)*dy) / l2)) : 0;
+      const ex = ax + t*dx - px, ey = ay + t*dy - py, d2 = ex*ex + ey*ey;
+      if(d2 < лучшее) лучшее = d2;
+    }
+    const км = Math.sqrt(лучшее);
+    if(км <= ПРЕДЕЛ) out.push({ id:p.id, name:p.name, addr:p.addr, lat:p.lat, lng:p.lng,
+                               pic:p.pic || '', cat:p.cat || '', km: Math.round(км * 10) / 10 });
+  }
+  return out.sort((a, b) => a.km - b.km).slice(0, 12);
+}
+
 // опции: true/false (старый вызов — только «порядок руками») или объект
 // { ручной, заголовок, вступление, адрес }. С адресом это страница готового
 // маршрута из видео (/m/<slug>): свой заголовок и вступление, индексируется,
@@ -3698,6 +3797,18 @@ async function marshrutPage(ids, опции){
     + '.drag-ph{border:1px dashed #d9cec0;border-radius:10px;background:#f3ede5}'
     + '.sumrow{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 14px;margin:0 0 8px}.sumrow .sub{margin:0}'
     + '.auto{font:inherit;font-size:14px;background:none;border:0;padding:0;color:#9a3412;text-decoration:underline;cursor:pointer}'
+    + '.nr{margin:18px 0 0}.nr[hidden]{display:none}'
+    + '.nr h2{font-size:17px;line-height:1.25;margin:0 0 8px;letter-spacing:-.01em}'
+    + '.nr-list{display:flex;gap:10px;overflow-x:auto;padding:0 0 6px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch}'
+    + '.nc{flex:0 0 160px;display:flex;flex-direction:column;min-width:0;scroll-snap-align:start}'
+    + '.nc img,.nc .ni{width:100%;height:92px;object-fit:cover;border-radius:10px;display:block;background:#f0eae1}'
+    + '.nc .p{font-weight:700;font-size:15px;line-height:1.25;margin-top:6px;color:#1c1917;text-decoration:none;'
+    +   'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}'
+    + '.nc .s{font-size:12px;color:#9c948c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'
+    + '.nc .d{font-size:12.5px;color:#57534e;margin:1px 0 6px}'
+    + '.nc .na{margin-top:auto;font:inherit;font-size:14px;font-weight:700;cursor:pointer;background:#fff;color:#9a3412;'
+    +   'border:1px solid #e9e2d8;border-radius:9px;padding:7px 8px}'
+    + '.nc .na:hover{border-color:#9a3412}'
     + '.add{margin:16px 0 0;position:relative}'+ '.add input{width:100%;font:inherit;padding:12px 14px;border:1px solid #e9e2d8;border-radius:10px;background:#fff;color:inherit}'+ '.sug{position:absolute;left:0;right:0;top:100%;background:#fff;border:1px solid #e9e2d8;border-radius:10px;'+   'margin-top:4px;max-height:270px;overflow:auto;z-index:5;display:none;box-shadow:0 8px 24px rgba(41,32,24,.12)}'+ '.sug button{display:block;width:100%;text-align:left;font:inherit;background:none;border:0;padding:9px 13px;cursor:pointer}'+ '.sug button:hover{background:#f8f4ef}'+ '.sug small{color:#9c948c;display:block;font-size:12.5px}'+ '.go{display:inline-block;margin-top:18px;background:#9a3412;color:#fff;text-decoration:none;font-weight:700;'+   'padding:14px 22px;border-radius:11px}'+ '.go.off{opacity:.4;pointer-events:none}'
 + '.go2{display:inline-block;margin:18px 0 0 10px;background:#fff;border:1px solid #e9e2d8;color:#1c1917;'+   'text-decoration:none;font-weight:700;padding:13px 21px;border-radius:11px}'+ '.go2:hover{border-color:#9a3412;color:#9a3412}'
     + 'button.go2{font:inherit;font-weight:700;cursor:pointer}'
@@ -3728,7 +3839,9 @@ async function marshrutPage(ids, опции){
     +   '.shm,.shm input{background:#1d1916;border-color:#332c25}.shm a,.shm button,.shm input{color:#f6f2ed}'
     +   '.shm a:hover,.shm button:hover{background:#241f1a;color:#e2703a}'
     +   '.pngb{background:#1d1916;color:#f6f2ed}.pngb p{color:#c2b7ab}.pngb img{border-color:#332c25}'
-    +   '.pngk .go2{background:#241f1a;border-color:#332c25;color:#f6f2ed}}'
+    +   '.pngk .go2{background:#241f1a;border-color:#332c25;color:#f6f2ed}'
+    +   '.nc img,.nc .ni{background:#241f1a}.nc .p{color:#f6f2ed}.nc .s{color:#a39a90}.nc .d{color:#c2b7ab}'
+    +   '.nc .na{background:#1d1916;border-color:#332c25;color:#e2703a}}'
      + '</style></head><body><div class="w">'
     + '<a class="back" id="back" href="/?country=places">← Ко всем местам</a>'
     + (изВидео
@@ -3751,6 +3864,9 @@ async function marshrutPage(ids, опции){
     +   '«в маршрут» в разделе <a href="/?country=places">Что посетить</a>.</div>'
     + '<div id="rmap"' + (точки.length ? '' : ' style="display:none"') + '></div>'
     + '<div id="rlist">' + строки + '</div>'
+    // «По пути» наполняется в браузере: список зависит от маршрута на экране
+    + '<section class="nr" id="rNear" hidden aria-labelledby="rNearH">'
+    +   '<h2 id="rNearH">По пути — до 5 км от дороги</h2><div class="nr-list" id="rNearList"></div></section>'
     + '<div class="add"><input id="rAdd" type="text" placeholder="Добавить место: замок, костёл, Мир…" autocomplete="off">'
     +   '<div class="sug" id="rSug"></div></div>'
     + '<div class="own"><button class="ownb" id="rOwn" type="button">📍 Поставить свою точку на карте</button>'
@@ -3840,7 +3956,7 @@ async function marshrutPage(ids, опции){
     +   '["rShare","rPng"].forEach(function(id){document.getElementById(id).classList.toggle("off",!Т.length);});'
     +   'if(!Т.length)закрытьМеню();'
     +   'кудаЗаЖильём();'
-    + '  document.getElementById("rEmpty").style.display = Т.length ? "none" : "";'+   'document.getElementById("rmap").style.display = (Т.length||РЕЖИМ) ? "" : "none";'+   'рисоватьКарту();}'+ 'function рисоватьКарту(){if((!Т.length&&!РЕЖИМ)||typeof L==="undefined")return;'+   'if(!карта){карта=L.map("rmap",{scrollWheelZoom:false});'+     'карта.attributionControl.setPrefix("");'+     'L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,'+       'attribution:"&copy; OpenStreetMap"}).addTo(карта);слой=L.layerGroup().addTo(карта);карта.on("click",поКарте);}'+   'слой.clearLayers(); if(линия){карта.removeLayer(линия);линия=null;}'+   'var пути=[];'+   'Т.forEach(function(p,i){пути.push([p.lat,p.lng]);'+     'L.marker([p.lat,p.lng],{icon:L.divIcon({className:"",iconSize:[26,26],iconAnchor:[13,13],'+       'html:"<div class=\\"pin"+(своя(p)?" own":"")+"\\">"+(i+1)+"</div>"}),draggable:своя(p)})'
+    + '  document.getElementById("rEmpty").style.display = Т.length ? "none" : "";'+   'document.getElementById("rmap").style.display = (Т.length||РЕЖИМ) ? "" : "none";'+   'рисоватьКарту();поПутиПозже();}'+ 'function рисоватьКарту(){if((!Т.length&&!РЕЖИМ)||typeof L==="undefined")return;'+   'if(!карта){карта=L.map("rmap",{scrollWheelZoom:false});'+     'карта.attributionControl.setPrefix("");'+     'L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,'+       'attribution:"&copy; OpenStreetMap"}).addTo(карта);слой=L.layerGroup().addTo(карта);карта.on("click",поКарте);}'+   'слой.clearLayers(); if(линия){карта.removeLayer(линия);линия=null;}'+   'var пути=[];'+   'Т.forEach(function(p,i){пути.push([p.lat,p.lng]);'+     'L.marker([p.lat,p.lng],{icon:L.divIcon({className:"",iconSize:[26,26],iconAnchor:[13,13],'+       'html:"<div class=\\"pin"+(своя(p)?" own":"")+"\\">"+(i+1)+"</div>"}),draggable:своя(p)})'
     +   '.bindTooltip(p.name).on("dragend",function(e){передвинуть(p,e.target.getLatLng());}).addTo(слой);});'+   'if(пути.length>1) линия=L.polyline(пути,{color:"#9a3412",weight:3,opacity:.7}).addTo(карта);'+   'setTimeout(function(){карта.invalidateSize();'+     'if(НЕ_ДВИГАТЬ)НЕ_ДВИГАТЬ=false;else if(!пути.length)карта.setView([53.7,27.95],6);'
     +     'else if(пути.length>1)карта.fitBounds(пути,{padding:[40,40]});else карта.setView(пути[0],13);},60);'+   'подорогам();}'+ 'function кудаЗаЖильём(){var a=document.getElementById("rStay"); if(!a)return;'
     + '  if(!Т.length){a.href="/";a.textContent="Искать жильё на сутки →";return;}'
@@ -3874,6 +3990,54 @@ async function marshrutPage(ids, опции){
     +   'try{var d=await (await fetch("/api/route?p="+encodeURIComponent(к))).json();'
     +     'if(!d.ok||к!==дорогаЗа)return; ДОРОГА={к:к,d:d}; показатьДорогу(d);'
     +   '}catch(e){}}'
+    // ── «По пути» ──
+    // Места рядом с дорогой, которые легко прихватить в поездку. Запрос — через
+    // 600 мс после последней правки (перетаскивание и набор точек не дёргают
+    // сервер на каждый шаг), тот же маршрут второй раз не спрашиваем.
+    + 'var ПО_ПУТИ={к:"",items:[]}, поПутиЗапрос="", поПутиЗа=null, поПутиHTML="";'
+    + 'function ключПоПути(){return "p="+encodeURIComponent(ключДороги())+"&skip="'
+    +   '+encodeURIComponent(Т.filter(function(p){return !своя(p);}).map(function(p){return p.id;}).join(","));}'
+    + 'function поПутиПозже(){clearTimeout(поПутиЗа);показатьПоПути();'
+    +   'if(Т.length<2)return;поПутиЗа=setTimeout(поПути,600);}'
+    + 'async function поПути(){if(Т.length<2)return;var к=ключПоПути();'
+    +   'if(к===ПО_ПУТИ.к){показатьПоПути();return;}'
+    +   'if(к===поПутиЗапрос)return; поПутиЗапрос=к;'
+    +   'try{var d=await (await fetch("/api/route/near?"+к)).json();'
+    +     'if(к!==поПутиЗапрос)return;'
+    +     'ПО_ПУТИ={к:к,items:(d&&d.ok&&Array.isArray(d.items))?d.items:[]};'
+    // сбой сети — не запоминаем, при следующей правке спросим снова
+    +   '}catch(e){if(к===поПутиЗапрос)поПутиЗапрос="";return;}'
+    +   'показатьПоПути();}'
+    // Уже добавленные точки убираем сразу, не дожидаясь нового ответа.
+    + 'function показатьПоПути(){var с=document.getElementById("rNear"), л=document.getElementById("rNearList");'
+    +   'var есть={};Т.forEach(function(p){есть[String(p.id)]=1;});'
+    +   'var items=Т.length<2?[]:ПО_ПУТИ.items.filter(function(p){return !есть[String(p.id)];});'
+    +   'var html=items.map(function(p){'
+    +     'return "<div class=\\"nc\\" data-id=\\""+esc(p.id)+"\\">"'
+    +       '+(p.pic?("<img src=\\""+esc(p.pic)+"\\" alt=\\"\\" loading=\\"lazy\\">"):"<div class=\\"ni\\"></div>")'
+    +       '+"<a class=\\"p\\" href=\\"/mesto/"+esc(p.id)+"\\">"+esc(p.name)+"</a>"'
+    +       '+(p.addr?("<span class=\\"s\\">"+esc(p.addr)+"</span>"):"")'
+    +       '+"<span class=\\"d\\">"+(p.km<0.1?"меньше 0,1 км от дороги":(String(p.km).replace(".",",")+" км от дороги"))+"</span>"'
+    +       '+"<button class=\\"na\\" type=\\"button\\" data-p=\\""'
+    +       '+esc(JSON.stringify({id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}))+"\\">+ в маршрут</button></div>";}).join("");'
+    // Сначала показываем секцию, потом вставляем карточки: ленивые снимки,
+    // вставленные в скрытый блок, Chrome так и не начинает грузить.
+    // Тот же список — не трогаем, иначе лента прыгает в начало и снимки грузятся заново.
+    +   'с.hidden=!items.length;'
+    +   'if(html!==поПутиHTML){поПутиHTML=html;л.innerHTML=html;}}'
+    // В ручном порядке новое место встаёт туда, где крюк меньше всего: в начало,
+    // в конец или между соседними точками. В автоматическом порядок посчитается сам.
+    + 'function вставитьПоПути(p){if(Т.some(function(x){return String(x.id)===String(p.id);}))return;'
+    +   'if(ПОРЯДОК!=="manual"||Т.length<2){добавить(p);return;}'
+    +   'var т={id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}, куда=Т.length, крюк=км(Т[Т.length-1],т);'
+    +   'if(км(т,Т[0])<крюк){крюк=км(т,Т[0]);куда=0;}'
+    +   'for(var i=1;i<Т.length;i++){var c=км(Т[i-1],т)+км(т,Т[i])-км(Т[i-1],Т[i]);if(c<крюк){крюк=c;куда=i;}}'
+    +   'Т=Т.slice(0,куда).concat([т],Т.slice(куда));нарисовать();сохранить();}'
+    + 'document.getElementById("rNearList").addEventListener("click",function(e){var b=e.target.closest(".na");if(!b)return;'
+    +   'try{вставитьПоПути(JSON.parse(b.getAttribute("data-p")));}catch(err){}});'
+    // снимок не загрузился — нейтральная заглушка вместо значка битой картинки
+    + 'document.getElementById("rNearList").addEventListener("error",function(e){var t=e.target;'
+    +   'if(!t||t.tagName!=="IMG")return;var d=document.createElement("div");d.className="ni";t.replaceWith(d);},true);'
     + 'var поле=document.getElementById("rAdd"), список=document.getElementById("rSug"), таймер=null;'+ 'поле.addEventListener("input", function(){clearTimeout(таймер);таймер=setTimeout(искать,400);});'+ 'async function искать(){var q=поле.value.trim();'+   'if(q.length<2){список.style.display="none";return;}'
     +   'var к=координаты(q);'
     +   'if(к){список.innerHTML="<button type=\\"button\\" data-c=\\""+к[0]+","+к[1]+"\\">📍 Поставить точку по координатам"'
@@ -8130,36 +8294,22 @@ http.createServer(async (req,res)=>{
   }
   // страница отдельного места: /mesto/2416 или /mesto/2416-mirskij-zamok
   // Дорога между точками: длина и линия по настоящим улицам, а не по прямой.
-  // Считает открытый маршрутизатор OSRM; ответ держим сутки — дороги
-  // меняются реже, чем цены на квартиры.
   if(u.pathname === '/api/route'){
-    const пары = (u.searchParams.get('p') || '').split(';')
-      .map(x => x.split(',').map(Number))
-      .filter(c => c.length === 2 && c[0] > 40 && c[0] < 70 && c[1] > 15 && c[1] < 45)
-      .slice(0, 12);
-    if(пары.length < 2){
-      res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
-      res.end('{"ok":false}'); return;
-    }
-    const ключ = 'osrm|' + пары.map(c => c[0].toFixed(5) + ',' + c[1].toFixed(5)).join(';');
+    const пары = парыМаршрута(u.searchParams.get('p'));
     let ответ = { ok:false };
-    try{
-      ответ = await cached(ключ, async ()=>{
-        const coords = пары.map(c => c[1] + ',' + c[0]).join(';');
-        const url = 'https://router.project-osrm.org/route/v1/driving/' + coords
-                  + '?overview=full&geometries=geojson';
-        const j = await (await fetch(url, {headers:{'User-Agent':UA}})).json();
-        const r = j && j.routes && j.routes[0];
-        if(!r) return { ok:false };
-        return { ok:true,
-                 km: Math.round(r.distance / 100) / 10,
-                 minutes: Math.round(r.duration / 60),
-                 // длина каждого перегона: в списке рядом с точкой пишем её,
-                 // а не расстояние по прямой — иначе шаги не сходятся с итогом
-                 legs: (r.legs || []).map(l => Math.round(l.distance / 100) / 10),
-                 line: (r.geometry.coordinates || []).map(c => [c[1], c[0]]) };
-      }, 24 * 60 * 60 * 1000);
-    }catch(e){ ответ = { ok:false }; }
+    if(пары.length >= 2){
+      try{ ответ = await маршрутПоДорогам(пары); }catch(e){ ответ = { ok:false }; }
+    }
+    res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
+    res.end(JSON.stringify(ответ)); return;
+  }
+  // «По пути»: места справочника не дальше 5 км от дороги маршрута
+  if(u.pathname === '/api/route/near'){
+    const пары = парыМаршрута(u.searchParams.get('p'));
+    let ответ = { ok:false };
+    if(пары.length >= 2){
+      try{ ответ = await местаПоПути(пары, u.searchParams.get('skip')); }catch(e){ ответ = { ok:false }; }
+    }
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
     res.end(JSON.stringify(ответ)); return;
   }
