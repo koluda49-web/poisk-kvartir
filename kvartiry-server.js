@@ -4625,6 +4625,202 @@ async function видеоСписокPage(){
     + '</div></body></html>';
 }
 
+// ── Сезонные подборки ─────────────────────────────────────────────────────
+// Людям нужна идея, куда поехать, а не 800 точек списком: /podborka/<slug> —
+// десяток мест под время года или поездку с детьми. Заодно это готовые темы
+// для роликов. Точки — только номера из справочника; тексты — общими словами,
+// без утверждений о конкретных местах. months: null — подборка на весь год,
+// её чип на главной всегда последний.
+const ПОДБОРКИ_ФАЙЛ = path.join(__dirname, 'подборки.json');
+let ПОДБОРКИ = [];
+try{
+  ПОДБОРКИ = JSON.parse(fs.readFileSync(ПОДБОРКИ_ФАЙЛ, 'utf8'))
+    .filter(function(п){ return п && /^[a-z0-9-]+$/.test(п.slug || '') && Array.isArray(п.ids); })
+    .map(function(п){
+      return Object.assign({}, п, { months: Array.isArray(п.months) ? п.months.map(Number) : null,
+                                    ids: п.ids.map(String).filter(function(x){ return /^[0-9]+$/.test(x); }) });
+    });
+}catch(e){ console.error('подборки не прочитались:', e.message); }
+// без прототипа по той же причине, что и ВИДЕО_ПО: /podborka/constructor не должен «находиться»
+const ПОДБОРКА_ПО = Object.create(null);
+ПОДБОРКИ.forEach(function(п){ ПОДБОРКА_ПО[п.slug] = п; });
+
+// Чипы для вкладки «Что посетить». Сезонные идут по порядку года, круглогодовые —
+// в конце; какую поставить первой, решает страница по дате посетителя: сервер
+// живёт в другом часовом поясе, а страница кэшируется.
+function чипыПодборок(){
+  if(!ПОДБОРКИ.length) return '';
+  const порядок = ПОДБОРКИ.filter(function(п){ return п.months; })
+    .concat(ПОДБОРКИ.filter(function(п){ return !п.months; }));
+  return '<span class="pl-sets" id="plSets"><span class="pl-sets-t">Подборки:</span>'
+    + порядок.map(function(п){
+        return '<a class="pl-chip" href="/podborka/' + п.slug + '" data-m="' + (п.months || []).join(',') + '">'
+          + esc(п.chip || п.title) + '</a>';
+      }).join('')
+    + '</span>';
+}
+
+// Код страницы подборки. Пишем обычной функцией и вставляем её текстом:
+// так не нужно экранировать кавычки в склейке строк.
+function подборкаКлиент(){
+  var кнопки = [].slice.call(document.querySelectorAll('button.add[data-id]'));
+  function прочитать(){
+    try{ var r = JSON.parse(localStorage.getItem('route') || '[]'); return Array.isArray(r) ? r : []; }
+    catch(e){ return []; }
+  }
+  function есть(список, id){ return список.some(function(p){ return String(p.id) === String(id); }); }
+  function обновить(){
+    var список = прочитать();
+    кнопки.forEach(function(b){
+      var в = есть(список, b.dataset.id);
+      b.classList.toggle('on', в);
+      b.setAttribute('aria-pressed', в ? 'true' : 'false');
+      b.textContent = в ? '✓ в маршруте' : '+ в маршрут';
+    });
+    var бар = document.getElementById('routeBar');
+    if(бар){
+      var n = список.length, a = n % 100, b1 = a % 10;
+      var слово = (a > 10 && a < 20) ? 'точек' : (b1 === 1 ? 'точка' : (b1 > 1 && b1 < 5 ? 'точки' : 'точек'));
+      бар.hidden = !n;
+      бар.textContent = 'Мой маршрут: ' + n + ' ' + слово + ' →';
+    }
+  }
+  // Добавление и удаление — одна функция: к ней потом подключим счёт популярности мест.
+  // Формат точки тот же, что у главной ({id,name,addr,lat,lng}), номер — числом,
+  // как пишет главная, иначе там точка не отметится галочкой.
+  function переключитьВМаршруте(b){
+    var список = прочитать(), id = b.dataset.id;
+    if(есть(список, id)) список = список.filter(function(p){ return String(p.id) !== String(id); });
+    else список.push({ id: +id, name: b.dataset.name, addr: b.dataset.addr || '',
+                       lat: +b.dataset.lat, lng: +b.dataset.lng });
+    try{ localStorage.setItem('route', JSON.stringify(список)); }catch(e){}
+    обновить();
+  }
+  window.переключитьВМаршруте = переключитьВМаршруте;
+  кнопки.forEach(function(b){ b.addEventListener('click', function(){ переключитьВМаршруте(b); }); });
+  // маршрут правят и в соседней вкладке, и на странице маршрута, откуда возвращаются «назад»
+  window.addEventListener('storage', function(e){ if(!e.key || e.key === 'route') обновить(); });
+  window.addEventListener('pageshow', обновить);
+  обновить();
+}
+
+// Адрес без улицы («53.97583,27.451181») — это координаты, а не адрес: не показываем.
+function адресДляКарточки(addr){
+  const a = String(addr || '').trim();
+  return /^-?[0-9.]+\s*,\s*-?[0-9.]+$/.test(a) ? '' : a;
+}
+
+async function подборкаPage(slug){
+  const п = ПОДБОРКА_ПО[slug];
+  if(!п) return '';
+  let все = [];
+  try{ все = await placesRaw(); }catch(e){}
+  const поНомеру = new Map(все.map(function(p){ return [String(p.id), p]; }));
+  // точку, которой больше нет в справочнике, просто пропускаем — страница не ломается
+  const места = п.ids.map(function(id){ return поНомеру.get(id); }).filter(Boolean);
+  const адрес = SITE_URL + '/podborka/' + п.slug;
+  const сФото = места.filter(function(p){ return p.pic; })[0];
+  const снимок = сФото ? снимокДляСоцсетей(сФото.pic) : '';
+  const desc = String(п.intro || '');
+  const маршрут = '/marshrut?p=' + места.slice(0, 8).map(function(p){ return p.id; }).join(',');
+
+  const карточки = места.map(function(p, i){
+    const ссылка = '/mesto/' + p.id + '-' + slugify(p.name);
+    const адр = адресДляКарточки(p.addr);
+    return '<div class="c">'
+      + '<a class="ph" href="' + ссылка + '" tabindex="-1" aria-hidden="true">'
+      +   (p.pic ? ('<img src="' + esc(p.pic) + '" alt=""' + (i > 3 ? ' loading="lazy"' : '') + '>')
+                 : '<div class="noimg"></div>') + '</a>'
+      + '<div class="b">'
+      +   (p.cat ? ('<span class="cat">' + esc(p.cat) + '</span>') : '')
+      +   '<h2><a href="' + ссылка + '">' + esc(p.name) + '</a></h2>'
+      +   (адр ? ('<div class="ad">' + esc(адр) + '</div>') : '')
+      +   '<div class="act">'
+      +     '<button class="add" type="button" aria-pressed="false" data-id="' + p.id + '" data-name="' + esc(p.name)
+      +       '" data-addr="' + esc(p.addr || '') + '" data-lat="' + p.lat + '" data-lng="' + p.lng + '">+ в маршрут</button>'
+      +     '<a class="more" href="' + ссылка + '">Подробнее</a>'
+      +   '</div>'
+      + '</div></div>';
+  }).join('');
+
+  const другие = ПОДБОРКИ.filter(function(д){ return д.slug !== п.slug; }).map(function(д){
+    return '<a href="/podborka/' + д.slug + '">' + esc(д.title) + '</a>';
+  }).join('');
+
+  return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<title>' + esc(п.title) + ': места по Беларуси</title>'
+    + '<meta name="description" content="' + esc(desc) + '">'
+    + '<meta name="robots" content="index,follow">'
+    + '<meta name="theme-color" content="#9a3412">'
+    + '<link rel="canonical" href="' + адрес + '">'
+    + '<meta property="og:type" content="article">'
+    + '<meta property="og:title" content="' + esc(п.title) + '">'
+    + '<meta property="og:description" content="' + esc(desc) + '">'
+    + '<meta property="og:url" content="' + адрес + '">'
+    + (снимок ? ('<meta property="og:image" content="' + esc(снимок) + '">'
+                 + '<meta name="twitter:card" content="summary_large_image">') : '')
+    + крошки([['Главная', '/'], ['Что посетить', '/?country=places'], [п.title]])
+    + '<style>'
+    + '*{box-sizing:border-box}'
+    + 'body{margin:0;font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#faf7f3;color:#1c1917}'
+    + '.w{max-width:1100px;margin:0 auto;padding:20px 16px 90px}'
+    + 'a{color:#9a3412}'
+    + '.back{display:inline-block;margin:0 0 14px;padding:9px 17px;background:#fff;border:1px solid #e9e2d8;'
+    +   'border-radius:999px;text-decoration:none;color:#1c1917;font-size:14.5px;font-weight:600}'
+    + '.back:hover{border-color:#9a3412;color:#9a3412}'
+    + 'h1{font-size:clamp(24px,4.6vw,34px);line-height:1.15;margin:0 0 6px;letter-spacing:-.02em}'
+    + '.intro{color:#57534e;margin:0 0 14px;max-width:70ch}'
+    + '.build{display:inline-block;margin:0 0 18px;padding:11px 18px;background:#9a3412;color:#fff;border-radius:999px;'
+    +   'text-decoration:none;font-weight:700;font-size:15px}'
+    + '.build:hover{background:#b8471c}'
+    + '.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}'
+    + '@media (max-width:600px){.grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}}'
+    + '.c{background:#fff;border:1px solid #e9e2d8;border-radius:14px;overflow:hidden;display:flex;flex-direction:column}'
+    + '.c:hover{border-color:#d9cec0}'
+    + '.ph{display:block}'
+    + '.c img,.noimg{width:100%;height:160px;object-fit:cover;display:block}'
+    + '.noimg{background:#f0eae1}'
+    + '.c .b{padding:10px 12px 12px;display:flex;flex-direction:column;gap:4px;flex:1}'
+    + '.cat{align-self:flex-start;font-size:12px;background:#f8f4ef;border:1px solid #e9e2d8;border-radius:999px;padding:1px 8px;color:#57534e}'
+    + '.c h2{font-size:16px;line-height:1.25;margin:0}'
+    + '.c h2 a{color:inherit;text-decoration:none}.c h2 a:hover{color:#9a3412}'
+    + '.ad{font-size:13px;color:#57534e}'
+    + '.act{margin-top:auto;padding-top:8px;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px}'
+    + '.add{font:inherit;font-size:14px;font-weight:700;cursor:pointer;background:#fff;color:#9a3412;'
+    +   'border:1px solid #9a3412;border-radius:999px;padding:6px 12px}'
+    + '.add.on{background:#9a3412;color:#fff}'
+    + '.more{font-size:14px;font-weight:600}'
+    + '@media (max-width:600px){.c img,.noimg{height:115px}.c .b{padding:8px 9px 10px}.c h2{font-size:14.5px}'
+    +   '.ad{font-size:12px}.add{font-size:13px;padding:5px 10px}.more{font-size:13px}.cat{font-size:11px}}'
+    + 'h3{font-size:18px;margin:30px 0 10px}'
+    + '.sets{display:flex;flex-wrap:wrap;gap:8px}'
+    + '.sets a{background:#fff;border:1px solid #e9e2d8;border-radius:999px;padding:8px 15px;text-decoration:none;'
+    +   'color:#1c1917;font-weight:600;font-size:14.5px}'
+    + '.sets a:hover{border-color:#9a3412;color:#9a3412}'
+    + '#routeBar{position:fixed;left:50%;transform:translateX(-50%);bottom:16px;z-index:10;background:#9a3412;color:#fff;'
+    +   'text-decoration:none;font-weight:700;font-size:14.5px;padding:12px 20px;border-radius:999px;'
+    +   'box-shadow:0 8px 24px rgba(41,32,24,.28)}'
+    + '[hidden]{display:none!important}'
+    + '@media (max-width:520px){#routeBar{left:12px;right:12px;transform:none;text-align:center}}'
+    + '@media (prefers-color-scheme:dark){body{background:#14110e;color:#f6f2ed}.intro,.ad{color:#c2b7ab}'
+    +   '.back,.c,.sets a{background:#1d1916;border-color:#332c25;color:#f6f2ed}.noimg{background:#2b251f}'
+    +   '.cat{background:#241f1a;border-color:#332c25;color:#c2b7ab}a,.c h2 a:hover{color:#e2703a}'
+    +   '.add{background:#1d1916;color:#e2703a;border-color:#e2703a}.add.on,.build,#routeBar{background:#e2703a;color:#14110e}'
+    +   '.c h2 a{color:#f6f2ed}}'
+    + '</style></head><body><div class="w">'
+    + '<a class="back" href="/?country=places">← Ко всем местам</a>'
+    + '<h1>' + esc(п.title) + '</h1>'
+    + '<p class="intro">' + esc(desc) + '</p>'
+    + (места.length ? ('<a class="build" href="' + маршрут + '">Собрать маршрут из подборки</a>') : '')
+    + '<div class="grid">' + карточки + '</div>'
+    + (другие ? ('<h3>Другие подборки</h3><div class="sets">' + другие + '</div>') : '')
+    + '</div>'
+    + '<a id="routeBar" href="/marshrut" hidden></a>'
+    + '<script>(' + подборкаКлиент.toString() + ')();</' + 'script>'
+    + '</body></html>';
+}
+
 // Файлы для maps.me: их кладут в приложение и берут в поездку без интернета.
 const МАРШРУТ_ФАЙЛЫ = {
   'minsk-brest':        [['Маршрут и города без военных.kml', 'KML для maps.me и Google Earth'],
@@ -6046,6 +6242,12 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
 .pl-links{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px 14px;margin:-8px 4px 10px;font-size:13.5px}
 .pl-links a{color:var(--txt-2);text-decoration:none}
 .pl-links a:hover{color:var(--accent);text-decoration:underline}
+/* Подборки — слева чипами, «Маршруты из видео» остаётся справа. */
+.pl-sets{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-right:auto}
+.pl-sets-t{color:var(--txt-2)}
+.pl-links a.pl-chip{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:3px 11px;color:var(--txt)}
+.pl-links a.pl-chip:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
+.pl-links a.pl-video{align-self:center}
 #routeBox{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
   padding:14px 16px;margin:0 0 14px;box-shadow:var(--shadow-sm)}
 .rt-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
@@ -6449,7 +6651,7 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
     </label>
   </form>
 
-  <div class="pl-links" id="plLinks" style="display:none"><a href="/m">Маршруты из видео →</a></div>
+  <div class="pl-links" id="plLinks" style="display:none"><!--ПОДБОРКИ--><a class="pl-video" href="/m">Маршруты из видео →</a></div>
 
   <div class="presets" id="presets">
     <button class="preset" type="button" data-preset="cheap">до 60 руб</button>
@@ -6586,6 +6788,19 @@ const SEO_PL = '<h2>Что посетить в Беларуси</h2>'
   +   'наследия Беларуси.</p>';
 
 const HINT_RU = 'Отели и жильё России с 101hotels.com в реальном времени. Цена «от» за ночь показана прямо на метке карты (<b style="color:#7c3aed">фиолетовые</b> — 101Hotels, координаты точные). Доступны фильтры по типу размещения, звёздам, цене, рейтингу, удобствам и оплате при заселении. Список и карта; перед бронированием проверяйте даты и условия на 101hotels.com.';
+
+// Подборки: первой — подборка текущего сезона по дате посетителя, дальше
+// остальные сезоны по кругу года, круглогодовые («С детьми») остаются в конце.
+(function(){
+  const box = $('#plSets'); if(!box) return;
+  const чипы = Array.prototype.slice.call(box.querySelectorAll('a.pl-chip'));
+  const сезонные = чипы.filter(a => a.dataset.m);
+  const месяц = String(new Date().getMonth() + 1);
+  const i = сезонные.findIndex(a => a.dataset.m.split(',').indexOf(месяц) >= 0);
+  if(i <= 0) return;
+  const после = чипы.find(a => !a.dataset.m) || null;
+  сезонные.slice(i).concat(сезонные.slice(0, i)).forEach(a => box.insertBefore(a, после));
+})();
 
 // переключение Беларусь / Россия
 function setCountry(c, quiet){
@@ -8316,6 +8531,9 @@ syncPresets();
 window.__firstRun = 1;
 window.addEventListener('load',run);
 </script></body></html>`;
+// Чипы подборок подставляем один раз при запуске: файл подборок читается
+// тоже при запуске, а внутри шаблона PAGE вставки кодом запрещены.
+const ГЛАВНАЯ = PAGE.replace('<!--ПОДБОРКИ-->', () => чипыПодборок());
 
 // ── «Предложить место»: приём и проверка ─────────────────────────────────
 // Форма открыта всем, поэтому ограничения здесь, а не в браузере: длины,
@@ -8992,6 +9210,23 @@ http.createServer(async (req,res)=>{
       .replace('<a href="/?country=places">', '<a href="/m">Маршруты из видео</a><a href="/?country=places">'));
     return;
   }
+  // Сезонные подборки: /podborka/<slug>
+  if(u.pathname.startsWith('/podborka/')){
+    const slug = u.pathname.slice('/podborka/'.length).replace(/\/$/, '');
+    if(ПОДБОРКА_ПО[slug]){
+      let html = '';
+      try{ html = await подборкаPage(slug); }catch(e){ console.error('/podborka/' + slug + ':', e.message); }
+      if(!html){ res.writeHead(500); res.end('Не получилось собрать подборку'); return; }
+      res.writeHead(200, {'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'public, max-age=600'});
+      res.end(html); return;
+    }
+    res.writeHead(404, {'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'no-cache'});
+    res.end(notFoundPage(u.pathname, 'Такой подборки нет')
+      .replace('<a href="/?country=places">', ПОДБОРКИ.map(function(п){
+        return '<a href="/podborka/' + п.slug + '">' + esc(п.title) + '</a>';
+      }).join('') + '<a href="/?country=places">'));
+    return;
+  }
   if(u.pathname.startsWith('/mesto/')){
     const хвост = decodeURIComponent(u.pathname.slice('/mesto/'.length));
     const id = (хвост.match(/^[0-9]+/) || [''])[0];
@@ -9027,6 +9262,9 @@ http.createServer(async (req,res)=>{
     urls.push.apply(urls, ВИДЕО_МАРШРУТЫ.map(function(м){
       return '<url><loc>'+SITE_URL+'/m/'+м.slug+'</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>';
     }));
+    urls.push.apply(urls, ПОДБОРКИ.map(function(п){
+      return '<url><loc>'+SITE_URL+'/podborka/'+п.slug+'</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>';
+    }));
     urls.push.apply(urls, Object.keys(ГИДЫ).map(function(k){
       return '<url><loc>'+SITE_URL+'/'+k+'</loc><changefreq>daily</changefreq><priority>0.7</priority></url>';
     }));
@@ -9060,7 +9298,7 @@ http.createServer(async (req,res)=>{
   // Главную отдаём уже с квартирами: список лежит в памяти после прогрева,
   // и человеку не приходится ждать запроса, а поисковик видит содержимое.
   // Вкладываем только первую страницу выдачи — этого хватает на первый экран.
-  let page = PAGE;
+  let page = ГЛАВНАЯ;
   if(u.pathname === '/' && ![...u.searchParams.keys()].length){
     try{
       const pu = new URL('/api/search?region=minsk&city=&type=flat&rooms=&guests=&max=&source=both', 'http://localhost');
@@ -9072,7 +9310,7 @@ http.createServer(async (req,res)=>{
       // $' и $` означают «весь текст после/до совпадения». Название объявления
       // пишут люди, и заголовок вида «Квартира 30$' центр» вставил бы в страницу
       // её собственный хвост, закрыв тег script и сломав сайт целиком.
-      page = PAGE.replace('/*ПРЕДЗАГРУЗКА*/', () => inject);
+      page = ГЛАВНАЯ.replace('/*ПРЕДЗАГРУЗКА*/', () => inject);
     }catch(e){ /* не вышло — страница просто загрузится как раньше */ }
   }
   // Отпечаток страницы: браузер пришлёт его обратно, и если ничего
