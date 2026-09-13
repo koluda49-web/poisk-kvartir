@@ -6883,10 +6883,10 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
       <span>В радиусе</span>
       <select id="plRadius">
         <option value="25">25 км</option>
-        <option value="50" selected>50 км</option>
+        <option value="50">50 км</option>
         <option value="100">100 км</option>
         <option value="200">200 км</option>
-        <option value="0">вся Беларусь</option>
+        <option value="0" selected>вся Беларусь</option>
       </select>
     </label>
     <label class="fld span-2">
@@ -7923,7 +7923,9 @@ function plParams(){
   const p = new URLSearchParams();
   if(g) p.set('group', g);
   if(q) p.set('q', q);
-  if(c && +r && !q){ p.set('lat', c.lat); p.set('lng', c.lng); p.set('r', r); }
+  // Город передаём и при «вся Беларусь» (r=0): сервер не режет список, но
+  // считает расстояния и ставит ближние места выше.
+  if(c && !q){ p.set('lat', c.lat); p.set('lng', c.lng); p.set('r', r); }
   return p;
 }
 
@@ -7953,7 +7955,10 @@ async function runPlaces(){
       });
       if(g) sel.value = g;
     }
-    const where = q ? (' по запросу «' + q + '»') : ((c && +r) ? (' ' + around + ', до ' + r + ' км') : ' по всей Беларуси');
+    const where = q ? (' по запросу «' + q + '»')
+      : (c && +r) ? (' ' + around + ', до ' + r + ' км')
+      : (' по всей Беларуси' + (!c ? '' : window.__plCenter ? ', сначала ближние к выбранному жилью'
+                                                        : (', сначала ближние к городу ' + $('#plCity').value)));
     $('#stat').textContent = 'Найдено мест: ' + d.total + where;
     renderPlaces();
     drawRoute();
@@ -7969,7 +7974,11 @@ function renderPlaces(){
   // рисовать точки в ленте жилья.
   if(window.__mode !== 'places') return;
   const list = window.__places || [];
-  if(!list.length){ $('#grid').innerHTML = '<div class="empty">Здесь ничего не нашлось. Попробуйте больший радиус.</div>'; return; }
+  if(!list.length){
+    // при «вся Беларусь» (или поиске по названию) радиус больше не сделать — совет был бы пустым
+    const шире = +$('#plRadius').value && !$('#plQ').value.trim();
+    $('#grid').innerHTML = '<div class="empty">Здесь ничего не нашлось.' + (шире ? ' Попробуйте больший радиус.' : '') + '</div>'; return;
+  }
   $('#grid').className = 'pl-grid';
   $('#grid').innerHTML = list.slice(0, 60).map(function(p, i){
     const km = (p.km !== undefined) ? ('<div class="km">' + p.km + ' км</div>') : '';
@@ -8658,7 +8667,7 @@ function syncUrl(){
     if(window.__mode==='places'){
       p.set('country','places');
       if($('#plCity').value)   p.set('city',   $('#plCity').value);
-      if($('#plRadius').value!=='50') p.set('r', $('#plRadius').value);
+      if($('#plRadius').value!=='0') p.set('r', $('#plRadius').value);   // по умолчанию — вся Беларусь
       if($('#plGroup').value)  p.set('group',  $('#plGroup').value);
       if($('#plQ').value.trim()) p.set('q', $('#plQ').value.trim());
       if($('#from').value) p.set('from', $('#from').value);
@@ -8711,7 +8720,9 @@ function applyUrl(){
     const set=function(id,v){ const el=$('#'+id); if(el && v!==null && v!==undefined) el.value=v; };
     if(q.get('country')==='places'){
       if(q.get('city'))  $('#plCity').value  = q.get('city');
-      if(q.get('r'))     $('#plRadius').value = q.get('r');
+      // без r — «вся Беларусь» из разметки; старые ссылки с r=50 работают как раньше,
+      // а незнакомое значение не трогает выбор (иначе список не совпал бы с подписью)
+      if(q.get('r') && $('#plRadius').querySelector('option[value="' + (+q.get('r')) + '"]')) $('#plRadius').value = String(+q.get('r'));
       if(q.get('q'))     $('#plQ').value = q.get('q');
       if(q.get('from')){ $('#from').value = q.get('from'); $('#plFrom').value = q.get('from'); }
       if(q.get('to')){   $('#to').value   = q.get('to');   $('#plTo').value   = q.get('to'); }
@@ -9446,6 +9457,14 @@ http.createServer(async (req,res)=>{
                  // Сначала разряд, потом расстояние: в городе первым должен
                  // стоять костёл или усадьба, а не ближайший памятник.
                  .sort((a, b) => разряд(a) - разряд(b) || a.km - b.km);
+    } else if(lat && lng && !q){
+      // «Вся Беларусь» рядом с городом: ничего не отрезаем, но идём от города
+      // кольцами по 50 км, внутри кольца — как при радиусе (разряд, потом
+      // расстояние). Верх списка тот же, что был при 50 км, а памятник за
+      // углом не уезжает в конец страны из-за костёла под Брестом.
+      const кольцо = km => Math.floor(km / 50);
+      list = list.map(p => Object.assign({}, p, { km: Math.round(distKm(lat, lng, p.lat, p.lng) * 10) / 10 }))
+                 .sort((a, b) => кольцо(a.km) - кольцо(b.km) || разряд(a) - разряд(b) || a.km - b.km);
     } else if(!q){
       list = list.slice().sort((a, b) => разряд(a) - разряд(b) || b.rating - a.rating);
     }

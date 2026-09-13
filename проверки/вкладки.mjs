@@ -110,6 +110,43 @@ check('по ссылке сразу открываются места', direct.m
       'жилья: ' + direct.flats + ', мест: ' + direct.places);
 check('сводка про места, а не про квартиры', /Найдено мест/.test(direct.stat || ''), direct.stat);
 
+// ── радиус мест по умолчанию — вся Беларусь ─────────
+// Решение владельца: список мест не обрезается 50 км. Расстояния на карточках
+// считаются от выбранного города, ближние идут выше; ссылки с явным r=50 работают как раньше.
+console.log('\n=== «Что посетить»: по умолчанию вся Беларусь ===');
+{
+  const плСостояние = async () => JSON.parse(await js(`JSON.stringify({ r: $('#plRadius').value, url: location.search,
+    stat: (document.querySelector('#stat')||{}).textContent, total: (window.__places||[]).length,
+    km: (window.__places||[]).map(function(p){ return p.km; }),
+    бейджи: document.querySelectorAll('#grid .plc .km').length })`));
+  const ждатьМеста = async () => { for (let i = 0; i < 90; i++) { if (await js(`document.querySelectorAll('#grid .plc').length > 0 && !/Ищу/.test($('#stat').textContent)`)) break; await sleep(500); } await sleep(800); };
+  await send('Page.navigate', { url: SITE + '/?country=places' });
+  await ждатьМеста();
+  const s0 = await плСостояние();
+  check('радиус по умолчанию — «вся Беларусь»', s0.r === '0', 'радиус ' + s0.r);
+  check('в адресе радиуса нет', !/(^|[?&])r=/.test(s0.url), s0.url);
+  check('сводка «Найдено мест: N по всей Беларуси, сначала ближние к городу …»', /^Найдено мест: \d+ по всей Беларуси, сначала ближние к городу \S+/.test(s0.stat || ''), s0.stat);
+  check('список не обрезан 50 км: мест больше 250', s0.total > 250, 'мест ' + s0.total);
+  check('на карточках расстояние от города', s0.бейджи > 0 && s0.km.every(k => typeof k === 'number'), 'бейджей ' + s0.бейджи);
+  check('первые 20 карточек — в пределах 50 км, дальние ниже', s0.km.slice(0, 20).every(k => k <= 50) && s0.km.some(k => k > 50), s0.km.slice(0, 25).join(','));
+
+  await send('Page.navigate', { url: SITE + '/?country=places&city=%D0%9C%D0%B8%D0%BD%D1%81%D0%BA&r=50' });
+  await ждатьМеста();
+  const s50 = await плСостояние();
+  check('старая ссылка с r=50: радиус 50 и «до 50 км»', s50.r === '50' && /до 50 км/.test(s50.stat || '') && s50.km.every(k => k <= 50), s50.r + ' · ' + s50.stat);
+  check('r=50 остаётся в адресе', /(^|[?&])r=50/.test(s50.url), s50.url);
+
+  await js(`$('#plRadius').value = '0'; $('#plRadius').dispatchEvent(new Event('change')); 1`);
+  await sleep(300); await ждатьМеста();
+  const sAll = await плСостояние();
+  check('вернули «вся Беларусь» — r пропал из адреса', sAll.r === '0' && !/(^|[?&])r=/.test(sAll.url) && /по всей Беларуси/.test(sAll.stat || ''), sAll.url + ' · ' + sAll.stat);
+
+  await send('Page.navigate', { url: SITE + '/?country=places&r=abc' });
+  await ждатьМеста();
+  const sBad = await плСостояние();
+  check('непонятный r в адресе — «вся Беларусь», подпись совпадает со списком', sBad.r === '0' && /по всей Беларуси/.test(sBad.stat || '') && sBad.total > 250, sBad.r + ' · ' + sBad.stat);
+}
+
 // ── заглушки под лентой ───────────────────────────
 // «Следить за новыми вариантами» относится к жилью, «Предложить точку» —
 // к местам. Перепутать их местами легко, а заметить трудно.
