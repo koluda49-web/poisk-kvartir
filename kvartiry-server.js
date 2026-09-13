@@ -3379,7 +3379,7 @@ function перетаскиваниеСтрок(список, перестави
 //   точки  — [{lat, lng, номер, своя}] — метки на карте;
 //   линия  — [[lat, lng], …] — по дорогам или прямыми между точками;
 //   плитки — адрес подложки с {z}/{x}/{y}.
-// Отдаёт Promise<{blob, строки, зум, плиток, пришло}>.
+// Отдаёт Promise<{blob, строки, вДвеСтроки, зум, плиток, пришло}>.
 function картинкаМаршрута(д){
   var Ш = 1080, В = 1920, КАРТА = 1080, ПОЛЯ = 90, ОТСТУП = 72, СПИСОК_ДО = 10;
   var ШРИФТ = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
@@ -3525,31 +3525,44 @@ function картинкаМаршрута(д){
       показ.push(все[j]); точек++;
     }
     var ещё = всегоТочек - точек;
-    var низ = В - 118, верх = y + 34;
-    var шаг = Math.min(64, Math.floor((низ - верх) / Math.max(1, показ.length + (ещё ? 1 : 0))));
-    var размер = Math.max(22, Math.min(34, Math.round(шаг * 0.56)));
+    // До 7 точек места хватает на две строки: название целиком во всю ширину,
+    // адрес под ним. В одну строку длинные названия костёлов резались
+    // на полуслове. С 8–10 точками — по-прежнему в одну строку.
+    var вДве = точек <= 7;
+    var низ = В - 118, верх = y + (вДве ? 24 : 34);
+    var шаг = Math.min(вДве ? 96 : 64, Math.floor((низ - верх) / Math.max(1, показ.length + (ещё ? 1 : 0))));
+    var размер = вДве ? Math.max(26, Math.min(36, Math.round(шаг * 0.41)))
+                      : Math.max(22, Math.min(34, Math.round(шаг * 0.56)));
+    var мелкий = Math.round(размер * 0.74);
     var отладка = [];
     показ.forEach(function(с){
+      var строкаВерх = верх;
       верх += шаг;
-      var базовая = верх - Math.round(шаг * 0.3);
+      // базовая линия названия; в две строки адрес идёт ниже
+      var базовая = вДве ? строкаВерх + Math.round(шаг * 0.44) : верх - Math.round(шаг * 0.3);
       if(с.разделитель){
         к.font = 'bold ' + размер + 'px ' + ШРИФТ; к.fillStyle = '#9a3412';
-        к.fillText(обрезать(с.разделитель, ширина), ОТСТУП, базовая);
+        к.fillText(обрезать(с.разделитель, ширина), ОТСТУП, вДве ? строкаВерх + Math.round(шаг * 0.62) : базовая);
         return;
       }
-      var r = Math.round(размер * 0.62), cx = ОТСТУП + r;
-      к.beginPath(); к.arc(cx, базовая - размер * 0.34, r, 0, Math.PI * 2);
+      var r = Math.round(размер * 0.62), cx = ОТСТУП + r, cy = базовая - размер * 0.34;
+      к.beginPath(); к.arc(cx, cy, r, 0, Math.PI * 2);
       к.fillStyle = с.своя ? '#1c1917' : '#9a3412'; к.fill();
       к.fillStyle = '#fff'; к.font = 'bold ' + Math.round(r * 1.05) + 'px ' + ШРИФТ;
       к.textAlign = 'center'; к.textBaseline = 'middle';
-      к.fillText(String(с.номер), cx, базовая - размер * 0.34 + 1);
+      к.fillText(String(с.номер), cx, cy + 1);
       к.textAlign = 'left'; к.textBaseline = 'alphabetic';
       var x = cx + r + 18, место = ОТСТУП + ширина - x;
-      к.font = '600 ' + размер + 'px ' + ШРИФТ; к.fillStyle = '#1c1917';
-      var имя = обрезать(с.название, с.адрес ? место * 0.72 : место);
+      к.font = (вДве ? 'bold ' : '600 ') + размер + 'px ' + ШРИФТ; к.fillStyle = '#1c1917';
+      var имя = обрезать(с.название, (с.адрес && !вДве) ? место * 0.72 : место);
       к.fillText(имя, x, базовая);
       var хвост = '';
-      if(с.адрес){
+      if(с.адрес && вДве){
+        к.font = мелкий + 'px ' + ШРИФТ; к.fillStyle = '#8a8178';
+        хвост = обрезать(с.адрес, место);
+        к.fillText(хвост, x, базовая + Math.round(мелкий * 1.35));
+        хвост = ' · ' + хвост;
+      } else if(с.адрес){
         var шИм = к.measureText(имя).width;
         к.font = размер + 'px ' + ШРИФТ; к.fillStyle = '#8a8178';
         хвост = обрезать(' · ' + с.адрес, место - шИм);
@@ -3574,7 +3587,7 @@ function картинкаМаршрута(д){
     return new Promise(function(готово, беда){
       холст.toBlob(function(b){
         if(!b) return беда(new Error('картинка не собралась'));
-        готово({ blob: b, строки: отладка, зум: зум, плиток: плитки.length, пришло: пришло });
+        готово({ blob: b, строки: отладка, вДвеСтроки: вДве, зум: зум, плиток: плитки.length, пришло: пришло });
       }, 'image/png');
     });
   });
@@ -3698,11 +3711,23 @@ async function marshrutPage(ids, опции){
     +   'color:#1c1917;text-decoration:none;padding:10px 12px;border-radius:8px;cursor:pointer}'
     + '.shm a:hover,.shm button:hover{background:#f8f4ef;color:#9a3412}'
     + '.shm input{font:inherit;font-size:14px;margin:4px 6px 6px;padding:8px 10px;border:1px solid #e9e2d8;border-radius:8px;color:inherit;background:#fff}'
+    // окно с готовой картинкой: целиком помещается на экран телефона
+    + '.pngv{position:fixed;top:0;left:0;right:0;bottom:0;z-index:2000;background:rgba(28,25,23,.62);'
+    +   'display:flex;align-items:center;justify-content:center;padding:14px}'
+    + '.pngb{background:#faf7f3;color:#1c1917;border-radius:16px;padding:14px;max-width:min(460px,100%);max-height:100%;'
+    +   'overflow:auto;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.3)}'
+    + '.pngb img{display:block;max-width:100%;max-height:70vh;width:auto;height:auto;margin:0 auto;'
+    +   'border:1px solid #e9e2d8;border-radius:10px;-webkit-touch-callout:default}'
+    + '.pngb p{margin:12px 4px 0;color:#57534e;font-size:15px;line-height:1.35}'
+    + '.pngk{display:flex;gap:10px;justify-content:center}'
+    + '.pngk .go,.pngk .go2{flex:1;margin:12px 0 0;text-align:center;padding:12px 16px}'
     + '@media (max-width:520px){.go,.go2{display:block;margin-left:0;text-align:center}'
     +   'button.go2{width:100%}.shr{display:block}.shm{left:0;right:0}}'+ '.empty{background:#fff;border:1px dashed #d9cec0;border-radius:14px;padding:22px;color:#57534e;margin-bottom:8px}'+ '@media (prefers-color-scheme:dark){body{background:#14110e;color:#f6f2ed}'+   '.back,.add input,.sug,.empty,.ownb{background:#1d1916;border-color:#332c25;color:#f6f2ed}'+ '.how{color:#c2b7ab}'+   '.it{border-color:#332c25}.it .t a{color:#f6f2ed}.sub,.it .t small,.it .km{color:#c2b7ab}'+   '.sug button:hover{background:#241f1a}a{color:#e2703a}#rmap{border-color:#332c25}'
     +   '.it.dragging{background:#1d1916}.drag-ph{background:#241f1a;border-color:#332c25}.auto{color:#e2703a}'
     +   '.shm,.shm input{background:#1d1916;border-color:#332c25}.shm a,.shm button,.shm input{color:#f6f2ed}'
-    +   '.shm a:hover,.shm button:hover{background:#241f1a;color:#e2703a}}'
+    +   '.shm a:hover,.shm button:hover{background:#241f1a;color:#e2703a}'
+    +   '.pngb{background:#1d1916;color:#f6f2ed}.pngb p{color:#c2b7ab}.pngb img{border-color:#332c25}'
+    +   '.pngk .go2{background:#241f1a;border-color:#332c25;color:#f6f2ed}}'
      + '</style></head><body><div class="w">'
     + '<a class="back" id="back" href="/?country=places">← Ко всем местам</a>'
     + (изВидео
@@ -3928,17 +3953,36 @@ async function marshrutPage(ids, опции){
     +     'линия:d?d.line:Т.map(function(p){return [p.lat,p.lng];}),'
     +     'плитки:window.__плиткиАдрес,путь:location.pathname});'
     // для проверок: что попало в список на картинке и пришла ли подложка
-    +   'window.__последняяКартинка={строки:итог.строки,зум:итог.зум,плиток:итог.плиток,пришло:итог.пришло,поДорогам:!!d,размер:итог.blob.size};'
+    +   'window.__последняяКартинка={строки:итог.строки,вДвеСтроки:итог.вДвеСтроки,зум:итог.зум,плиток:итог.плиток,пришло:итог.пришло,поДорогам:!!d,размер:итог.blob.size};'
     +   'return итог.blob;};'
+    + 'var ОКНО_КАРТИНКИ=null;'
+    + 'function закрытьКартинку(){var о=ОКНО_КАРТИНКИ;if(!о)return;ОКНО_КАРТИНКИ=null;'
+    +   'о.el.remove();URL.revokeObjectURL(о.u);document.documentElement.style.overflow=о.прокрутка;'
+    +   'var b=document.getElementById("rPng");if(b)b.focus();}'
+    + 'function показатьКартинку(blob){закрытьКартинку();var u=URL.createObjectURL(blob), el=document.createElement("div");'
+    +   'el.className="pngv";el.id="rPngView";el.setAttribute("role","dialog");el.setAttribute("aria-modal","true");'
+    +   'el.setAttribute("aria-label","Картинка маршрута");'
+    +   'el.innerHTML="<div class=\\"pngb\\"><img id=\\"rPngImg\\" alt=\\"Картинка маршрута\\" src=\\""+u+"\\">"'
+    +     '+"<p>Нажмите на картинку и удерживайте, чтобы сохранить в галерею</p>"'
+    +     '+"<div class=\\"pngk\\"><a class=\\"go\\" id=\\"rPngDl\\" href=\\""+u+"\\" download=\\"маршрут.png\\">Скачать</a>"'
+    +     '+"<button class=\\"go2\\" id=\\"rPngClose\\" type=\\"button\\">Закрыть</button></div></div>";'
+    +   'ОКНО_КАРТИНКИ={el:el,u:u,прокрутка:document.documentElement.style.overflow};'
+    +   'document.documentElement.style.overflow="hidden";document.body.appendChild(el);'
+    // нажатие мимо карточки — закрыть
+    +   'el.addEventListener("click",function(e){if(e.target===el||e.target.closest("#rPngClose"))закрытьКартинку();});'
+    +   'document.getElementById("rPngClose").focus();}'
+    + 'document.addEventListener("keydown",function(e){if(e.key==="Escape"&&ОКНО_КАРТИНКИ)закрытьКартинку();});'
     + 'document.getElementById("rPng").addEventListener("click",async function(){var b=this;if(b.disabled)return;'
     +   'b.disabled=true;b.textContent="Собираю…";'
     +   'try{var blob=await window.собратьКартинку(), файл=new File([blob],"маршрут.png",{type:"image/png"}), отдали=false;'
     +     'if(navigator.canShare&&navigator.share){try{if(navigator.canShare({files:[файл]})){await navigator.share({files:[файл]});отдали=true;}}'
     // человек закрыл окно «Поделиться» — это не повод что-то скачивать
     +       'catch(e){if(e&&e.name==="AbortError")отдали=true;}}'
-    +     'if(!отдали){var a=document.createElement("a"),u=URL.createObjectURL(blob);a.href=u;a.download="маршрут.png";'
-    +       'document.body.appendChild(a);a.click();a.remove();setTimeout(function(){URL.revokeObjectURL(u);},30000);}'
+    // Встроенные браузеры (ТикТок и др.) файлами делиться не умеют и скачивание
+    // по <a download> часто молча глотают. Поэтому показываем саму картинку:
+    // долгое нажатие на неё сохраняет в галерею, «Скачать» — для компьютера.
     +     'b.textContent="Сохранить картинкой";'
+    +     'if(!отдали)показатьКартинку(blob);'
     +   '}catch(e){b.textContent="Не получилось, ещё раз?";}'
     +   'b.disabled=false;});'
     + 'перетаскиваниеСтрок(document.getElementById("rlist"), переставить);'

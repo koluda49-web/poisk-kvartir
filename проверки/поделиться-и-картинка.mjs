@@ -160,15 +160,40 @@ check('где можно делиться файлами — navigator.share({fi
 await ждать(`document.getElementById('rPng').textContent === 'Сохранить картинкой'`, 20);
 check('после — снова «Сохранить картинкой»', (await js(`document.getElementById('rPng').textContent`)) === 'Сохранить картинкой');
 
+// Встроенный браузер: делиться файлами нельзя — показываем картинку в окне
 await js(`(function(){
   Object.defineProperty(navigator, 'canShare', { value: undefined, configurable: true, writable: true });
-  window.__скачали = null;
-  HTMLAnchorElement.prototype.click = function(){ if (this.download) window.__скачали = { download: this.download, href: this.href }; };
+  Object.defineProperty(navigator, 'share', { value: undefined, configurable: true, writable: true });
+  window.__отозваны = [];
+  var отозвать = URL.revokeObjectURL; URL.revokeObjectURL = function(u){ window.__отозваны.push(u); return отозвать.call(URL, u); };
 })(); 1`);
-await js(`document.getElementById('rPng').click(); 1`);
-await ждать(`!!window.__скачали`, 60);
-const скачали = JSON.parse(await js(`JSON.stringify(window.__скачали)`));
-check('иначе — скачивание маршрут.png через <a download>', !!скачали && скачали.download === 'маршрут.png' && /^blob:/.test(скачали.href), JSON.stringify(скачали));
+const окноОткрыто = async () => {
+  await js(`document.getElementById('rPng').click(); 1`);
+  return ждать(`(function(){ var i = document.getElementById('rPngImg'); return !!i && i.complete && i.naturalWidth > 0; })()`, 60);
+};
+check('без share/canShare «Сохранить картинкой» открывает окно с картинкой', await окноОткрыто());
+const окно = JSON.parse(await js(`(function(){
+  var v = document.getElementById('rPngView'), i = document.getElementById('rPngImg'), a = document.getElementById('rPngDl'), r = i.getBoundingClientRect();
+  return JSON.stringify({ w: i.naturalWidth, h: i.naturalHeight, src: i.src, текст: v.textContent, dl: a.getAttribute('download'), href: a.href,
+    закрыть: !!document.getElementById('rPngClose'), высота: r.height, экран: innerHeight, влезает: r.top >= 0 && r.bottom <= innerHeight && r.right <= innerWidth,
+    фиксировано: getComputedStyle(v).position === 'fixed' });
+})()`));
+check('в окне картинка 1080×1920 (blob:)', окно.w === 1080 && окно.h === 1920 && /^blob:/.test(окно.src), окно.w + '×' + окно.h + ' ' + окно.src.slice(0, 30));
+check('подсказка про долгое нажатие', окно.текст.includes('Нажмите на картинку и удерживайте, чтобы сохранить в галерею'));
+check('кнопка «Скачать» — <a download="маршрут.png"> на ту же картинку', окно.dl === 'маршрут.png' && окно.href === окно.src && окно.текст.includes('Скачать'));
+check('кнопка «Закрыть» есть', окно.закрыть && окно.текст.includes('Закрыть'));
+check('окно помещается на экран телефона (картинка ≤ 70vh)', окно.фиксировано && окно.влезает && окно.высота <= окно.экран * 0.7 + 1, JSON.stringify({ h: окно.высота, экран: окно.экран, влезает: окно.влезает }));
+await js(`document.getElementById('rPngClose').click(); 1`);
+check('«Закрыть» убирает окно и отзывает адрес картинки', await js(`!document.getElementById('rPngView') && window.__отозваны.indexOf(${JSON.stringify(окно.src)}) >= 0`));
+check('после закрытия прокрутка страницы снова работает', await js(`document.documentElement.style.overflow !== 'hidden'`));
+await окноОткрыто();
+await js(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 1`);
+check('Escape закрывает окно', await js(`!document.getElementById('rPngView')`));
+await окноОткрыто();
+await js(`document.querySelector('.pngb p').click(); 1`);
+check('нажатие внутри карточки окно не закрывает', await js(`!!document.getElementById('rPngView')`));
+await js(`document.getElementById('rPngView').click(); 1`);
+check('нажатие мимо карточки закрывает окно', await js(`!document.getElementById('rPngView')`));
 
 // ── /m/lida-voronovo: 7 строк на картинке ────────────────────────────────
 await js(`localStorage.clear(); 1`);
@@ -180,11 +205,18 @@ check('/m/lida-voronovo: в картинке-списке 7 строк', к.п &
 check('/m/lida-voronovo: строки «номер · название · адрес»', к.п && к.п.строки.every((s, i) => s.indexOf((i + 1) + ' · ') === 0), JSON.stringify(к.п && к.п.строки));
 check('/m/lida-voronovo: 1080×1920, линия по дорогам', к.w === 1080 && к.h === 1920 && к.п.поДорогам, JSON.stringify(к.п).slice(0, 200));
 check('/m/lida-voronovo: текст для «Поделиться» — «Маршрут на день: 7 точек»', (await js(`текстМаршрута()`)) === 'Маршрут на день: 7 точек');
+check('/m/lida-voronovo: до 7 точек — список в две строки (название, под ним адрес)', к.п && к.п.вДвеСтроки === true, JSON.stringify(к.п && к.п.вДвеСтроки));
+check('/m/lida-voronovo: длинные названия в две строки не обрезаны', к.п && !к.п.строки.some(s => s.split(' · ')[1].endsWith('…')), JSON.stringify(к.п && к.п.строки));
 if (ОБРАЗЕЦ) {
   const b64 = await js(`(async function(){ var b = await window.собратьКартинку(); return await new Promise(function(r){ var f = new FileReader(); f.onload = function(){ r(String(f.result).split(',')[1]); }; f.readAsDataURL(b); }); })()`);
   writeFileSync(ОБРАЗЕЦ, Buffer.from(b64, 'base64'));
   console.log('  образец сохранён: ' + ОБРАЗЕЦ);
 }
+
+// 11 точек: в одну строку, не больше 10, «и ещё 1». В хранилище не пишем — Т подменяем напрямую.
+await js(`Т = Т.concat([0,1,2,3].map(function(i){ return { id: 'm53.9' + i + '000_25.3' + i + '000', name: 'Своя точка ' + (i + 1), addr: '', lat: 53.9 + i / 100, lng: 25.3 + i / 100 }; })); 1`);
+к = JSON.parse(await js(СОБРАТЬ));
+check('11 точек: список в одну строку, 10 строк', к.п && к.п.вДвеСтроки === false && к.п.строки.length === 10, JSON.stringify(к.п).slice(0, 160));
 
 await js(`localStorage.clear(); 1`);
 check('в консоли нет ошибок', ошибки.length === 0, ошибки.slice(0, 2).join(' | '));
