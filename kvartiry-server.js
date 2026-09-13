@@ -78,6 +78,9 @@ let выходим = false;
   if(выходим) process.exit(0);
   выходим = true;
   statsSave();
+  // Прибавки популярного ждут своего окна в памяти — пишем их сейчас,
+  // чтобы ушли в GitHub вместе с остальным отложенным.
+  try{ сохранитьПопулярноеСейчас(); }catch(e){}
   setTimeout(function(){ process.exit(0); }, 8000);
   try{ отправитьОтложенноеСейчас().then(function(){ process.exit(0); }, function(){ process.exit(0); }); }
   catch(e){ process.exit(0); }   // сигнал пришёл, пока сервер ещё не дочитался до хранилища
@@ -477,7 +480,8 @@ function refHost(r){
 }
 
 // из тела запроса берём только заранее разрешённые поля
-const T_FIELDS = ['n','w','ttfb','load','sec','scroll','total','auto','c','region','city','type','rooms','max','host','from'];
+// id — номер места в событии route_add (у своей точки — 'm'), из него считается популярное
+const T_FIELDS = ['n','w','ttfb','load','sec','scroll','total','auto','c','region','city','type','rooms','max','host','from','id'];
 function statsFields(o){
   const out = {};
   for(const k of T_FIELDS){
@@ -515,6 +519,7 @@ const EV_RU = {
   map:           'открыл карту',
   subscribe:     'ждёт уведомлений о жилье',
   place_suggest: 'хочет предложить точку',
+  route_add:     'добавил место в маршрут',
 };
 function evRu(e){ return EV_RU[e] || e; }
 
@@ -528,7 +533,7 @@ function searchLabel(p){
   return [city, type].filter(Boolean).join(' · ') + rooms + price;
 }
 
-function statsPage(){
+function statsPage(популярное){
   const now = Date.now();
   const esc = function(t){ return String(t).replace(/[&<>]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]; }); };
   const since = function(ms){ return STATS.filter(function(x){ return now - x.t <= ms; }); };
@@ -630,6 +635,7 @@ function statsPage(){
     '.log td{border-top:1px solid #eef0f4;padding:5px 6px;vertical-align:top}' +
     '.log .raw{color:#8b93a3;font-size:12px;word-break:break-all}' +
     '.none{color:#8b93a3;font-size:14px;margin:4px 0}' +
+    '.pop .n{width:56px;text-align:right;font-weight:700}.pop a{color:#141821}' +
     '.warn{background:#fff4ee;border:1px solid #ffd3bd;border-radius:12px;padding:12px 14px;font-size:14px;margin-top:10px}.istoch{background:#fff;border:1px solid #e2e5ea;border-radius:14px;padding:12px 16px;margin:10px 0 16px;font-size:14px}.istoch span{display:inline-block;padding:2px 10px;border-radius:999px;font-size:13px;margin-right:6px}.istoch span.on{background:#e8f5ee;color:#1a7f4b}.istoch span.off{background:#fdeceb;color:#b3261e;font-weight:700}.istoch a{display:inline-block;margin:8px 8px 0 0;padding:6px 13px;border:1px solid #e2e5ea;border-radius:999px;text-decoration:none;color:#141821;font-size:13px}.istoch a:hover{border-color:#9a3412;color:#9a3412}.istoch .note{color:#8b93a3;font-size:12.5px;margin-top:8px}' +
     '</style></head><body><div class="wrap">' +
     '<h1>Статистика сайта</h1>'
@@ -752,6 +758,23 @@ function statsPage(){
       tile('Свои точки на карте', weekA.filter(function(x){ return x.e === 'place_suggest'; }).length,
            'открыли форму «Предложить точку»') +
     '</div><p class="note">«Хочу такое» пока заглушка: цифра показывает, скольким это нужно.</p></div>' +
+
+    // Какие места чаще кладут в маршрут — подсказка, о чём снимать следующий ролик.
+    // Без порога: владельцу интересна и точка с одним голосом.
+    '<h2>Популярное в маршрутах</h2><div class="card">' +
+      (function(){
+        const все = счётПопулярного();
+        const голосов = Object.keys(все).reduce(function(с, к){ return с + все[к]; }, 0);
+        const строки = (популярное || []).map(function(p, i){
+          return '<tr><td class="n">' + (i + 1) + '</td><td><a href="/mesto/' + encodeURIComponent(p.id) + '">' + esc(p.name) + '</a>'
+            + (p.addr ? '<div class="note">' + esc(p.addr) + '</div>' : '') + '</td><td class="n">' + p.count + '</td></tr>';
+        }).join('');
+        return '<p class="note" style="margin:0 0 8px">Всего голосов: ' + голосов + ' · мест: ' + Object.keys(все).length
+          + ' · один посетитель — один голос за место</p>'
+          + (строки ? '<table class="log pop"><tr><td class="n"><b>№</b></td><td><b>место</b></td><td class="n"><b>человек</b></td></tr>' + строки + '</table>'
+                    : '<p class="none">пока пусто</p>');
+      })() +
+    '</div>' +
 
     '<h2>Последние события</h2><div class="card"><table class="log">' +
       '<tr><td><b>когда</b></td><td><b>что</b></td><td><b>откуда</b></td><td><b>устр.</b></td><td><b>подробности</b></td></tr>' +
@@ -2702,6 +2725,95 @@ async function placesRaw(){
   return attachOwn(raw.concat(местаОтЛюдей()));
 }
 
+// ── Популярное в маршрутах ────────────────────────────────────────────────
+// Сколько разных посетителей добавили точку в маршрут. Зачем: людям — лента
+// «Чаще всего добавляют в маршрут» на вкладке мест, владельцу — таблица на
+// /stats, из которой видно, о чём снимать следующий ролик.
+// Один посетитель — один голос за точку. Кто уже голосовал, помним только
+// в памяти (после перезапуска голос может засчитаться ещё раз — не страшно,
+// хранить на диске список посетителей ради этого незачем).
+// Счётчики живут в двух частях: счёт — то, что уже записано в файл (или
+// пришло из GitHub), прибавки — новое с последней записи. В файл пишем не
+// чаще раза в POPULAR_SAVE_MS: на каждую точку в маршруте переписывать файл
+// и ставить отправку в GitHub — лишняя работа.
+const POPULAR_SAVE_MS = +process.env.POPULAR_SAVE_MS || 600000;
+const ГОЛОСОВ_МАКС = 50000;
+// Номер места — только цифры: иначе в файл можно было бы насыпать что угодно.
+const номерМеста = function(id){ const с = String(id == null ? '' : id); return /^[0-9]{1,9}$/.test(с) ? с : ''; };
+// Файл могли поправить руками: берём только номера и целые неотрицательные числа.
+function чистыеСчётчики(o){
+  const итог = {};
+  if(!o || typeof o !== 'object' || Array.isArray(o)) return итог;
+  Object.keys(o).forEach(function(к){
+    const ч = Math.floor(+o[к]);
+    if(номерМеста(к) && isFinite(ч) && ч > 0) итог[к] = ч;
+  });
+  return итог;
+}
+// Слияние счётчиков (правило у подключитьДанные): к копии из GitHub
+// прибавляем то, что этот экземпляр насчитал сверх основы. Чистая функция.
+function слитьСчётчики(изGitHub, доЗагрузки, основа){
+  const итог = чистыеСчётчики(изGitHub);
+  if(!доЗагрузки || typeof доЗагрузки !== 'object') return итог;   // своих записей не было
+  const мои = чистыеСчётчики(доЗагрузки), было = чистыеСчётчики(основа);
+  new Set(Object.keys(мои).concat(Object.keys(было))).forEach(function(к){
+    const разница = (мои[к] || 0) - (было[к] || 0);
+    if(!разница) return;
+    const ч = (итог[к] || 0) + разница;
+    if(ч > 0) итог[к] = ч; else delete итог[к];
+  });
+  return итог;
+}
+const ПОПУЛЯРНОЕ = { счёт: {}, прибавки: {}, голоса: new Set(), таймер: null };
+ПОПУЛЯРНОЕ.счёт = чистыеСчётчики(подключитьДанные('популярное', {}, function(гх, до, основа){
+  return (ПОПУЛЯРНОЕ.счёт = слитьСчётчики(гх, до, основа));
+}));
+// Прибавки не входят в записанное, поэтому слияние их не трогает — они
+// просто лежат сверху до следующей записи.
+function счётПопулярного(){
+  const итог = Object.assign({}, ПОПУЛЯРНОЕ.счёт);
+  Object.keys(ПОПУЛЯРНОЕ.прибавки).forEach(function(к){ итог[к] = (итог[к] || 0) + ПОПУЛЯРНОЕ.прибавки[к]; });
+  return итог;
+}
+function сохранитьПопулярноеСейчас(){
+  if(ПОПУЛЯРНОЕ.таймер){ clearTimeout(ПОПУЛЯРНОЕ.таймер); ПОПУЛЯРНОЕ.таймер = null; }
+  if(!Object.keys(ПОПУЛЯРНОЕ.прибавки).length) return;
+  ПОПУЛЯРНОЕ.счёт = счётПопулярного();
+  ПОПУЛЯРНОЕ.прибавки = {};
+  записатьДанные('популярное', ПОПУЛЯРНОЕ.счёт);
+}
+// Голос из события route_add. Робота, чужой номер и повтор не считаем.
+async function голосЗаМесто(id, посетитель, робот){
+  const к = номерМеста(id), v = String(посетитель || '');
+  if(!к || !v || робот) return false;
+  if(ПОПУЛЯРНОЕ.голоса.has(v + '|' + к)) return false;
+  // Только места из справочника: номер, которого нет, в файл не пишем.
+  let есть = false;
+  try{ есть = (await placesRaw()).some(function(p){ return String(p.id) === к; }); }catch(e){ return false; }
+  if(!есть || ПОПУЛЯРНОЕ.голоса.has(v + '|' + к)) return false;
+  ПОПУЛЯРНОЕ.голоса.add(v + '|' + к);
+  // Set помнит порядок добавления: первым идёт самый старый голос.
+  if(ПОПУЛЯРНОЕ.голоса.size > ГОЛОСОВ_МАКС) ПОПУЛЯРНОЕ.голоса.delete(ПОПУЛЯРНОЕ.голоса.values().next().value);
+  ПОПУЛЯРНОЕ.прибавки[к] = (ПОПУЛЯРНОЕ.прибавки[к] || 0) + 1;
+  if(!ПОПУЛЯРНОЕ.таймер && !выходим){
+    ПОПУЛЯРНОЕ.таймер = setTimeout(сохранитьПопулярноеСейчас, POPULAR_SAVE_MS);
+    ПОПУЛЯРНОЕ.таймер.unref();
+  }
+  return true;
+}
+// Топ мест с названиями: [{id,name,addr,pic,lat,lng,count}], по убыванию.
+async function популярныеМеста(сколько){
+  const счёт = счётПопулярного();
+  const номера = Object.keys(счёт);
+  if(!номера.length) return [];
+  const поНомеру = new Map((await placesRaw()).map(function(p){ return [String(p.id), p]; }));
+  return номера.filter(function(к){ return поНомеру.has(к); })
+    .map(function(к){ const p = поНомеру.get(к);
+      return { id: p.id, name: p.name, addr: p.addr || '', pic: p.pic || '', lat: p.lat, lng: p.lng, count: счёт[к] }; })
+    .sort(function(a, b){ return b.count - a.count || String(a.name).localeCompare(String(b.name), 'ru'); })
+    .slice(0, сколько);
+}
+
 // короткое описание одной точки; полный текст остаётся на kudin.by
 async function placeDetail(id){
   // у собственных точек описание своё, ходить за ним некуда
@@ -4140,6 +4252,14 @@ async function marshrutPage(ids, опции){
     + 'var карта = null, слой = null, линия = null;'+ 'function км(a,b){var t=Math.PI/180,x=(b.lat-a.lat)*t,y=(b.lng-a.lng)*t;'+   'var h=Math.sin(x/2)*Math.sin(x/2)+Math.cos(a.lat*t)*Math.cos(b.lat*t)*Math.sin(y/2)*Math.sin(y/2);'+   'return 6371*2*Math.asin(Math.sqrt(h));}'+ 'function esc(t){return String(t==null?"":t).replace(/[&<>"]/g,function(c){'+   'return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c];});}'+ 'var РЕЖИМ=false, НЕ_ДВИГАТЬ=false;'
     + 'function своя(p){return String(p&&p.id).charAt(0)==="m";}'
     + 'function вСсылку(p){return своя(p)?(p.id+"~"+encodeURIComponent(p.name||"")):p.id;}'
+    // Событие route_add — тем же видом, что шлёт главная (посетитель — тот же
+    // pk_vid): из него считается «Чаще всего добавляют в маршрут». Своя точка — id "m".
+    + 'var СЕССИЯ=Math.random().toString(36).slice(2);'
+    + 'function отметитьДобавление(p){try{var v=localStorage.getItem("pk_vid");'
+    +   'if(!v){v=Math.random().toString(36).slice(2)+Date.now().toString(36);localStorage.setItem("pk_vid",v);}'
+    +   'var b=JSON.stringify({e:"route_add",v:v,s:СЕССИЯ,id:своя(p)?"m":p.id});'
+    +   'if(navigator.sendBeacon)navigator.sendBeacon("/api/t",new Blob([b],{type:"application/json"}));'
+    +   'else fetch("/api/t",{method:"POST",body:b,keepalive:true});}catch(e){}}'
     + 'function чистоеИмя(t){return String(t||"").replace(/[<>~,]/g," ").replace(/\\s+/g," ").trim().slice(0,60);}'
     + 'function поставить(lat,lng){if(!isFinite(lat)||!isFinite(lng)||Math.abs(lat)>90||Math.abs(lng)>180)return;'
     +   'var имя=window.prompt("Как назвать точку? Например: Вольный мельник","");'
@@ -4164,7 +4284,7 @@ async function marshrutPage(ids, опции){
     +   'if(!СВЯЗАН)localStorage.setItem("routeOrder",ПОРЯДОК);}catch(e){}'
     +   'СВЯЗАН=true;запомнитьВиденное();обновитьАдрес();}'
     // адрес страницы — это ссылка на маршрут: точки и, если порядок ручной, o=1
-    + 'function обновитьАдрес(){var q = Т.length ? ("?p=" + Т.map(вСсылку).join(",") + (ПОРЯДОК==="manual"?"&o=1":"") + (ДВА_ДНЯ?"&d="+НОЧЁВКА:"")) : "";'+   'history.replaceState(null, "", "/marshrut" + q);}'+ 'function убрать(id){Т = Т.filter(function(p){return String(p.id)!==String(id);});нарисовать();сохранить();}'+ 'function добавить(p){if(Т.some(function(x){return String(x.id)===String(p.id);}))return;'+   'Т = Т.concat([{id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}]);нарисовать();сохранить();}'+ 'function порядок(){if(ПОРЯДОК==="manual"||Т.length<3)return;var left=Т.slice(1),out=[Т[0]];'+   'while(left.length){var c=out[out.length-1],bi=0,bd=Infinity;'+     'left.forEach(function(p,i){var d=км(c,p);if(d<bd){bd=d;bi=i;}});'+     'out.push(left.splice(bi,1)[0]);}Т=out;}'+ 'function нарисовать(){порядок();'+   'var сумма=0, строки="";'+   'Т.forEach(function(p,i){var шаг=i?км(Т[i-1],p):0;сумма+=шаг;'+     'строки += "<div class=\\"it\\"><button class=\\"drag\\" type=\\"button\\" aria-label=\\"Перетащить\\">⋮⋮</button><span class=\\"n\\">"+(i+1)+"</span>"'+       '+"<span class=\\"t\\">"+(своя(p)?("<b class=\\"ownn\\">📍 "+esc(p.name)+"</b><small>своя точка · её можно перетащить на карте</small>"):("<a href=\\"/mesto/"+p.id+"\\">"+esc(p.name)+"</a>"))'+       '+(p.addr?("<small>"+esc(p.addr)+"</small>"):"")+"</span>"'+       '+"<span class=\\"km\\">"+(i?("+"+Math.round(шаг)+" км"):"старт")+"</span>"'+       '+"<button class=\\"x\\" type=\\"button\\" title=\\"убрать\\" data-id=\\""+p.id+"\\">×</button></div>";});'+   'document.getElementById("rlist").innerHTML = строки; подписатьШаги();'+   'document.getElementById("rsub").textContent = Т.length'+     '? (Т.length + " точек · около " + Math.round(сумма) + " км между ними")'+     ': "Пока пусто";'
+    + 'function обновитьАдрес(){var q = Т.length ? ("?p=" + Т.map(вСсылку).join(",") + (ПОРЯДОК==="manual"?"&o=1":"") + (ДВА_ДНЯ?"&d="+НОЧЁВКА:"")) : "";'+   'history.replaceState(null, "", "/marshrut" + q);}'+ 'function убрать(id){Т = Т.filter(function(p){return String(p.id)!==String(id);});нарисовать();сохранить();}'+ 'function добавить(p){if(Т.some(function(x){return String(x.id)===String(p.id);}))return;'+   'Т = Т.concat([{id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}]);нарисовать();сохранить();отметитьДобавление(p);}'+ 'function порядок(){if(ПОРЯДОК==="manual"||Т.length<3)return;var left=Т.slice(1),out=[Т[0]];'+   'while(left.length){var c=out[out.length-1],bi=0,bd=Infinity;'+     'left.forEach(function(p,i){var d=км(c,p);if(d<bd){bd=d;bi=i;}});'+     'out.push(left.splice(bi,1)[0]);}Т=out;}'+ 'function нарисовать(){порядок();'+   'var сумма=0, строки="";'+   'Т.forEach(function(p,i){var шаг=i?км(Т[i-1],p):0;сумма+=шаг;'+     'строки += "<div class=\\"it\\"><button class=\\"drag\\" type=\\"button\\" aria-label=\\"Перетащить\\">⋮⋮</button><span class=\\"n\\">"+(i+1)+"</span>"'+       '+"<span class=\\"t\\">"+(своя(p)?("<b class=\\"ownn\\">📍 "+esc(p.name)+"</b><small>своя точка · её можно перетащить на карте</small>"):("<a href=\\"/mesto/"+p.id+"\\">"+esc(p.name)+"</a>"))'+       '+(p.addr?("<small>"+esc(p.addr)+"</small>"):"")+"</span>"'+       '+"<span class=\\"km\\">"+(i?("+"+Math.round(шаг)+" км"):"старт")+"</span>"'+       '+"<button class=\\"x\\" type=\\"button\\" title=\\"убрать\\" data-id=\\""+p.id+"\\">×</button></div>";});'+   'document.getElementById("rlist").innerHTML = строки; подписатьШаги();'+   'document.getElementById("rsub").textContent = Т.length'+     '? (Т.length + " точек · около " + Math.round(сумма) + " км между ними")'+     ': "Пока пусто";'
     +   'document.getElementById("rAuto").style.display = (ПОРЯДОК==="manual"&&Т.length>2) ? "" : "none";'
     +   'var g = document.getElementById("rGo");'+   'g.href = "https://yandex.by/maps/?rtext=" + Т.map(function(p){return p.lat+","+p.lng;}).join("~") + "&rtt=auto";'+   'g.className = "go" + (Т.length ? "" : " off");'
     +   '["rShare","rPng"].forEach(function(id){document.getElementById(id).classList.toggle("off",!Т.length);});'
@@ -4251,7 +4371,7 @@ async function marshrutPage(ids, опции){
     +   'var т={id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}, куда=Т.length, крюк=км(Т[Т.length-1],т);'
     +   'if(км(т,Т[0])<крюк){крюк=км(т,Т[0]);куда=0;}'
     +   'for(var i=1;i<Т.length;i++){var c=км(Т[i-1],т)+км(т,Т[i])-км(Т[i-1],Т[i]);if(c<крюк){крюк=c;куда=i;}}'
-    +   'Т=Т.slice(0,куда).concat([т],Т.slice(куда));нарисовать();сохранить();}'
+    +   'Т=Т.slice(0,куда).concat([т],Т.slice(куда));нарисовать();сохранить();отметитьДобавление(т);}'
     + 'document.getElementById("rNearList").addEventListener("click",function(e){var b=e.target.closest(".na");if(!b)return;'
     +   'try{вставитьПоПути(JSON.parse(b.getAttribute("data-p")));}catch(err){}});'
     // снимок не загрузился — нейтральная заглушка вместо значка битой картинки
@@ -4767,15 +4887,28 @@ function подборкаКлиент(){
       бар.textContent = 'Мой маршрут: ' + n + ' ' + слово + ' →';
     }
   }
-  // Добавление и удаление — одна функция: к ней потом подключим счёт популярности мест.
+  // Событие route_add — в том же виде, что шлёт главная, и от того же посетителя
+  // (pk_vid): из него сервер считает «Чаще всего добавляют в маршрут».
+  var сессия = Math.random().toString(36).slice(2);
+  function отметитьДобавление(id){
+    try{
+      var v = localStorage.getItem('pk_vid');
+      if(!v){ v = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('pk_vid', v); }
+      var тело = JSON.stringify({ e: 'route_add', v: v, s: сессия, id: id });
+      if(navigator.sendBeacon) navigator.sendBeacon('/api/t', new Blob([тело], { type: 'application/json' }));
+      else fetch('/api/t', { method: 'POST', body: тело, keepalive: true });
+    }catch(e){}
+  }
+  // Добавление и удаление — одна функция; голос за место — только при добавлении.
   // Формат точки тот же, что у главной ({id,name,addr,lat,lng}), номер — числом,
   // как пишет главная, иначе там точка не отметится галочкой.
   function переключитьВМаршруте(b){
-    var список = прочитать(), id = b.dataset.id;
-    if(есть(список, id)) список = список.filter(function(p){ return String(p.id) !== String(id); });
+    var список = прочитать(), id = b.dataset.id, добавили = !есть(список, id);
+    if(!добавили) список = список.filter(function(p){ return String(p.id) !== String(id); });
     else список.push({ id: +id, name: b.dataset.name, addr: b.dataset.addr || '',
                        lat: +b.dataset.lat, lng: +b.dataset.lng });
     try{ localStorage.setItem('route', JSON.stringify(список)); }catch(e){}
+    if(добавили) отметитьДобавление(+id);
     обновить();
   }
   window.переключитьВМаршруте = переключитьВМаршруте;
@@ -6353,6 +6486,20 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
 .pl-links a.pl-chip{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:3px 11px;color:var(--txt)}
 .pl-links a.pl-chip:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
 .pl-links a.pl-video{align-self:center}
+/* «Чаще всего добавляют в маршрут» — лента в том же духе, что «По пути» на странице маршрута. */
+.pl-pop{margin:0 0 16px}
+.pl-pop h2{font-size:17px;line-height:1.25;margin:0 0 8px;letter-spacing:-.01em;color:var(--txt)}
+.pl-pop-list{display:flex;gap:10px;overflow-x:auto;padding:0 0 6px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch}
+.pop-c{flex:0 0 160px;display:flex;flex-direction:column;min-width:0;scroll-snap-align:start}
+.pop-c img,.pop-c .pop-ni{width:100%;height:92px;object-fit:cover;border-radius:var(--radius-sm);display:block;background:var(--surface-3)}
+.pop-c .pop-n{font-weight:700;font-size:15px;line-height:1.25;margin-top:6px;color:var(--txt);text-decoration:none;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.pop-c .pop-n:hover{color:var(--accent)}
+.pop-c .pop-a{font-size:12px;color:var(--txt-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:6px}
+.pop-c .pop-b{margin-top:auto;font:inherit;font-size:14px;font-weight:700;cursor:pointer;background:var(--surface);color:var(--accent);
+  border:1px solid var(--line);border-radius:9px;padding:7px 8px}
+.pop-c .pop-b:hover{border-color:var(--accent)}
+.pop-c .pop-b.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 #routeBox{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
   padding:14px 16px;margin:0 0 14px;box-shadow:var(--shadow-sm)}
 .rt-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
@@ -6758,6 +6905,11 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
 
   <div class="pl-links" id="plLinks" style="display:none"><!--ПОДБОРКИ--><a class="pl-video" href="/m">Маршруты из видео →</a></div>
 
+  <section class="pl-pop" id="plPop" hidden>
+    <h2>Чаще всего добавляют в маршрут</h2>
+    <div class="pl-pop-list" id="plPopList"></div>
+  </section>
+
   <div class="presets" id="presets">
     <button class="preset" type="button" data-preset="cheap">до 60 руб</button>
     <button class="preset" type="button" data-preset="weekend">на выходные</button>
@@ -6926,6 +7078,7 @@ function setCountry(c, quiet){
   const sb = $('#subBox'); if(sb) sb.style.display = pl ? 'none' : '';
   const pb = $('#plBox');  if(pb) pb.style.display = pl ? '' : 'none';
   const pk = $('#plLinks'); if(pk) pk.style.display = pl ? '' : 'none';
+  показатьПопулярное();
   drawRoute();
   const ft = $('#fToggle'); if(ft) ft.style.display = (ru || pl) ? 'none' : '';
   if(!window.__hintBY) window.__hintBY = $('#hint').innerHTML;
@@ -7804,6 +7957,7 @@ async function runPlaces(){
     $('#stat').textContent = 'Найдено мест: ' + d.total + where;
     renderPlaces();
     drawRoute();
+    загрузитьПопулярное();
     if(window.__view === 'map') plotPlaces();
     syncUrl();
     if(window.__T) window.__T('places', { city: $('#plCity').value, total: d.total });
@@ -7857,6 +8011,57 @@ function renderPlaces(){
     list.slice(0, 12).forEach(function(p, i){ loadPlaceText(p.id, i); });
   }
 }
+// ── «Чаще всего добавляют в маршрут» ──────────────────────────────────────
+// Лента — дополнение к списку, поэтому спрашиваем её один раз и только
+// после того, как список мест уже нарисован. Пустой ответ — блока нет совсем.
+window.__pop = null;
+function загрузитьПопулярное(){
+  if(window.__pop || window.__popЗапрос){ показатьПопулярное(); return; }
+  window.__popЗапрос = 1;
+  fetch('/api/places/popular').then(function(r){ return r.json(); }).then(function(d){
+    window.__pop = (d && Array.isArray(d.items)) ? d.items : [];
+    показатьПопулярное();
+  }).catch(function(){ window.__popЗапрос = 0; });
+}
+function показатьПопулярное(){
+  const box = $('#plPop'), list = $('#plPopList'); if(!box || !list) return;
+  const items = window.__pop || [];
+  // Когда ищут по названию, лента над найденным только мешает.
+  const q = $('#plQ');
+  if(window.__mode !== 'places' || !items.length || (q && q.value.trim())){ box.hidden = true; return; }
+  // Сначала показываем блок, потом вставляем карточки: ленивые снимки,
+  // вставленные в скрытый блок, Chrome не начинает грузить.
+  box.hidden = false;
+  if(!list.children.length){
+    list.innerHTML = items.map(function(p, i){
+      return '<div class="pop-c">'
+        + (p.pic ? ('<img src="' + esc2(p.pic) + '" loading="lazy" alt="">') : '<div class="pop-ni"></div>')
+        + '<a class="pop-n" href="/mesto/' + p.id + '-' + esc2(slugRu(p.name)) + '" title="' + esc2(p.name) + '">' + esc2(p.name) + '</a>'
+        + '<div class="pop-a">' + esc2(p.addr || '') + '</div>'
+        + '<button class="pop-b" type="button" data-i="' + i + '">+ в маршрут</button></div>';
+    }).join('');
+    list.addEventListener('click', function(e){
+      const b = e.target.closest('.pop-b'); if(!b) return;
+      const p = (window.__pop || [])[+b.dataset.i]; if(p) routeToggle(p);
+    });
+    // снимок не загрузился — спокойная заглушка вместо значка битой картинки
+    list.addEventListener('error', function(e){
+      const t = e.target; if(!t || t.tagName !== 'IMG') return;
+      const d = document.createElement('div'); d.className = 'pop-ni'; t.replaceWith(d);
+    }, true);
+  }
+  отметитьПопулярное();
+}
+// галочки на кнопках ленты — по тому же маршруту, что и у карточек списка
+function отметитьПопулярное(){
+  document.querySelectorAll('#plPopList .pop-b').forEach(function(b){
+    const p = (window.__pop || [])[+b.dataset.i]; if(!p) return;
+    const on = inRoute(p.id);
+    b.classList.toggle('on', on);
+    b.textContent = on ? '✓ в маршруте' : '+ в маршрут';
+  });
+}
+
 // то же превращение названия в кусок адреса, что и на сервере
 const ЛАТ2 = {'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'e','ж':'zh','з':'z','и':'i',
   'й':'j','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u',
@@ -8046,7 +8251,8 @@ function routeToggle(p){
   if(было) window.__route = window.__route.filter(function(x){ return x.id !== p.id; });
   else window.__route = window.__route.concat([{ id:p.id, name:p.name, addr:p.addr || '', lat:p.lat, lng:p.lng }]);
   try{ localStorage.setItem('route', JSON.stringify(window.__route)); }catch(e){}
-  if(window.__T && !было) window.__T('route_add', {});
+  // номер места — для «Чаще всего добавляют в маршрут»; своя точка не считается
+  if(window.__T && !было) window.__T('route_add', { id: своя(p) ? 'm' : p.id });
   // Перерисовываем одну кнопку, а не всю ленту: заново рисовать шесть десятков
   // карточек ради галочки — это перезагрузка всех снимков и рывок страницы.
   (window.__places || []).forEach(function(x, i){ if(x.id === p.id) markRoute(i, !было); });
@@ -8158,6 +8364,7 @@ function поставитьСвоюТочку(lat, lng){
   if(inRoute(id)) return;
   window.__route = (window.__route || []).concat([{ id:id, name:имя, lat:+lat.toFixed(5), lng:+lng.toFixed(5) }]);
   try{ localStorage.setItem('route', JSON.stringify(window.__route)); }catch(e){}
+  if(window.__T) window.__T('route_add', { id:'m' });
   drawRoute();
 }
 
@@ -8244,6 +8451,7 @@ function дотянутьАдрес(id){
 
 function drawRoute(){
   рисоватьМаршрутНаКарте();
+  отметитьПопулярное();
   const box = $('#routeBox'); if(!box) return;
   const list = orderRoute(window.__route || []);
   window.__route = list;
@@ -8975,6 +9183,7 @@ http.createServer(async (req,res)=>{
           m: /Mobile|Android|iPhone|iPad/i.test(ua) ? 'моб.' : 'комп.',
           p: statsFields(d)
         });
+        if(d.e === 'route_add') голосЗаМесто(d.id, String(d.v||'').slice(0,32), botOf(ua)).catch(function(){});
       }catch(e){}
       res.writeHead(204); res.end();
     });
@@ -9066,8 +9275,17 @@ http.createServer(async (req,res)=>{
       res.writeHead(403, {'Content-Type':'text/plain; charset=utf-8'});
       res.end('Нужен ключ: /stats?key=…'); return;
     }
+    // Популярное — с названиями из справочника; справочник не ответил —
+    // хотя бы номера, цифры владельцу нужнее названий.
+    let популярное;
+    try{ популярное = await популярныеМеста(30); }
+    catch(e){
+      const счёт = счётПопулярного();
+      популярное = Object.keys(счёт).sort(function(a, b){ return счёт[b] - счёт[a]; }).slice(0, 30)
+        .map(function(к){ return { id: к, name: 'место №' + к, count: счёт[к] }; });
+    }
     res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
-    res.end(statsPage()); return;
+    res.end(statsPage(популярное)); return;
   }
   // страницы под поиск: /minsk, /brest, /minsk-nedorogo, /brest-usadby …
   // Готовые маршруты: что посмотреть по дороге.
@@ -9243,6 +9461,20 @@ http.createServer(async (req,res)=>{
     (await placesRaw()).forEach(p => { if(p.group) groups[p.group] = (groups[p.group]||0) + 1; });
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
     res.end(JSON.stringify({ total: list.length, groups, items: list.slice(0, 300) })); return;
+  }
+  // «Чаще всего добавляют в маршрут»: до 12 мест, которые добавили хотя бы
+  // двое. Меньше четырёх таких — пусто: лента из двух карточек выглядит
+  // случайной, а не «популярным».
+  if(u.pathname === '/api/places/popular'){
+    let d = { items: [] };
+    try{
+      d = await cached('popular|places', async function(){
+        const места = (await популярныеМеста(1e9)).filter(function(p){ return p.count >= 2; }).slice(0, 12);
+        return { items: места.length >= 4 ? места : [] };
+      }, 10 * 60 * 1000);
+    }catch(e){}
+    res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
+    res.end(JSON.stringify(d)); return;
   }
   // описание одной точки
   if(u.pathname === '/api/place'){
