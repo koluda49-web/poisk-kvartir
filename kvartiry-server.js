@@ -4631,13 +4631,17 @@ async function видеоСписокPage(){
 // для роликов. Точки — только номера из справочника; тексты — общими словами,
 // без утверждений о конкретных местах. months: null — подборка на весь год,
 // её чип на главной всегда последний.
-const ПОДБОРКИ_ФАЙЛ = path.join(__dirname, 'подборки.json');
+// PODBORKI_FILE — чтобы проверка подсунула свой файл со сломанными номерами.
+const ПОДБОРКИ_ФАЙЛ = process.env.PODBORKI_FILE || path.join(__dirname, 'подборки.json');
 let ПОДБОРКИ = [];
 try{
   ПОДБОРКИ = JSON.parse(fs.readFileSync(ПОДБОРКИ_ФАЙЛ, 'utf8'))
     .filter(function(п){ return п && /^[a-z0-9-]+$/.test(п.slug || '') && Array.isArray(п.ids); })
     .map(function(п){
-      return Object.assign({}, п, { months: Array.isArray(п.months) ? п.months.map(Number) : null,
+      // месяц вне 1..12 выкидываем; не осталось ни одного — подборка на весь год
+      const м = (Array.isArray(п.months) ? п.months : []).map(Number)
+        .filter(function(x){ return Number.isInteger(x) && x >= 1 && x <= 12; });
+      return Object.assign({}, п, { months: м.length ? м : null,
                                     ids: п.ids.map(String).filter(function(x){ return /^[0-9]+$/.test(x); }) });
     });
 }catch(e){ console.error('подборки не прочитались:', e.message); }
@@ -4710,6 +4714,25 @@ function адресДляКарточки(addr){
   return /^-?[0-9.]+\s*,\s*-?[0-9.]+$/.test(a) ? '' : a;
 }
 
+// Маршрут на день из подборки: места раскиданы по всей стране, и первые восемь
+// дали бы поездку на тысячу километров. Берём самую тесную восьмёрку: для каждого
+// места — оно и семь ближайших к нему (по прямой), выигрывает группа с наименьшей
+// суммой расстояний от центра до остальных. Порядок не важен — /marshrut
+// расставит точки сам. Возвращаем в порядке подборки, чтобы ссылка не прыгала.
+function компактнаяГруппа(места, n){
+  if(места.length <= n) return места.slice();
+  let лучшая = null, лучший = Infinity;
+  места.forEach(function(p){
+    const ближние = места.filter(function(q){ return q !== p; })
+      .map(function(q){ return { q: q, км: distKm(+p.lat, +p.lng, +q.lat, +q.lng) }; })
+      .sort(function(a, b){ return a.км - b.км; })
+      .slice(0, n - 1);
+    const сумма = ближние.reduce(function(s, x){ return s + x.км; }, 0);
+    if(сумма < лучший){ лучший = сумма; лучшая = [p].concat(ближние.map(function(x){ return x.q; })); }
+  });
+  return места.filter(function(p){ return лучшая.indexOf(p) >= 0; });
+}
+
 async function подборкаPage(slug){
   const п = ПОДБОРКА_ПО[slug];
   if(!п) return '';
@@ -4717,12 +4740,13 @@ async function подборкаPage(slug){
   try{ все = await placesRaw(); }catch(e){}
   const поНомеру = new Map(все.map(function(p){ return [String(p.id), p]; }));
   // точку, которой больше нет в справочнике, просто пропускаем — страница не ломается
-  const места = п.ids.map(function(id){ return поНомеру.get(id); }).filter(Boolean);
+  const места = п.ids.map(function(id){ return поНомеру.get(id); })
+    .filter(function(p){ return p && Number.isFinite(+p.lat) && Number.isFinite(+p.lng); });
   const адрес = SITE_URL + '/podborka/' + п.slug;
   const сФото = места.filter(function(p){ return p.pic; })[0];
   const снимок = сФото ? снимокДляСоцсетей(сФото.pic) : '';
   const desc = String(п.intro || '');
-  const маршрут = '/marshrut?p=' + места.slice(0, 8).map(function(p){ return p.id; }).join(',');
+  const маршрут = '/marshrut?p=' + компактнаяГруппа(места, 8).map(function(p){ return p.id; }).join(',');
 
   const карточки = места.map(function(p, i){
     const ссылка = '/mesto/' + p.id + '-' + slugify(p.name);
@@ -4774,6 +4798,8 @@ async function подборкаPage(slug){
     + '.build{display:inline-block;margin:0 0 18px;padding:11px 18px;background:#9a3412;color:#fff;border-radius:999px;'
     +   'text-decoration:none;font-weight:700;font-size:15px}'
     + '.build:hover{background:#b8471c}'
+    + '.buildw{margin:0 0 18px}.buildw .build{margin:0}'
+    + '.bnote{display:block;margin:6px 2px 0;font-size:13.5px;color:#57534e}'
     + '.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}'
     + '@media (max-width:600px){.grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}}'
     + '.c{background:#fff;border:1px solid #e9e2d8;border-radius:14px;overflow:hidden;display:flex;flex-direction:column}'
@@ -4803,7 +4829,7 @@ async function подборкаPage(slug){
     +   'box-shadow:0 8px 24px rgba(41,32,24,.28)}'
     + '[hidden]{display:none!important}'
     + '@media (max-width:520px){#routeBar{left:12px;right:12px;transform:none;text-align:center}}'
-    + '@media (prefers-color-scheme:dark){body{background:#14110e;color:#f6f2ed}.intro,.ad{color:#c2b7ab}'
+    + '@media (prefers-color-scheme:dark){body{background:#14110e;color:#f6f2ed}.intro,.ad,.bnote{color:#c2b7ab}'
     +   '.back,.c,.sets a{background:#1d1916;border-color:#332c25;color:#f6f2ed}.noimg{background:#2b251f}'
     +   '.cat{background:#241f1a;border-color:#332c25;color:#c2b7ab}a,.c h2 a:hover{color:#e2703a}'
     +   '.add{background:#1d1916;color:#e2703a;border-color:#e2703a}.add.on,.build,#routeBar{background:#e2703a;color:#14110e}'
@@ -4812,7 +4838,8 @@ async function подборкаPage(slug){
     + '<a class="back" href="/?country=places">← Ко всем местам</a>'
     + '<h1>' + esc(п.title) + '</h1>'
     + '<p class="intro">' + esc(desc) + '</p>'
-    + (места.length ? ('<a class="build" href="' + маршрут + '">Собрать маршрут из подборки</a>') : '')
+    + (места.length ? ('<div class="buildw"><a class="build" href="' + маршрут + '">Собрать маршрут из подборки</a>'
+        + (места.length > 8 ? '<span class="bnote">8 мест, которые ближе всего друг к другу</span>' : '') + '</div>') : '')
     + '<div class="grid">' + карточки + '</div>'
     + (другие ? ('<h3>Другие подборки</h3><div class="sets">' + другие + '</div>') : '')
     + '</div>'

@@ -6,13 +6,17 @@
 // карточку); что «+ в маршрут» пишет в localStorage.route ровно тот формат,
 // что и главная, и не дублирует точки; что «Собрать маршрут из подборки» ведёт
 // на /marshrut с первыми восемью точками; что на главной первым идёт чип
-// текущего сезона по дате посетителя, а «С детьми» — последним.
+// текущего сезона по дате посетителя, а «С детьми» — последним. «Собрать
+// маршрут» должен брать самую тесную восьмёрку мест, а не первые восемь:
+// иначе выходит поездка через всю страну. Отдельный экземпляр сервера
+// на 8099 со своим файлом подборок проверяет, что пропавший из справочника
+// номер просто пропускается, а месяцы вне 1..12 отбрасываются.
 //
 // Сервер должен быть запущен.
 //   node проверки/подборки.mjs
 //   node проверки/подборки.mjs http://127.0.0.1:8095
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync } from 'node:fs';
 
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 const PORT = 9607, sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -26,6 +30,27 @@ const check = (n, ok, d) => ok ? (passed++, console.log('  OK   ' + n)) : (faile
 const справочник = await (await fetch(SITE + '/api/places?light=1')).json();
 const номера = new Set((справочник.items || []).map(p => String(p.id)));
 check('справочник мест загружен', номера.size > 100, String(номера.size));
+const поНомеру = new Map((справочник.items || []).map(p => [String(p.id), p]));
+
+// Самая тесная группа до 8 мест — считаем здесь сами, не глядя на сервер:
+// для каждого места — оно и 7 ближайших по прямой, берём наименьшую сумму.
+function км(a, b) {
+  const t = Math.PI / 180, x = (b.lat - a.lat) * t, y = (b.lng - a.lng) * t;
+  const h = Math.sin(x / 2) ** 2 + Math.cos(a.lat * t) * Math.cos(b.lat * t) * Math.sin(y / 2) ** 2;
+  return 6371 * 2 * Math.asin(Math.sqrt(h));
+}
+function теснаяГруппа(места) {
+  if (места.length <= 8) return места.map(p => String(p.id));
+  let лучшая = null, сумма = Infinity;
+  for (const p of места) {
+    const ближние = места.filter(q => q !== p).map(q => ({ q, d: км(p, q) })).sort((a, b) => a.d - b.d).slice(0, 7);
+    const с = ближние.reduce((x, b) => x + b.d, 0);
+    if (с < сумма) { сумма = с; лучшая = [p, ...ближние.map(b => b.q)]; }
+  }
+  return лучшая.map(p => String(p.id));
+}
+const какМножество = a => [...a].sort().join(',');
+check('парк-отеля «Версаль» (910025) нет ни в одной подборке', ПОДБОРКИ.every(п => !п.ids.includes(910025)));
 
 const slugs = ['osen', 'zima', 'vesna', 'leto-u-vody', 's-detmi'];
 for (const s of slugs) check('в файле есть подборка ' + s, ПОДБОРКИ.some(п => п.slug === s));
@@ -52,9 +77,18 @@ for (const п of ПОДБОРКИ) {
   check(п.slug + ': «← Ко всем местам» и ссылки на другие подборки', html.includes('href="/?country=places">← Ко всем местам</a>')
     && ПОДБОРКИ.filter(д => д.slug !== п.slug).every(д => html.includes('href="/podborka/' + д.slug + '"')));
   const собрать = (html.match(/<a class="build" href="([^"]+)">Собрать маршрут из подборки<\/a>/) || [])[1] || '';
-  check(п.slug + ': «Собрать маршрут» — первые 8 точек', собрать === '/marshrut?p=' + карточки.slice(0, 8).join(','), собрать);
+  const вСсылке = собрать.replace(/^\/marshrut\?p=/, '').split(',');
+  const ждём = теснаяГруппа(п.ids.map(id => поНомеру.get(String(id))).filter(Boolean));
+  check(п.slug + ': «Собрать маршрут» — самые близкие друг к другу 8 мест', /^\/marshrut\?p=[0-9,]+$/.test(собрать)
+    && вСсылке.length === 8 && какМножество(вСсылке) === какМножество(ждём), собрать + '  ждали: ' + ждём.join(','));
+  check(п.slug + ': подпись под кнопкой', html.includes('<span class="bnote">8 мест, которые ближе всего друг к другу</span>'));
 }
 
+{
+  const r = await fetch(SITE + '/podborka/osen/');
+  const t = await r.text();
+  check('/podborka/osen/ со слешем — 200, та же подборка', r.status === 200 && t.includes('<link rel="canonical" href="' + ОСНОВА + '/podborka/osen">'), String(r.status));
+}
 for (const slug of ['net', 'constructor', '__proto__', 'toString']) {
   const r = await fetch(SITE + '/podborka/' + slug);
   const t = await r.text();
@@ -63,6 +97,45 @@ for (const slug of ['net', 'constructor', '__proto__', 'toString']) {
 }
 const карта = await (await fetch(SITE + '/sitemap.xml')).text();
 check('все подборки в sitemap.xml', ПОДБОРКИ.every(п => карта.includes('<loc>' + ОСНОВА + '/podborka/' + п.slug + '</loc>')));
+
+// ── свой файл подборок: пропавший номер и неверные месяцы ────────────────
+{
+  const ПОРТ2 = 8099, САЙТ2 = 'http://127.0.0.1:' + ПОРТ2;
+  const папка = process.env.TEMP + '/podborki-test-' + process.pid;
+  const настоящие = ПОДБОРКИ.find(п => п.slug === 'osen').ids.slice(0, 10);
+  const файл = папка + '-podborki.json';
+  writeFileSync(файл, JSON.stringify([
+    { slug: 'proba', chip: 'Проба', title: 'Проба', months: [0, 13, 9, 'x'], intro: 'Проба.', ids: [...настоящие.slice(0, 5), 999999999, ...настоящие.slice(5)] },
+    { slug: 'kruglyj-god', chip: 'Круглый год', title: 'Круглый год', months: [0, 13], intro: 'Проба.', ids: настоящие },
+  ]));
+  const второй = spawn(process.execPath, ['kvartiry-server.js'], {
+    cwd: new URL('..', import.meta.url),
+    env: { ...process.env, PORT: String(ПОРТ2), PODBORKI_FILE: файл, DATA_DIR: папка, STATS_FILE: папка + '/stats.json',
+           KUFAR: 'off', REALT: 'off', FLATBOOK: 'off', CHECKIN: 'off', KVARTIRKA: 'off' },
+    stdio: 'ignore',
+  });
+  try {
+    let готов = false;
+    for (let i = 0; i < 120 && !готов; i++) {
+      try { готов = ((await (await fetch(САЙТ2 + '/api/places?light=1', { signal: AbortSignal.timeout(5000) })).json()).items || []).length > 100; } catch {}
+      if (!готов) await sleep(1000);
+    }
+    check('второй сервер с PODBORKI_FILE запустился', готов);
+    const r = await fetch(САЙТ2 + '/podborka/proba');
+    const t = await r.text();
+    const ид = [...t.matchAll(/<button class="add"[^>]*data-id="(\d+)"/g)].map(m => m[1]);
+    check('номер, которого нет в справочнике, пропущен: 200 и 10 карточек', r.status === 200 && ид.length === 10 && !ид.includes('999999999'), r.status + ' / ' + ид.length);
+    check('в «Собрать маршрут» нет пропавшего номера', !/999999999/.test(t));
+    const главная = await (await fetch(САЙТ2 + '/?country=places')).text();
+    check('месяцы вне 1..12 отброшены: data-m="9"', главная.includes('<a class="pl-chip" href="/podborka/proba" data-m="9">'));
+    check('не осталось ни одного месяца — подборка на весь год, в конце',
+      /href="\/podborka\/proba"[^>]*>Проба<\/a><a class="pl-chip" href="\/podborka\/kruglyj-god" data-m="">/.test(главная));
+  } finally {
+    второй.kill();   // ровно наш процесс, по его pid
+    await new Promise(r => { if (второй.exitCode !== null) r(); else { второй.once('exit', r); setTimeout(r, 3000); } });
+    try { rmSync(файл, { force: true }); rmSync(папка, { recursive: true, force: true }); } catch {}
+  }
+}
 
 // ── в браузере ───────────────────────────────────────────────────────────
 const chrome = spawn('C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new',
@@ -91,7 +164,7 @@ const маршрут = () => js(`localStorage.getItem('route')`).then(t => JSON.
 
 const осень = ПОДБОРКИ.find(п => п.slug === 'osen');
 const [первый, второй] = осень.ids.map(String);
-const точка = (await (await fetch(SITE + '/api/places?light=1')).json()).items.find(p => String(p.id) === первый);
+const точка = поНомеру.get(первый);
 
 // в маршруте уже есть первая точка подборки — как будто её добавили на главной
 await send('Page.navigate', { url: SITE + '/podborka/osen' });
@@ -139,10 +212,12 @@ check('главная видит обе точки из подборки', await
 // «Собрать маршрут из подборки»
 await send('Page.navigate', { url: SITE + '/podborka/osen' });
 await ждать(`document.readyState === 'complete' && !!document.querySelector('a.build')`);
-const ждёмP = [...(await js(`JSON.stringify([].map.call(document.querySelectorAll('button.add'), function(b){ return b.dataset.id; }))`).then(JSON.parse))].slice(0, 8);
+const ждёмP = теснаяГруппа(осень.ids.map(id => поНомеру.get(String(id))).filter(Boolean));
 await js(`document.querySelector('a.build').click(); 1`);
 await ждать(`location.pathname === '/marshrut'`);
-check('«Собрать маршрут» открыл /marshrut?p= с 8 точками подборки', (await js(`location.pathname + location.search`)) === '/marshrut?p=' + ждёмP.join(','), await js(`location.pathname + location.search`));
+const открыт = await js(`location.pathname + location.search`);
+check('«Собрать маршрут» открыл /marshrut?p= с самой тесной восьмёркой подборки', открыт.startsWith('/marshrut?p=')
+  && какМножество(открыт.replace('/marshrut?p=', '').split(',')) === какМножество(ждёмP), открыт);
 check('на /marshrut 8 точек', await ждать(`typeof Т !== 'undefined' && Т.length === 8`), await js(`typeof Т !== 'undefined' ? Т.length : 'нет Т'`));
 
 // ── главная: порядок чипов по дате посетителя ────────────────────────────
