@@ -189,7 +189,10 @@ await send('Page.navigate', { url: SITE + '/marshrut?p=910027,286' });
 const видна = await ждать(`!document.getElementById('rNear').hidden && document.querySelectorAll('#rNearList .nc').length > 0`, 80);
 check('две точки: секция «По пути» видна', видна);
 check('заголовок «По пути — до 5 км от дороги»', (await js(`document.querySelector('#rNear h2').textContent`)) === 'По пути — до 5 км от дороги');
-check('секция под списком и над поиском', await js(`(function(){ var n = document.getElementById('rNear'); return document.getElementById('rlist').nextElementSibling === n && n.nextElementSibling.classList.contains('add'); })()`));
+// между «По пути» и поиском стоят «План дня» и «Сколько стоит дорога» (Task 6)
+check('секция под списком и над поиском', await js(`(function(){ var n = document.getElementById('rNear'), д = n.nextElementSibling;
+  while(д && (д.id === 'rPlan' || д.id === 'rFuel')) д = д.nextElementSibling;
+  return document.getElementById('rlist').nextElementSibling === n && !!д && д.classList.contains('add'); })()`));
 const подписи = await js(`JSON.stringify([...document.querySelectorAll('#rNearList .nc .d')].map(function(e){ return e.textContent; }))`).then(JSON.parse);
 check('у карточек «N км от дороги»', подписи.length > 0 && подписи.every(t => /^(меньше 0,1|\d+(,\d)?) км от дороги$/.test(t)), подписи.join(' | '));
 check('у каждой карточки кнопка «+ в маршрут»', await js(`[...document.querySelectorAll('#rNearList .nc')].every(function(c){ var b = c.querySelector('button.na'); return b && b.textContent === '+ в маршрут'; })`));

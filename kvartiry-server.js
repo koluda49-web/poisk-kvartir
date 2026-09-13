@@ -3262,7 +3262,8 @@ function своюТочкуИзСсылки(t){
 function перетаскиваниеСтрок(список, переставить){
   var т = null;   // что тянем сейчас
   function строки(){
-    return Array.prototype.filter.call(список.children, function(э){ return !э.classList.contains('drag-ph'); });
+    // заголовки дней («День 1 · 40 км») стоят в списке, но это не точки
+    return Array.prototype.filter.call(список.children, function(э){ return !э.classList.contains('drag-ph') && !э.classList.contains('dh'); });
   }
   function строкаИз(э){
     while(э && э.parentNode !== список) э = э.parentNode;
@@ -3291,7 +3292,7 @@ function перетаскиваниеСтрок(список, перестави
     // Новое место — сколько строк стоит перед полоской (саму строку не считаем).
     var куда = 0;
     for(var э = список.firstElementChild; э && э !== d.заместитель; э = э.nextElementSibling){
-      if(э !== d.строка) куда++;
+      if(э !== d.строка && !э.classList.contains('dh')) куда++;
     }
     // Сама строка в разметке всё это время стояла на прежнем месте — ездила
     // только полоска. Поэтому при отмене (браузер забрал палец, пришёл звонок)
@@ -3826,6 +3827,36 @@ async function marshrutPage(ids, опции){
     + '.nc .na{margin-top:auto;font:inherit;font-size:14px;font-weight:700;cursor:pointer;background:#fff;color:#9a3412;'
     +   'border:1px solid #e9e2d8;border-radius:9px;padding:7px 8px}'
     + '.nc .na:hover{border-color:#9a3412}'
+    // план дня, ночёвка и топливо
+    + '.pl{margin:22px 0 0}.pl[hidden],.night[hidden],.nmsg[hidden],.nr-list[hidden],.go[hidden],a.go2[hidden],#rNightAll[hidden]{display:none}'
+    + '.pl h2{font-size:17px;line-height:1.25;margin:0 0 8px;letter-spacing:-.01em}'
+    + '.pl h3{font-size:15px;line-height:1.25;margin:14px 0 2px;color:#9a3412}'
+    + '.plf{display:flex;flex-wrap:wrap;align-items:center;gap:8px 18px;margin:0 0 4px;font-size:15px}'
+    + '.plf label{display:inline-flex;align-items:center;gap:8px}.plf label[hidden]{display:none}'
+    + '#rNightL{flex:1 1 100%;min-width:0}#rNightL span{white-space:nowrap}#rNightL select{flex:1 1 auto;min-width:0;max-width:100%}'
+    + '.pl input[type=time],.pl select,.ff input{font:inherit;color:inherit;background:#fff;border:1px solid #e9e2d8;border-radius:9px;padding:7px 9px}'
+    + '.pl input[type=checkbox]{width:19px;height:19px;margin:0;accent-color:#9a3412}'
+    + '.tw{overflow-x:auto}'
+    + '.plt{width:100%;border-collapse:collapse;font-size:14.5px;line-height:1.25}'
+    + '.plt th{font-size:12px;font-weight:600;color:#9c948c;text-align:left;padding:6px 6px 4px 0}'
+    + '.plt td{padding:7px 6px 7px 0;border-top:1px solid #e9e2d8;vertical-align:middle}'
+    + '.plt .pn{width:20px;color:#9a3412;font-weight:700}'
+    + '.plt .tm{white-space:nowrap;font-weight:600;font-variant-numeric:tabular-nums}'
+    + '.plt .tm small{display:block;font-weight:400;font-size:11px;color:#9c948c}'
+    + '.plt select{font-size:14px;padding:5px 4px}'
+    + '.plt tr.rd td{padding:6px 6px 0 0;font-size:12.5px;color:#9c948c}.plt tr.rd+tr.pp td{border-top:0;padding-top:3px}'
+    + '.pi{margin:6px 0 0;font-size:15px}.pi small{color:#9c948c}'
+    + '.dh{font-weight:700;font-size:14px;color:#9a3412;padding:12px 0 2px}.dh+.it{border-top:0}'
+    + '.night{margin:16px 0 4px;padding:12px;border:1px solid #e9e2d8;border-radius:12px;background:#fff}'
+    + '.night h3{margin:0 0 8px;color:#1c1917}'
+    + '.nmsg{margin:0 0 6px;color:#57534e;font-size:14.5px}'
+    + 'a.nc{text-decoration:none;color:inherit}a.nc .d{font-weight:700;color:#1c1917;margin:1px 0 0}'
+    + '#rNightAll{display:inline-block;margin-top:8px;font-weight:600;font-size:14.5px}'
+    + '.ff{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px}'
+    + '.ff>div{flex:1 1 100px;display:flex;flex-direction:column;gap:4px;min-width:0}'
+    + '.ff label{font-size:13px;line-height:1.2;color:#57534e}.ff input{width:100%}'
+    + '.fs{margin:10px 0 0;font-size:18px;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px}'
+    + '#rGo2{margin-left:10px}'
     + '.add{margin:16px 0 0;position:relative}'+ '.add input{width:100%;font:inherit;padding:12px 14px;border:1px solid #e9e2d8;border-radius:10px;background:#fff;color:inherit}'+ '.sug{position:absolute;left:0;right:0;top:100%;background:#fff;border:1px solid #e9e2d8;border-radius:10px;'+   'margin-top:4px;max-height:270px;overflow:auto;z-index:5;display:none;box-shadow:0 8px 24px rgba(41,32,24,.12)}'+ '.sug button{display:block;width:100%;text-align:left;font:inherit;background:none;border:0;padding:9px 13px;cursor:pointer}'+ '.sug button:hover{background:#f8f4ef}'+ '.sug small{color:#9c948c;display:block;font-size:12.5px}'+ '.go{display:inline-block;margin-top:18px;background:#9a3412;color:#fff;text-decoration:none;font-weight:700;'+   'padding:14px 22px;border-radius:11px}'+ '.go.off{opacity:.4;pointer-events:none}'
 + '.go2{display:inline-block;margin:18px 0 0 10px;background:#fff;border:1px solid #e9e2d8;color:#1c1917;'+   'text-decoration:none;font-weight:700;padding:13px 21px;border-radius:11px}'+ '.go2:hover{border-color:#9a3412;color:#9a3412}'
     + 'button.go2{font:inherit;font-weight:700;cursor:pointer}'
@@ -3851,14 +3882,17 @@ async function marshrutPage(ids, опции){
     + '.pngk{display:flex;gap:10px;justify-content:center}'
     + '.pngk .go,.pngk .go2{flex:1;margin:12px 0 0;text-align:center;padding:12px 16px}'
     + '@media (max-width:520px){.go,.go2{display:block;margin-left:0;text-align:center}'
-    +   'button.go2{width:100%}.shr{display:block}.shm{left:0;right:0}}'+ '.empty{background:#fff;border:1px dashed #d9cec0;border-radius:14px;padding:22px;color:#57534e;margin-bottom:8px}'+ '@media (prefers-color-scheme:dark){body{background:#14110e;color:#f6f2ed}'+   '.back,.add input,.sug,.empty,.ownb{background:#1d1916;border-color:#332c25;color:#f6f2ed}'+ '.how{color:#c2b7ab}'+   '.it{border-color:#332c25}.it .t a{color:#f6f2ed}.sub,.it .t small,.it .km{color:#c2b7ab}'+   '.sug button:hover{background:#241f1a}a{color:#e2703a}#rmap{border-color:#332c25}'
+    +   'button.go2{width:100%}.shr{display:block}.shm{left:0;right:0}#rGo2{margin:10px 0 0}}'+ '.empty{background:#fff;border:1px dashed #d9cec0;border-radius:14px;padding:22px;color:#57534e;margin-bottom:8px}'+ '@media (prefers-color-scheme:dark){body{background:#14110e;color:#f6f2ed}'+   '.back,.add input,.sug,.empty,.ownb{background:#1d1916;border-color:#332c25;color:#f6f2ed}'+ '.how{color:#c2b7ab}'+   '.it{border-color:#332c25}.it .t a{color:#f6f2ed}.sub,.it .t small,.it .km{color:#c2b7ab}'+   '.sug button:hover{background:#241f1a}a{color:#e2703a}#rmap{border-color:#332c25}'
     +   '.it.dragging{background:#1d1916}.drag-ph{background:#241f1a;border-color:#332c25}.auto{color:#e2703a}'
     +   '.shm,.shm input{background:#1d1916;border-color:#332c25}.shm a,.shm button,.shm input{color:#f6f2ed}'
     +   '.shm a:hover,.shm button:hover{background:#241f1a;color:#e2703a}'
     +   '.pngb{background:#1d1916;color:#f6f2ed}.pngb p{color:#c2b7ab}.pngb img{border-color:#332c25}'
     +   '.pngk .go2{background:#241f1a;border-color:#332c25;color:#f6f2ed}'
     +   '.nc img,.nc .ni{background:#241f1a}.nc .p{color:#f6f2ed}.nc .s{color:#a39a90}.nc .d{color:#c2b7ab}'
-    +   '.nc .na{background:#1d1916;border-color:#332c25;color:#e2703a}}'
+    +   '.nc .na{background:#1d1916;border-color:#332c25;color:#e2703a}'
+    +   '.pl input[type=time],.pl select,.ff input,.night{background:#1d1916;border-color:#332c25;color:#f6f2ed}.pl input[type=time]{color-scheme:dark}'
+    +   '.plt td{border-color:#332c25}.plt th,.plt tr.rd td,.plt .tm small,.pi small{color:#a39a90}'
+    +   '.ff label,.nmsg{color:#c2b7ab}.pl h3,.dh,.plt .pn{color:#e2703a}.night h3,a.nc .d{color:#f6f2ed}}'
      + '</style></head><body><div class="w">'
     + '<a class="back" id="back" href="/?country=places">← Ко всем местам</a>'
     + (изВидео
@@ -3884,6 +3918,27 @@ async function marshrutPage(ids, опции){
     // «По пути» наполняется в браузере: список зависит от маршрута на экране
     + '<section class="nr" id="rNear" hidden aria-labelledby="rNearH">'
     +   '<h2 id="rNearH">По пути — до 5 км от дороги</h2><div class="nr-list" id="rNearList"></div></section>'
+    // План дня, ночёвка и топливо тоже считаются в браузере: время выезда,
+    // сколько пробыть и расход у каждого свои и лежат в localStorage.
+    + '<section class="pl" id="rPlan" hidden aria-labelledby="rPlanH">'
+    +   '<h2 id="rPlanH">План дня</h2>'
+    +   '<div class="plf"><label>Выезд <input id="rStart" type="time" value="09:00"></label>'
+    +     '<label id="rTwoL" hidden><input id="rTwo" type="checkbox"> Поездка на два дня</label>'
+    +     '<label id="rNightL" hidden><span>Ночёвка после точки</span><select id="rNightN"></select></label></div>'
+    +   '<div id="rPlan1"></div>'
+    +   '<div class="night" id="rNight" hidden aria-live="polite"><h3 id="rNightH">Ночёвка</h3>'
+    +     '<p class="nmsg" id="rNightMsg">Ищу жильё рядом…</p>'
+    +     '<div class="nr-list" id="rNightList" hidden></div>'
+    +     '<a id="rNightAll" href="/" hidden>Всё жильё рядом →</a></div>'
+    +   '<div id="rPlan2"></div></section>'
+    + '<section class="pl" id="rFuel" hidden aria-labelledby="rFuelH">'
+    +   '<h2 id="rFuelH">Сколько стоит дорога</h2>'
+    +   '<div class="ff">'
+    +     '<div><label for="rFuelKm">Расстояние, км</label><input id="rFuelKm" type="text" inputmode="decimal" autocomplete="off"></div>'
+    +     '<div><label for="rFuelUse">Расход, л на 100 км</label><input id="rFuelUse" type="text" inputmode="decimal" autocomplete="off" value="7.5"></div>'
+    +     '<div><label for="rFuelPrice">Цена литра, BYN</label><input id="rFuelPrice" type="text" inputmode="decimal" autocomplete="off" value="2.60"></div>'
+    +   '</div>'
+    +   '<p class="fs"><b id="rFuelSum">—</b><button class="auto" id="rFuelAuto" type="button" hidden>↺ по маршруту</button></p></section>'
     + '<div class="add"><input id="rAdd" type="text" placeholder="Добавить место: замок, костёл, Мир…" autocomplete="off">'
     +   '<div class="sug" id="rSug"></div></div>'
     + '<div class="own"><button class="ownb" id="rOwn" type="button">📍 Поставить свою точку на карте</button>'
@@ -3892,6 +3947,9 @@ async function marshrutPage(ids, опции){
     +   'Свою точку можно перетащить на карте.</small></div>'
     + '<a class="go' + (точки.length ? '' : ' off') + '" id="rGo" href="' + яндекс + '" target="_blank" rel="noopener">'
     +   'Открыть маршрут в Яндекс.Картах →</a>'
+    // при поездке на два дня вместо одной кнопки — по кнопке на день
+    + '<a class="go" id="rGo1" href="#" target="_blank" rel="noopener" hidden>День 1 в Яндекс.Картах →</a>'
+    + '<a class="go" id="rGo2" href="#" target="_blank" rel="noopener" hidden>День 2 в Яндекс.Картах →</a>'
     + '<span class="shr"><button class="go2' + (точки.length ? '' : ' off') + '" id="rShare" type="button" '
     +   'aria-haspopup="true" aria-expanded="false">Поделиться</button>'
     +   '<span class="shm" id="rShareMenu" role="menu" hidden>'
@@ -3967,13 +4025,13 @@ async function marshrutPage(ids, опции){
     +   'if(!СВЯЗАН)localStorage.setItem("routeOrder",ПОРЯДОК);}catch(e){}'
     +   'СВЯЗАН=true;запомнитьВиденное();обновитьАдрес();}'
     // адрес страницы — это ссылка на маршрут: точки и, если порядок ручной, o=1
-    + 'function обновитьАдрес(){var q = Т.length ? ("?p=" + Т.map(вСсылку).join(",") + (ПОРЯДОК==="manual"?"&o=1":"")) : "";'+   'history.replaceState(null, "", "/marshrut" + q);}'+ 'function убрать(id){Т = Т.filter(function(p){return String(p.id)!==String(id);});нарисовать();сохранить();}'+ 'function добавить(p){if(Т.some(function(x){return String(x.id)===String(p.id);}))return;'+   'Т = Т.concat([{id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}]);нарисовать();сохранить();}'+ 'function порядок(){if(ПОРЯДОК==="manual"||Т.length<3)return;var left=Т.slice(1),out=[Т[0]];'+   'while(left.length){var c=out[out.length-1],bi=0,bd=Infinity;'+     'left.forEach(function(p,i){var d=км(c,p);if(d<bd){bd=d;bi=i;}});'+     'out.push(left.splice(bi,1)[0]);}Т=out;}'+ 'function нарисовать(){порядок();'+   'var сумма=0, строки="";'+   'Т.forEach(function(p,i){var шаг=i?км(Т[i-1],p):0;сумма+=шаг;'+     'строки += "<div class=\\"it\\"><button class=\\"drag\\" type=\\"button\\" aria-label=\\"Перетащить\\">⋮⋮</button><span class=\\"n\\">"+(i+1)+"</span>"'+       '+"<span class=\\"t\\">"+(своя(p)?("<b class=\\"ownn\\">📍 "+esc(p.name)+"</b><small>своя точка · её можно перетащить на карте</small>"):("<a href=\\"/mesto/"+p.id+"\\">"+esc(p.name)+"</a>"))'+       '+(p.addr?("<small>"+esc(p.addr)+"</small>"):"")+"</span>"'+       '+"<span class=\\"km\\">"+(i?("+"+Math.round(шаг)+" км"):"старт")+"</span>"'+       '+"<button class=\\"x\\" type=\\"button\\" title=\\"убрать\\" data-id=\\""+p.id+"\\">×</button></div>";});'+   'document.getElementById("rlist").innerHTML = строки; подписатьШаги();'+   'document.getElementById("rsub").textContent = Т.length'+     '? (Т.length + " точек · около " + Math.round(сумма) + " км между ними")'+     ': "Пока пусто";'
+    + 'function обновитьАдрес(){var q = Т.length ? ("?p=" + Т.map(вСсылку).join(",") + (ПОРЯДОК==="manual"?"&o=1":"") + (ДВА_ДНЯ?"&d="+НОЧЁВКА:"")) : "";'+   'history.replaceState(null, "", "/marshrut" + q);}'+ 'function убрать(id){Т = Т.filter(function(p){return String(p.id)!==String(id);});нарисовать();сохранить();}'+ 'function добавить(p){if(Т.some(function(x){return String(x.id)===String(p.id);}))return;'+   'Т = Т.concat([{id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}]);нарисовать();сохранить();}'+ 'function порядок(){if(ПОРЯДОК==="manual"||Т.length<3)return;var left=Т.slice(1),out=[Т[0]];'+   'while(left.length){var c=out[out.length-1],bi=0,bd=Infinity;'+     'left.forEach(function(p,i){var d=км(c,p);if(d<bd){bd=d;bi=i;}});'+     'out.push(left.splice(bi,1)[0]);}Т=out;}'+ 'function нарисовать(){порядок();'+   'var сумма=0, строки="";'+   'Т.forEach(function(p,i){var шаг=i?км(Т[i-1],p):0;сумма+=шаг;'+     'строки += "<div class=\\"it\\"><button class=\\"drag\\" type=\\"button\\" aria-label=\\"Перетащить\\">⋮⋮</button><span class=\\"n\\">"+(i+1)+"</span>"'+       '+"<span class=\\"t\\">"+(своя(p)?("<b class=\\"ownn\\">📍 "+esc(p.name)+"</b><small>своя точка · её можно перетащить на карте</small>"):("<a href=\\"/mesto/"+p.id+"\\">"+esc(p.name)+"</a>"))'+       '+(p.addr?("<small>"+esc(p.addr)+"</small>"):"")+"</span>"'+       '+"<span class=\\"km\\">"+(i?("+"+Math.round(шаг)+" км"):"старт")+"</span>"'+       '+"<button class=\\"x\\" type=\\"button\\" title=\\"убрать\\" data-id=\\""+p.id+"\\">×</button></div>";});'+   'document.getElementById("rlist").innerHTML = строки; подписатьШаги();'+   'document.getElementById("rsub").textContent = Т.length'+     '? (Т.length + " точек · около " + Math.round(сумма) + " км между ними")'+     ': "Пока пусто";'
     +   'document.getElementById("rAuto").style.display = (ПОРЯДОК==="manual"&&Т.length>2) ? "" : "none";'
     +   'var g = document.getElementById("rGo");'+   'g.href = "https://yandex.by/maps/?rtext=" + Т.map(function(p){return p.lat+","+p.lng;}).join("~") + "&rtt=auto";'+   'g.className = "go" + (Т.length ? "" : " off");'
     +   '["rShare","rPng"].forEach(function(id){document.getElementById(id).classList.toggle("off",!Т.length);});'
     +   'if(!Т.length)закрытьМеню();'
     +   'кудаЗаЖильём();'
-    + '  document.getElementById("rEmpty").style.display = Т.length ? "none" : "";'+   'document.getElementById("rmap").style.display = (Т.length||РЕЖИМ) ? "" : "none";'+   'рисоватьКарту();поПутиПозже();}'+ 'function рисоватьКарту(){if((!Т.length&&!РЕЖИМ)||typeof L==="undefined")return;'+   'if(!карта){карта=L.map("rmap",{scrollWheelZoom:false});'+     'карта.attributionControl.setPrefix("");'+     'L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,'+       'attribution:"&copy; OpenStreetMap"}).addTo(карта);слой=L.layerGroup().addTo(карта);карта.on("click",поКарте);}'+   'слой.clearLayers(); if(линия){карта.removeLayer(линия);линия=null;}'+   'var пути=[];'+   'Т.forEach(function(p,i){пути.push([p.lat,p.lng]);'+     'L.marker([p.lat,p.lng],{icon:L.divIcon({className:"",iconSize:[26,26],iconAnchor:[13,13],'+       'html:"<div class=\\"pin"+(своя(p)?" own":"")+"\\">"+(i+1)+"</div>"}),draggable:своя(p)})'
+    + '  document.getElementById("rEmpty").style.display = Т.length ? "none" : "";'+   'document.getElementById("rmap").style.display = (Т.length||РЕЖИМ) ? "" : "none";'+   'рисоватьКарту();поПутиПозже();планИТопливо();}'+ 'function рисоватьКарту(){if((!Т.length&&!РЕЖИМ)||typeof L==="undefined")return;'+   'if(!карта){карта=L.map("rmap",{scrollWheelZoom:false});'+     'карта.attributionControl.setPrefix("");'+     'L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,'+       'attribution:"&copy; OpenStreetMap"}).addTo(карта);слой=L.layerGroup().addTo(карта);карта.on("click",поКарте);}'+   'слой.clearLayers(); if(линия){карта.removeLayer(линия);линия=null;}'+   'var пути=[];'+   'Т.forEach(function(p,i){пути.push([p.lat,p.lng]);'+     'L.marker([p.lat,p.lng],{icon:L.divIcon({className:"",iconSize:[26,26],iconAnchor:[13,13],'+       'html:"<div class=\\"pin"+(своя(p)?" own":"")+"\\">"+(i+1)+"</div>"}),draggable:своя(p)})'
     +   '.bindTooltip(p.name).on("dragend",function(e){передвинуть(p,e.target.getLatLng());}).addTo(слой);});'+   'if(пути.length>1) линия=L.polyline(пути,{color:"#9a3412",weight:3,opacity:.7}).addTo(карта);'+   'setTimeout(function(){карта.invalidateSize();'+     'if(НЕ_ДВИГАТЬ)НЕ_ДВИГАТЬ=false;else if(!пути.length)карта.setView([53.7,27.95],6);'
     +     'else if(пути.length>1)карта.fitBounds(пути,{padding:[40,40]});else карта.setView(пути[0],13);},60);'+   'подорогам();}'+ 'function кудаЗаЖильём(){var a=document.getElementById("rStay"); if(!a)return;'
     + '  if(!Т.length){a.href="/";a.textContent="Искать жильё на сутки →";return;}'
@@ -3997,7 +4055,9 @@ async function marshrutPage(ids, опции){
     + '  for(var i=1;i<э.length;i++){ var v=ПЕРЕГОНЫ[i-1];'
     + '    if(typeof v==="number") э[i].textContent="+"+Math.round(v)+" км"; }}'
     + 'function показатьДорогу(d){if(линия){карта.removeLayer(линия);}'+     'линия=L.polyline(d.line,{color:"#9a3412",weight:4,opacity:.75}).addTo(карта);'+     'карта.fitBounds(линия.getBounds(),{padding:[40,40]});'+     'ПЕРЕГОНЫ = d.legs || null; подписатьШаги();'
-    + '     var ч=Math.floor(d.minutes/60), м=d.minutes%60;'+     'document.getElementById("rsub").textContent = Т.length+" точек · "+d.km'+       '+" км по дорогам · за рулём около "+(ч?(ч+" ч "+м+" мин"):(м+" мин"));}'
+    + '     var ч=Math.floor(d.minutes/60), м=d.minutes%60;'+     'document.getElementById("rsub").textContent = Т.length+" точек · "+d.km'+       '+" км по дорогам · за рулём около "+(ч?(ч+" ч "+м+" мин"):(м+" мин"));'
+    // пришли минуты и километры по дорогам — план и топливо пересчитываем по ним
+    +     'планИТопливо();}'
     // Та же дорога уже посчитана (перерисовали без перестановки) — показываем
     // её сразу, иначе вместо линии по дорогам осталась бы прямая.
     + 'async function подорогам(){if(Т.length<2){ПЕРЕГОНЫ=null;return;}'
@@ -4133,7 +4193,9 @@ async function marshrutPage(ids, опции){
     +   'else if(Т.length>1)сводка+=" · около "+Math.round(сумма)+" км";'
     +   'var h=document.querySelector("h1");'
     +   'var итог=await картинкаМаршрута({заголовок:h?h.textContent.trim():заголовокМаршрута(),сводка:Т.length?сводка:"",'
-    +     'строки:Т.map(function(p,i){return {номер:i+1,название:p.name,адрес:p.addr||"",своя:своя(p)};}),'
+    +     'строки:(function(){var с=Т.map(function(p,i){return {номер:i+1,название:p.name,адрес:p.addr||"",своя:своя(p)};});'
+    // поездка на два дня — в списке на картинке те же дни, что на странице
+    +       'if(ДВА_ДНЯ&&Т.length>2){с.splice(НОЧЁВКА,0,{разделитель:"День 2"});с.unshift({разделитель:"День 1"});}return с;})(),'
     +     'точки:Т.map(function(p,i){return {lat:p.lat,lng:p.lng,номер:i+1,своя:своя(p)};}),'
     +     'линия:d?d.line:Т.map(function(p){return [p.lat,p.lng];}),'
     +     'плитки:window.__плиткиАдрес,путь:location.pathname});'
@@ -4175,6 +4237,173 @@ async function marshrutPage(ids, опции){
     +     'b.textContent="Сохранить картинкой";'
     +   '}catch(e){b.textContent="Не получилось, ещё раз?";}'
     +   'b.disabled=false;});'
+    // ── План дня, «Сколько стоит дорога», поездка на два дня ──
+    // Человек из ролика прикидывает поездку: к скольким успеем, сколько уйдёт
+    // на бензин, где ночевать, если за день не объехать. Считаем здесь же, без
+    // лишних запросов: минуты и километры перегонов — из уже полученной дороги.
+    + 'var ПРОБЫТЬ_ВАРИАНТЫ=[15,30,45,60,90,120,180];'
+    + 'function читатьОбъект(к){try{var v=JSON.parse(localStorage.getItem(к)||"null");'
+    +   'return (v&&typeof v==="object"&&!Array.isArray(v))?v:{};}catch(e){return {};}}'
+    + 'function записатьОбъект(к,v){try{localStorage.setItem(к,JSON.stringify(v));}catch(e){}}'
+    + 'var ПРОБЫТЬ=читатьОбъект("routeStay");'
+    // Два дня и ночёвка — часть ссылки (d=N), а не настройка человека: время
+    // выезда, «пробыть» и расход в хранилище, а деление на дни приходит с адресом.
+    + 'var ДВА_ДНЯ=false, НОЧЁВКА=0, НОЧЁВКА_САМА=true, РАССТ_САМО=true;'
+    + '(function(){var m=location.search.match(/[?&]d=(\\d+)/);if(m&&+m[1]>=1){ДВА_ДНЯ=true;НОЧЁВКА=+m[1];НОЧЁВКА_САМА=false;}'
+    +   'var v="";try{v=localStorage.getItem("routeStart")||"";}catch(e){}'
+    +   'if(/^\\d\\d:\\d\\d$/.test(v))document.getElementById("rStart").value=v;'
+    +   'var т=читатьОбъект("routeFuel");'
+    +   'if(typeof т.use==="string")document.getElementById("rFuelUse").value=т.use;'
+    +   'if(typeof т.price==="string")document.getElementById("rFuelPrice").value=т.price;})();'
+    + 'function минутыВыезда(){var m=/^(\\d\\d):(\\d\\d)/.exec(document.getElementById("rStart").value||"");'
+    +   'return m?(+m[1]*60+(+m[2])):540;}'
+    // 25:10 — это 01:10 следующего дня, так и пишем
+    + 'function время(м){м=Math.round(м);var д=Math.floor(м/1440),r=м-д*1440;'
+    +   'return ("0"+Math.floor(r/60)).slice(-2)+":"+("0"+(r%60)).slice(-2)'
+    +     '+(д?(" <small>+"+д+" "+(д===1?"день":д<5?"дня":"дней")+"</small>"):"");}'
+    + 'function длительность(м){var ч=Math.floor(м/60),r=м%60;return ч?(ч+" ч"+(r?(" "+r+" мин"):"")):(м+" мин");}'
+    + 'function пробыть(id){var v=+ПРОБЫТЬ[String(id)];return ПРОБЫТЬ_ВАРИАНТЫ.indexOf(v)>=0?v:45;}'
+    // Перегоны: км и минуты по дорогам, если дорога посчитана для этого порядка
+    // точек; иначе по прямой ×1,3 при 60 км/ч — с пометкой «примерно».
+    + 'function перегоны(){var d=(ДОРОГА&&ДОРОГА.к===ключДороги())?ДОРОГА.d:null, out=[];'
+    +   'for(var i=1;i<Т.length;i++){var прямо=км(Т[i-1],Т[i])*1.3;'
+    +     'var к=(d&&Array.isArray(d.legs)&&typeof d.legs[i-1]==="number")?d.legs[i-1]:null;'
+    +     'var м=(d&&Array.isArray(d.legMinutes)&&typeof d.legMinutes[i-1]==="number")?d.legMinutes[i-1]:null;'
+    +     'out.push({км:к!==null?к:прямо, мин:м!==null?м:Math.round(прямо), примерно:м===null});}'
+    +   'return out;}'
+    // ночёвка по умолчанию — после точки, где набралась половина пути
+    + 'function ночёвкаПоУмолчанию(){var п=перегоны(),всего=0,нак=0;п.forEach(function(x){всего+=x.км;});'
+    +   'for(var i=0;i<Т.length-1;i++){if(i)нак+=п[i-1].км;if(нак>=всего/2)return i+1;}'
+    +   'return Т.length-1;}'
+    // Адрес — ссылка на маршрут. На /marshrut его целиком собирает обновитьАдрес();
+    // на /m/<slug> до первой правки меняем только d: путь ролика остаётся.
+    + 'function адресДней(){if(location.pathname==="/marshrut"){обновитьАдрес();return;}'
+    +   'var q=location.search.replace(/^[?]/,"").split("&").filter(function(x){return x&&x.indexOf("d=")!==0;});'
+    +   'if(ДВА_ДНЯ)q.push("d="+НОЧЁВКА);'
+    +   'history.replaceState(null,"",location.pathname+(q.length?("?"+q.join("&")):"")+location.hash);}'
+    + 'function поправитьДни(){var n=Т.length, было=ДВА_ДНЯ?НОЧЁВКА:0;'
+    // точек стало меньше трёх — делить нечего: выключаем и убираем d из адреса
+    +   'if(ДВА_ДНЯ&&n<3){ДВА_ДНЯ=false;НОЧЁВКА=0;НОЧЁВКА_САМА=true;адресДней();return;}'
+    +   'if(!ДВА_ДНЯ)return;'
+    +   'if(НОЧЁВКА_САМА)НОЧЁВКА=ночёвкаПоУмолчанию();'
+    +   'НОЧЁВКА=Math.max(1,Math.min(n-1,НОЧЁВКА||1));'
+    +   'if(НОЧЁВКА!==было)адресДней();}'
+    + 'function таблицаДня(a,b,п,день){var t=минутыВыезда(), пр=false, строки="";'
+    +   'for(var i=a;i<=b;i++){'
+    // второй день начинается от ночёвки у последней точки первого: этот перегон — уже его
+    +     'if(i>0&&(i>a||день===2)){var л=п[i-1];t+=л.мин;if(л.примерно)пр=true;'
+    +       'строки+="<tr class=\\"rd\\"><td></td><td colspan=\\"4\\">↓ "+длительность(л.мин)+" в дороге"'
+    +         '+(i===a?(" от точки "+i):"")+(л.примерно?" · примерно":"")+"</td></tr>";}'
+    +     'var p=Т[i], сколько=пробыть(p.id), приезд=t, метка=пр?"<small>примерно</small>":""; t+=сколько;'
+    +     'строки+="<tr class=\\"pp\\" data-id=\\""+esc(p.id)+"\\"><td class=\\"pn\\">"+(i+1)+"</td><td>"+esc(p.name)+"</td>"'
+    +       '+"<td class=\\"tm ar\\">"+время(приезд)+метка+"</td>"'
+    +       '+"<td><select class=\\"ps\\" data-id=\\""+esc(p.id)+"\\" aria-label=\\"Сколько пробыть: "+esc(p.name)+"\\">"'
+    +       '+ПРОБЫТЬ_ВАРИАНТЫ.map(function(v){return "<option value=\\""+v+"\\""+(v===сколько?" selected":"")+">"'
+    +         '+(v<60?(v+" мин"):(String(v/60).replace(".",",")+" ч"))+"</option>";}).join("")+"</select></td>"'
+    +       '+"<td class=\\"tm dp\\">"+время(t)+метка+"</td></tr>";}'
+    +   'return "<div class=\\"tw\\"><table class=\\"plt\\"><thead><tr><th></th><th>Точка</th><th>Приезд</th><th>Пробыть</th><th>Отъезд</th></tr></thead>"'
+    +     '+"<tbody>"+строки+"</tbody></table></div>"'
+    +     '+"<p class=\\"pi\\">Последняя точка — до <b>"+время(t)+"</b>"+(пр?" <small>примерно</small>":"")+"</p>";}'
+    + 'function яндекс(с){return "https://yandex.by/maps/?rtext="+с.map(function(p){return p.lat+","+p.lng;}).join("~")+"&rtt=auto";}'
+    + 'function яндексПоДням(N){var g=document.getElementById("rGo"),g1=document.getElementById("rGo1"),g2=document.getElementById("rGo2");'
+    +   'g.hidden=ДВА_ДНЯ; g1.hidden=!ДВА_ДНЯ; g2.hidden=!ДВА_ДНЯ; if(!ДВА_ДНЯ)return;'
+    // второй день едет от ночёвки у последней точки первого
+    +   'g1.href=яндекс(Т.slice(0,N)); g2.href=яндекс(Т.slice(N-1));}'
+    // Заголовки дней вставляем в готовый список, а не собираем в нарисовать():
+    // включение двух дней не должно перерисовывать карту и дёргать масштаб.
+    + 'function заголовкиДней(км1,км2){var л=document.getElementById("rlist");'
+    +   'Array.prototype.slice.call(л.querySelectorAll(".dh")).forEach(function(э){if(э.parentNode===л)л.removeChild(э);});'
+    +   'if(!ДВА_ДНЯ)return; var ряды=л.querySelectorAll(".it"); if(ряды.length!==Т.length)return;'
+    +   '[[0,"День 1 · "+Math.round(км1)+" км"],[НОЧЁВКА,"День 2 · "+Math.round(км2)+" км"]].forEach(function(х){'
+    +     'var h=document.createElement("div");h.className="dh";h.textContent=х[1];л.insertBefore(h,ряды[х[0]]);});}'
+    + 'var подписьНочёвки="";'
+    + 'function планИТопливо(){var n=Т.length;'
+    +   'document.getElementById("rPlan").hidden=n<2; document.getElementById("rFuel").hidden=n<2;'
+    +   'поправитьДни();'
+    +   'document.getElementById("rTwoL").hidden=n<3; document.getElementById("rTwo").checked=ДВА_ДНЯ;'
+    +   'document.getElementById("rNightL").hidden=!ДВА_ДНЯ;'
+    +   'var п=перегоны(), N=ДВА_ДНЯ?НОЧЁВКА:n, км1=0, км2=0;'
+    +   'п.forEach(function(x,i){if(i<N-1)км1+=x.км;else км2+=x.км;});'
+    +   'var д1=document.getElementById("rPlan1"), д2=document.getElementById("rPlan2");'
+    +   'if(n<2){д1.innerHTML="";д2.innerHTML="";}'
+    +   'else if(ДВА_ДНЯ){д1.innerHTML="<h3>День 1 · "+Math.round(км1)+" км</h3>"+таблицаДня(0,N-1,п,1);'
+    +     'д2.innerHTML="<h3>День 2 · "+Math.round(км2)+" км</h3>"+таблицаДня(N,n-1,п,2);}'
+    +   'else{д1.innerHTML=таблицаДня(0,n-1,п,1);д2.innerHTML="";}'
+    +   'if(ДВА_ДНЯ){var s=document.getElementById("rNightN"), подпись=ключИд(Т);'
+    +     'if(подпись!==подписьНочёвки){подписьНочёвки=подпись;'
+    +       's.innerHTML=Т.slice(0,n-1).map(function(p,i){var имя=String(p.name||"");if(имя.length>28)имя=имя.slice(0,27)+"…";'
+    +         'return "<option value=\\""+(i+1)+"\\">"+(i+1)+" · "+esc(имя)+"</option>";}).join("");}'
+    +     's.value=String(N);}'
+    +   'заголовкиДней(км1,км2); яндексПоДням(N); ночлег(); топливо();}'
+    // Жильё у ночёвки. Спрашиваем только при включённых двух днях, только для
+    // выбранной точки и через 600 мс после последней смены — поиск идёт по всей округе.
+    + 'var ЖИЛЬЁ={}, жильёКлюч="", жильёЗа=null;'
+    + 'function сообщениеЖилья(т){var м=document.getElementById("rNightMsg"),л=document.getElementById("rNightList");'
+    +   'м.textContent=т;м.hidden=false;л.hidden=true;л.innerHTML="";document.getElementById("rNightAll").hidden=true;}'
+    + 'function ночлег(){var б=document.getElementById("rNight");'
+    +   'if(!ДВА_ДНЯ){б.hidden=true;clearTimeout(жильёЗа);жильёКлюч="";return;}'
+    +   'var p=Т[НОЧЁВКА-1], к=p.lat+","+p.lng;'
+    +   'document.getElementById("rNightH").textContent="Ночёвка рядом с «"+p.name+"»";'
+    +   'б.hidden=false;'
+    +   'if(к===жильёКлюч)return; жильёКлюч=к; clearTimeout(жильёЗа);'
+    +   'if(ЖИЛЬЁ[к]){показатьЖильё(ЖИЛЬЁ[к]);return;}'
+    +   'сообщениеЖилья("Ищу жильё рядом…");'
+    +   'жильёЗа=setTimeout(function(){загрузитьЖильё(p,к);},600);}'
+    + 'async function загрузитьЖильё(p,к){var d=null;'
+    +   'try{d=await (await fetch("/api/places/stay?lat="+p.lat+"&lng="+p.lng+"&r=30")).json();}catch(e){d=null;}'
+    // сбой — не запоминаем: при следующей перерисовке спросим снова
+    +   'if(!d||!Array.isArray(d.items)){if(к===жильёКлюч){жильёКлюч="";сообщениеЖилья("Жильё рядом сейчас не загрузилось.");}return;}'
+    +   'ЖИЛЬЁ[к]=d; if(к===жильёКлюч)показатьЖильё(d);}'
+    + 'function источникЖилья(s){return s==="H101"?"101Hotels":s==="CheckIn"?"Check-in":String(s||"");}'
+    + 'function показатьЖильё(d){var items=d.items.slice(0,4), л=document.getElementById("rNightList");'
+    +   'if(!items.length)сообщениеЖилья("В 30 км жилья не нашлось");'
+    +   'else{document.getElementById("rNightMsg").hidden=true; л.hidden=false;'
+    // сначала показываем ленту, потом вставляем карточки: ленивые снимки в скрытом блоке не грузятся
+    +     'л.innerHTML=items.map(function(x){var ф=x.photos&&x.photos[0];'
+    +       'return "<a class=\\"nc\\" href=\\""+esc(x.link)+"\\" target=\\"_blank\\" rel=\\"noopener\\">"'
+    +         '+(ф?("<img src=\\""+esc(ф)+"\\" alt=\\"\\" loading=\\"lazy\\">"):"<div class=\\"ni\\"></div>")'
+    +         '+"<span class=\\"p\\">"+esc(x.title||x.name||"Жильё на сутки")+"</span>"'
+    +         '+"<span class=\\"d\\">"+(x.от?"от ":"")+esc(x.price)+" BYN</span>"'
+    +         '+"<span class=\\"s\\">"+esc(источникЖилья(x.src))+(x.approx?(x.area?(" · "+esc(x.area)):""):(" · "+String(x.km).replace(".",",")+" км"))+"</span></a>";}).join("");}'
+    // «Всё жильё рядом» — туда же, куда кнопка «Жильё рядом» у места на главной: жильё области
+    +   'var a=document.getElementById("rNightAll"); a.href=d.region?("/?region="+encodeURIComponent(d.region)):"/"; a.hidden=false;}'
+    + 'document.getElementById("rNightList").addEventListener("error",function(e){var t=e.target;'
+    +   'if(!t||t.tagName!=="IMG")return;var d=document.createElement("div");d.className="ni";t.replaceWith(d);},true);'
+    // Топливо: три поля, итог сразу при вводе. Запятая — тоже десятичный знак.
+    + 'function число(v){v=String(v==null?"":v).trim().replace(",",".");if(!v)return NaN;var x=Number(v);return (isFinite(x)&&x>=0)?x:NaN;}'
+    + 'function расстояниеМаршрута(){if(Т.length<2)return 0;var d=(ДОРОГА&&ДОРОГА.к===ключДороги())?ДОРОГА.d:null;'
+    +   'if(d&&typeof d.km==="number")return Math.round(d.km);'
+    +   'var s=0;Т.forEach(function(p,i){if(i)s+=км(Т[i-1],p);});return Math.round(s*1.3);}'
+    + 'function топливо(){if(РАССТ_САМО){var в=расстояниеМаршрута();document.getElementById("rFuelKm").value=в?String(в):"";}'
+    +   'document.getElementById("rFuelAuto").hidden=РАССТ_САМО; посчитатьТопливо();}'
+    + 'function посчитатьТопливо(){var р=число(document.getElementById("rFuelKm").value), л=число(document.getElementById("rFuelUse").value),'
+    +   'ц=число(document.getElementById("rFuelPrice").value), о=document.getElementById("rFuelSum");'
+    +   'if(isNaN(р)||isNaN(л)||isNaN(ц)){о.textContent="—";return;}'
+    +   'var литры=р*л/100;'
+    +   'о.textContent="≈ "+(Math.round(литры*10)/10).toFixed(1)+" л · ≈ "+(Math.round(литры*ц*100)/100).toFixed(2)+" BYN";}'
+    + 'function запомнитьТопливо(){записатьОбъект("routeFuel",{use:document.getElementById("rFuelUse").value,'
+    +   'price:document.getElementById("rFuelPrice").value});посчитатьТопливо();}'
+    + 'document.getElementById("rFuelUse").addEventListener("input",запомнитьТопливо);'
+    + 'document.getElementById("rFuelPrice").addEventListener("input",запомнитьТопливо);'
+    // расстояние поправили руками — дальше не трогаем, пока не нажмут «↺ по маршруту»
+    + 'document.getElementById("rFuelKm").addEventListener("input",function(){РАССТ_САМО=false;'
+    +   'document.getElementById("rFuelAuto").hidden=false;посчитатьТопливо();});'
+    + 'document.getElementById("rFuelAuto").addEventListener("click",function(){РАССТ_САМО=true;топливо();});'
+    + 'function сменаВыезда(){var v=document.getElementById("rStart").value||"";'
+    +   'if(/^\\d\\d:\\d\\d/.test(v)){try{localStorage.setItem("routeStart",v.slice(0,5));}catch(e){}}планИТопливо();}'
+    + 'document.getElementById("rStart").addEventListener("input",сменаВыезда);'
+    + 'document.getElementById("rStart").addEventListener("change",сменаВыезда);'
+    + 'document.getElementById("rPlan").addEventListener("change",function(e){var t=e.target;'
+    +   'if(t.id==="rTwo"){ДВА_ДНЯ=t.checked&&Т.length>2;НОЧЁВКА=0;НОЧЁВКА_САМА=true;планИТопливо();адресДней();return;}'
+    +   'if(t.id==="rNightN"){НОЧЁВКА=+t.value;НОЧЁВКА_САМА=false;планИТопливо();адресДней();return;}'
+    +   'if(!t.classList.contains("ps"))return;'
+    +   'var id=t.getAttribute("data-id");ПРОБЫТЬ[id]=+t.value;'
+    // в хранилище дописываем к тому, что там уже есть: в другой вкладке могли выбрать своё
+    +   'var все=читатьОбъект("routeStay");все[id]=+t.value;записатьОбъект("routeStay",все);'
+    +   'планИТопливо();'
+    // таблица перерисована — фокус обратно на выбор той же точки
+    +   'var н=document.querySelectorAll("#rPlan select.ps");'
+    +   'for(var i=0;i<н.length;i++)if(н[i].getAttribute("data-id")===id){try{н[i].focus({preventScroll:true});}catch(err){}break;}});'
     + 'перетаскиваниеСтрок(document.getElementById("rlist"), переставить);'
     + 'нарисовать();'+ '(function(){var a=document.getElementById("back");if(!a)return;'+ 'try{ var r=document.referrer, с=localStorage.getItem("backTo");'+ '  if(r && r.indexOf(location.origin)===0 && /^\\/(\\?|$)/.test(r.slice(location.origin.length))) a.href=r;'+ '  else if(с && с.charAt(0)==="/") a.href=с; }catch(e){}})();'+ 'window.addEventListener("storage", function(e){if(e.key && e.key!=="route" && e.key!=="routeOrder")return;'
     // режим чужого маршрута к открытому по ссылке не относится
