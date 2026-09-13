@@ -1899,6 +1899,54 @@ const EXTRA_PLACES = [
   "group": "Из маршрутов",
   "pic": "",
   "text": "Каменный неоготический костёл 1909–1910 годов в деревне Оссово. Рядом сохранилась старая плебания начала XX века. От Вороново около 10 км — удобно объединить в один день с костёлом Милосердия Божьего."
+ },
+ {
+  "id": 910030,
+  "name": "Костёл Святой Троицы (Германишки)",
+  "lat": 54.12742,
+  "lng": 25.36314,
+  "addr": "д. Германишки, Вороновский р-н",
+  "cat": "костёл",
+  "group": "Из маршрутов",
+  "pic": "",
+  "text": "Костёл строили с 1886 по 1909 год. Вокруг сохранилась ограда с брамами конца XIX — начала XX века. От Вороново — около 4 км.",
+  "author": "фото автора маршрута"
+ },
+ {
+  "id": 910031,
+  "name": "Усадьба Вольских (Липнишки)",
+  "lat": 54.01526,
+  "lng": 25.60802,
+  "addr": "д. Липнишки, Ивьевский р-н",
+  "cat": "усадьба",
+  "group": "Из маршрутов",
+  "pic": "",
+  "text": "Усадьба второй половины XIX века: главный дом с башенкой, флигель, руины хозяйственной постройки и остатки парка. Рядом — костёл святого Казимира.",
+  "author": "фото автора маршрута"
+ },
+ {
+  "id": 910032,
+  "name": "Деревянная часовня на кладбище (Липнишки)",
+  "lat": 53.99666,
+  "lng": 25.59374,
+  "addr": "д. Липнишки, Ивьевский р-н",
+  "cat": "часовня",
+  "group": "Из маршрутов",
+  "pic": "",
+  "text": "Деревянная католическая часовня на старом кладбище, предположительно XIX века. У входа на кладбище — брама начала XX века.",
+  "author": "фото автора маршрута"
+ },
+ {
+  "id": 910033,
+  "name": "Брама старого кладбища (Вороново)",
+  "lat": 54.15054,
+  "lng": 25.31242,
+  "addr": "г.п. Вороново",
+  "cat": "брама",
+  "group": "Из маршрутов",
+  "pic": "",
+  "text": "Брама 1901 года из камня и кирпича у входа на старое католическое кладбище — в нескольких минутах от костёла Милосердия Божьего.",
+  "author": "фото автора маршрута"
  }
 ];
 
@@ -2562,33 +2610,61 @@ function normPlace(t){
 
 // Что лежит в папке со снимками. Перечитываем раз в минуту: положили файл —
 // через минуту он на сайте, перезапускать ничего не надо.
-let PHOTO_DIR = { at: 0, byName: {} };
+//
+// Два способа привязать снимок. Старый — по названию: «Парк-отель Версаль.jpg»
+// находит «Парк-отель «Версаль»». Новый — по номеру точки в начале имени:
+// «5069 Костел святого Казимира Липнишки.jpg». Номер нужен, потому что
+// одинаковых названий много: по имени костёл святого Казимира из Липнишек
+// уехал бы и в Ружаны. Файл с номером по названию не привязывается никогда.
+let PHOTO_DIR = { at: 0, byName: {}, byId: {} };
+const СНИМОК_ПО_НОМЕРУ = /^(\d+) (.+?)(?: (\d+))?\.(jpg|jpeg|png|webp)$/i;
 function ownPhotos(){
-  if(Date.now() - PHOTO_DIR.at < 60 * 1000) return PHOTO_DIR.byName;
-  const byName = {};
+  if(Date.now() - PHOTO_DIR.at < 60 * 1000) return PHOTO_DIR;
+  const byName = {}, byId = {}, порядок = {};
   try{
     for(const f of fs.readdirSync(__dirname + '/фото-точек')){
       if(!/\.(jpg|jpeg|png|webp)$/i.test(f)) continue;
+      const m = f.match(СНИМОК_ПО_НОМЕРУ);
+      if(m){
+        (byId[m[1]] = byId[m[1]] || []).push(f);
+        порядок[f] = m[3] ? +m[3] : 1;   // без номера на конце — обложка
+        continue;
+      }
       const key = normPlace(f.replace(/\.[^.]+$/, ''));
-      if(key && !byName[key]) byName[key] = f;
+      // «Название.jpg» и «Название 2.jpg» дают один ключ; обложкой должен
+      // стать первый, а папка отдаёт «… 2.jpg» раньше (пробел меньше точки).
+      const второй = x => /\s\d+\.[^.]+$/.test(x);
+      if(key && (!byName[key] || (второй(byName[key]) && !второй(f)))) byName[key] = f;
     }
   }catch(e){}
-  PHOTO_DIR = { at: Date.now(), byName };
-  return byName;
+  for(const id in byId) byId[id].sort((a, b) => порядок[a] - порядок[b]);
+  PHOTO_DIR = { at: Date.now(), byName, byId };
+  return PHOTO_DIR;
+}
+
+// Все свои снимки точки по номеру, обложка первой. Адреса — как у pic.
+function своиСнимки(id){
+  return (ownPhotos().byId[String(id)] || []).map(f => '/фото-точек/' + f);
 }
 
 // Свой снимок побеждает снимок из справочника: его кладут осознанно,
 // чтобы заменить неудачный кадр или добавить недостающий.
 function attachOwn(list){
-  const m = ownPhotos();
-  for(const k in m){
-    return list.map(p => {
-      const f = m[normPlace(p.name)];
-      return f ? Object.assign({}, p, { pic: '/фото-точек/' + f,
-                                        author: p.author || 'фото автора маршрута' }) : p;
-    });
-  }
-  return list;                       // папка пуста — ничего не трогаем
+  const { byName, byId } = ownPhotos();
+  if(!Object.keys(byName).length && !Object.keys(byId).length) return list;   // папка пуста
+  return list.map(p => {
+    const поНомеру = byId[String(p.id)];
+    const f = поНомеру ? поНомеру[0] : byName[normPlace(p.name)];
+    return f ? Object.assign({}, p, { pic: '/фото-точек/' + f,
+                                      author: p.author || 'фото автора маршрута' }) : p;
+  });
+}
+
+// Свои снимки — первыми, дальше чужие без повторов.
+function своиПервыми(свои, чужие){
+  const все = [];
+  свои.concat(чужие || []).forEach(u => { if(u && !все.includes(u)) все.push(u); });
+  return все;
 }
 
 async function placesRaw(){
@@ -2631,7 +2707,8 @@ async function placeDetail(id){
   // у собственных точек описание своё, ходить за ним некуда
   const own = своиМеста().find(p => String(p.id) === String(id));
   if(own) return { id: own.id, name: own.name, years: '', addr: own.addr,
-                   text: own.text, full: false, pics: own.pic ? [own.pic] : [], more: own.src || '' };
+                   text: own.text, full: false, pics: своиПервыми(своиСнимки(id), own.pic ? [own.pic] : []),
+                   more: own.src || '' };
   const правка = ПРАВКИ_ТОЧЕК[id];
   const d = await cached('raw|place|' + id, async ()=>{
     const j = await (await fetch(KUDIN + '/api/v1/detail/?id=' + encodeURIComponent(id),
@@ -2654,7 +2731,9 @@ async function placeDetail(id){
              })(),
              more: KUDIN + '/?point=' + id };
   }, DETAIL_TTL);
-  return правка ? Object.assign({}, d, { name: правка.name, text: правка.text }) : d;
+  // Свои снимки добавляем поверх кэша: новый файл не ждёт, пока истечёт кэш описания.
+  return Object.assign({}, d, { pics: своиПервыми(своиСнимки(id), d.pics) },
+                       правка ? { name: правка.name, text: правка.text } : {});
 }
 
 // ── Кэш результатов поиска ────────────────────────────────────────────────
@@ -3067,9 +3146,8 @@ async function mestoPageBuild(id){
   const цены = рядом.items.map(x => x.price).filter(x => x > 0).sort((a,b)=>a-b);
 
   // Обложка всегда первая: её выбирали руками, чтобы в кадре не было людей.
-  const кадры = [];
-  if(p.pic) кадры.push(p.pic);
-  (d.pics || []).forEach(u => { if(u && !кадры.includes(u)) кадры.push(u); });
+  // Свои снимки точки — сразу за ней, даже если kudin.by не ответил.
+  const кадры = своиПервыми(p.pic ? [p.pic] : [], своиПервыми(своиСнимки(p.id), d.pics));
 
   // Первый снимок с адресом, остальные — только с пометкой: браузер их не
   // тронет, пока человек не долистает. Иначе страница тянула бы мегабайты.
