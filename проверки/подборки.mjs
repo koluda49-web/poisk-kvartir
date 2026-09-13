@@ -110,7 +110,8 @@ check('все подборки в sitemap.xml', ПОДБОРКИ.every(п => к�
   ]));
   const второй = spawn(process.execPath, ['kvartiry-server.js'], {
     cwd: new URL('..', import.meta.url),
-    env: { ...process.env, PORT: String(ПОРТ2), PODBORKI_FILE: файл, DATA_DIR: папка, STATS_FILE: папка + '/stats.json',
+    // GH_TOKEN пустой: иначе второй экземпляр с временной папкой начал бы писать в настоящий репозиторий
+    env: { ...process.env, PORT: String(ПОРТ2), PODBORKI_FILE: файл, DATA_DIR: папка, STATS_FILE: папка + '/stats.json', GH_TOKEN: '',
            KUFAR: 'off', REALT: 'off', FLATBOOK: 'off', CHECKIN: 'off', KVARTIRKA: 'off' },
     stdio: 'ignore',
   });

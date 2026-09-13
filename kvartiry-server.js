@@ -4210,7 +4210,7 @@ async function marshrutPage(ids, опции){
     // при поездке на два дня вместо одной кнопки — по кнопке на день
     + '<a class="go" id="rGo1" href="#" target="_blank" rel="noopener" hidden>День 1 в Яндекс.Картах →</a>'
     + '<a class="go" id="rGo2" href="#" target="_blank" rel="noopener" hidden>День 2 в Яндекс.Картах →</a>'
-    + '<span class="shr"><button class="go2' + (точки.length ? '' : ' off') + '" id="rShare" type="button" '
+    + '<span class="shr"><button class="go2' + (точки.length ? '' : ' off') + '" id="rShare" type="button"' + (точки.length ? '' : ' disabled') + ' '
     +   'aria-haspopup="true" aria-expanded="false">Поделиться</button>'
     +   '<span class="shm" id="rShareMenu" role="menu" hidden>'
     +     '<button type="button" id="rCopy">Скопировать ссылку</button>'
@@ -4219,7 +4219,7 @@ async function marshrutPage(ids, опции){
     +     '<a id="rVb" href="#" target="_blank" rel="noopener">Viber</a>'
     +     '<a id="rWa" href="#" target="_blank" rel="noopener">WhatsApp</a>'
     +   '</span></span>'
-    + '<button class="go2' + (точки.length ? '' : ' off') + '" id="rPng" type="button">Сохранить картинкой</button>'
+    + '<button class="go2' + (точки.length ? '' : ' off') + '" id="rPng" type="button"' + (точки.length ? '' : ' disabled') + '>Сохранить картинкой</button>'
     + '<a class="go2" id="rStay" href="/">Искать жильё на сутки →</a>'
     + '<script>'
     // Города, по которым сайт умеет искать жильё: нужны, чтобы понять,
@@ -4296,7 +4296,9 @@ async function marshrutPage(ids, опции){
     + 'function обновитьАдрес(){var q = Т.length ? ("?p=" + Т.map(вСсылку).join(",") + (ПОРЯДОК==="manual"?"&o=1":"") + (ДВА_ДНЯ?"&d="+НОЧЁВКА:"")) : "";'+   'history.replaceState(null, "", "/marshrut" + q);}'+ 'function убрать(id){Т = Т.filter(function(p){return String(p.id)!==String(id);});нарисовать();сохранить();}'+ 'function добавить(p){if(Т.some(function(x){return String(x.id)===String(p.id);}))return;'+   'Т = Т.concat([{id:p.id,name:p.name,addr:p.addr,lat:p.lat,lng:p.lng}]);нарисовать();сохранить();отметитьДобавление(p);}'+ 'function порядок(){if(ПОРЯДОК==="manual"||Т.length<3)return;var left=Т.slice(1),out=[Т[0]];'+   'while(left.length){var c=out[out.length-1],bi=0,bd=Infinity;'+     'left.forEach(function(p,i){var d=км(c,p);if(d<bd){bd=d;bi=i;}});'+     'out.push(left.splice(bi,1)[0]);}Т=out;}'+ 'function нарисовать(){порядок();'+   'var сумма=0, строки="";'+   'Т.forEach(function(p,i){var шаг=i?км(Т[i-1],p):0;сумма+=шаг;'+     'строки += "<div class=\\"it\\"><button class=\\"drag\\" type=\\"button\\" aria-label=\\"Перетащить\\">⋮⋮</button><span class=\\"n\\">"+(i+1)+"</span>"'+       '+"<span class=\\"t\\">"+(своя(p)?("<b class=\\"ownn\\">📍 "+esc(p.name)+"</b><small>своя точка · её можно перетащить на карте</small>"):("<a href=\\"/mesto/"+p.id+"\\">"+esc(p.name)+"</a>"))'+       '+(p.addr?("<small>"+esc(p.addr)+"</small>"):"")+"</span>"'+       '+"<span class=\\"km\\">"+(i?("+"+Math.round(шаг)+" км"):"старт")+"</span>"'+       '+"<button class=\\"x\\" type=\\"button\\" title=\\"убрать\\" data-id=\\""+p.id+"\\">×</button></div>";});'+   'document.getElementById("rlist").innerHTML = строки; подписатьШаги();'+   'document.getElementById("rsub").textContent = Т.length'+     '? (Т.length + " точек · около " + Math.round(сумма) + " км между ними")'+     ': "Пока пусто";'
     +   'document.getElementById("rAuto").style.display = (ПОРЯДОК==="manual"&&Т.length>2) ? "" : "none";'
     +   'var g = document.getElementById("rGo");'+   'g.href = "https://yandex.by/maps/?rtext=" + Т.map(function(p){return p.lat+","+p.lng;}).join("~") + "&rtt=auto";'+   'g.className = "go" + (Т.length ? "" : " off");'
-    +   '["rShare","rPng"].forEach(function(id){document.getElementById(id).classList.toggle("off",!Т.length);});'
+    // пустой маршрут: кнопки не только серые, но и не нажимаются (и с клавиатуры тоже);
+    // пока картинка собирается, «Сохранить картинкой» не включаем обратно
+    +   '["rShare","rPng"].forEach(function(id){var b=document.getElementById(id);b.classList.toggle("off",!Т.length);if(!b.dataset.busy)b.disabled=!Т.length;});'
     +   'if(!Т.length)закрытьМеню();'
     +   'кудаЗаЖильём();'
     + '  document.getElementById("rEmpty").style.display = Т.length ? "none" : "";'+   'document.getElementById("rmap").style.display = (Т.length||РЕЖИМ) ? "" : "none";'+   'рисоватьКарту();поПутиПозже();планИТопливо();}'+ 'function рисоватьКарту(){if((!Т.length&&!РЕЖИМ)||typeof L==="undefined")return;'+   'if(!карта){карта=L.map("rmap",{scrollWheelZoom:false});'+     'карта.attributionControl.setPrefix("");'+     'L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:18,'+       'attribution:"&copy; OpenStreetMap"}).addTo(карта);слой=L.layerGroup().addTo(карта);карта.on("click",поКарте);}'+   'слой.clearLayers(); if(линия){карта.removeLayer(линия);линия=null;}'+   'var пути=[];'+   'Т.forEach(function(p,i){пути.push([p.lat,p.lng]);'+     'L.marker([p.lat,p.lng],{icon:L.divIcon({className:"",iconSize:[26,26],iconAnchor:[13,13],'+       'html:"<div class=\\"pin"+(своя(p)?" own":"")+"\\">"+(i+1)+"</div>"}),draggable:своя(p)})'
@@ -4493,7 +4495,7 @@ async function marshrutPage(ids, опции){
     +   'document.getElementById("rPngClose").focus();}'
     + 'document.addEventListener("keydown",function(e){if(e.key==="Escape"&&ОКНО_КАРТИНКИ)закрытьКартинку();});'
     + 'document.getElementById("rPng").addEventListener("click",async function(){var b=this;if(b.disabled)return;'
-    +   'b.disabled=true;b.textContent="Собираю…";'
+    +   'b.disabled=true;b.dataset.busy="1";b.textContent="Собираю…";'
     +   'try{var blob=await window.собратьКартинку(), файл=new File([blob],"маршрут.png",{type:"image/png"}), отдали=false;'
     +     'if(navigator.canShare&&navigator.share){try{if(navigator.canShare({files:[файл]})){await navigator.share({files:[файл]});отдали=true;}}'
     // человек закрыл окно «Поделиться» — это не повод что-то скачивать
@@ -4504,7 +4506,7 @@ async function marshrutPage(ids, опции){
     +     'if(!отдали)await показатьКартинку(blob);'
     +     'b.textContent="Сохранить картинкой";'
     +   '}catch(e){b.textContent="Не получилось, ещё раз?";}'
-    +   'b.disabled=false;});'
+    +   'delete b.dataset.busy;b.disabled=!Т.length;});'
     // ── План дня, «Сколько стоит дорога», поездка на два дня ──
     // Человек из ролика прикидывает поездку: к скольким успеем, сколько уйдёт
     // на бензин, где ночевать, если за день не объехать. Считаем здесь же, без
@@ -8880,22 +8882,38 @@ const ПРЕДЛОЖЕНИЯ_С_АДРЕСА = new Map();   // адрес → в
 const СТАТУС_ПРЕДЛОЖЕНИЯ = { новое: 'новое', добавлено: 'добавлено', отклонено: 'отклонено' };
 
 function адресКлиента(req){
-  // За прокси Render настоящий адрес — первый в x-forwarded-for.
+  // За прокси Render настоящий адрес — первый в x-forwarded-for: так пишет
+  // сама Render (feedback.render.com, «Send the correct X_FORWARDED_FOR»).
+  // Последний надёжнее против подделки, но между человеком и сервером у Render
+  // стоит не один прокси, и последним может оказаться общий адрес прокси —
+  // тогда все посетители слились бы в один. Подделать первый адрес можно,
+  // но это уже осознанный обход, а не случайный цикл запросов.
   return String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()
       || (req.socket && req.socket.remoteAddress) || '';
 }
+// Тело больше предела: сокет не рвём (тогда ответ писался бы в уничтоженное
+// соединение и человек видел бы обрыв), а отвечаем 413 и закрываем соединение.
+const ТЕЛО_ВЕЛИКО = { велико: true };
 function читатьJSON(req, предел){
   return new Promise(function(готово){
     let тело = '', много = false;
-    req.on('data', c => { тело += c; if(тело.length > предел){ много = true; req.destroy(); } });
-    req.on('end', () => { if(много) return готово(null); try{ готово(JSON.parse(тело || '{}')); }catch(e){ готово(null); } });
+    req.on('data', c => {
+      if(много) return;                     // остаток просто пропускаем, не копим
+      тело += c;
+      if(тело.length > предел){ много = true; тело = ''; готово(ТЕЛО_ВЕЛИКО); }
+    });
+    req.on('end', () => { if(много) return; try{ готово(JSON.parse(тело || '{}')); }catch(e){ готово(null); } });
     req.on('close', () => готово(null));   // оборвали — второй вызов готово ничего не меняет
   });
 }
 function ответJSON(res, код, объект){
-  res.writeHead(код, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+  if(res.destroyed || res.writableEnded) return;
+  const заголовки = {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'};
+  if(код === 413) заголовки.Connection = 'close';
+  res.writeHead(код, заголовки);
   res.end(JSON.stringify(объект));
 }
+const ОТВЕТ_413 = { ok:false, error:'Слишком длинный запрос.' };
 const строкаИз = v => typeof v === 'string' ? v.trim() : '';
 // Текст одобренного места попадает в разметку многих страниц — угловые скобки
 // выбрасываем сразу, чтобы ни одно место вывода не зависело от экранирования.
@@ -9030,6 +9048,8 @@ function страницаПредложений(){
   const добавленные = местаОтЛюдей().slice().sort((a, b) => b.id - a.id);
   return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    // Ключ стоит в адресе страницы: ссылки наружу (карта, место) не должны его уносить.
+    + '<meta name="referrer" content="no-referrer">'
     + '<meta name="robots" content="noindex,nofollow"><title>Предложенные места</title><style>'
     + 'body{margin:0;background:#faf7f3;color:#1c1917;font:15px/1.5 -apple-system,Segoe UI,Roboto,sans-serif}'
     + '.wrap{max-width:780px;margin:0 auto;padding:20px 16px 60px}'
@@ -9274,6 +9294,7 @@ http.createServer(async (req,res)=>{
   // «Предложить место»: форма на главной шлёт сюда.
   if(u.pathname === '/api/suggest' && req.method === 'POST'){
     const d = await читатьJSON(req, 8000);
+    if(d === ТЕЛО_ВЕЛИКО){ ответJSON(res, 413, ОТВЕТ_413); return; }
     ответJSON(res, 200, принятьПредложение(d, адресКлиента(req))); return;
   }
   // Кнопки страницы проверки — только с ключом.
@@ -9283,6 +9304,7 @@ http.createServer(async (req,res)=>{
   if(действиеПроверки && req.method === 'POST'){
     if(u.searchParams.get('key') !== STATS_KEY){ ответJSON(res, 403, { ok:false, error:'Нужен ключ.' }); return; }
     const d = await читатьJSON(req, 8000);
+    if(d === ТЕЛО_ВЕЛИКО){ ответJSON(res, 413, ОТВЕТ_413); return; }
     ответJSON(res, 200, d ? действиеПроверки(d) : { ok:false, error:'Не удалось прочитать запрос.' }); return;
   }
   if(u.pathname === '/predlozheniya'){

@@ -35,8 +35,9 @@ check('5069: третьего своего нет, дальше снимки kud
 check('5069: снимки без повторов', new Set(p5069).size === p5069.length);
 
 const d4820 = await json('/api/place?id=4820');
-check('4820 (Ружаны, тоже св. Казимира): своих снимков нет',
-      (d4820.pics || []).every(u => !свой(u)), кратко(d4820.pics));
+// Проверка «своих нет» ничего не стоит, если точки или снимков нет вовсе, — сперва убеждаемся, что они есть.
+check('4820 (Ружаны, тоже св. Казимира): описание со снимками есть, своих среди них нет',
+      d4820.id === 4820 && (d4820.pics || []).length > 0 && d4820.pics.every(u => !свой(u)), кратко(d4820.pics));
 
 const p5068 = (await json('/api/place?id=5068')).pics || [];
 check('5068 (Жирмуны): 3 своих первыми, по порядку',
@@ -66,7 +67,7 @@ const стр = await fetch(SITE + '/mesto/910030');
 const html = await стр.text();
 const кадры = [...html.matchAll(/<img class="hero[^"]*"\s+(?:src|data-src)="([^"]+)"/g)].map(m => m[1]);
 check('/mesto/910030 — 200', стр.status === 200, String(стр.status));
-check('/mesto/910030: в слайдере 3 снимка, все свои', кадры.length === 3 && кадры.every(свой) && html.includes('1/3'), кратко(кадры));
+check('/mesto/910030: в слайдере 3 снимка, все свои, счётчик «1/3»', кадры.length === 3 && кадры.every(свой) && html.includes('id="phn">1/3<'), кратко(кадры));
 const html5069 = await (await fetch(SITE + '/mesto/5069')).text();
 const к5069 = [...html5069.matchAll(/<img class="hero[^"]*"\s+(?:src|data-src)="([^"]+)"/g)].map(m => m[1]);
 check('/mesto/5069: первые два кадра свои, дальше kudin.by',
@@ -89,7 +90,7 @@ const поиск5069 = await json('/api/places?q=' + encodeURIComponent('Лип�
 const т5069 = (поиск5069.items || []).find(x => x.id === 5069) || по(5069);
 check('у 5069 обложка своя (pic)', !!т5069 && String(т5069.pic).startsWith('/фото-точек/5069 '), т5069 && т5069.pic);
 const т4820 = ((await json('/api/places?q=' + encodeURIComponent('Ружаны'))).items || []).find(x => x.id === 4820) || по(4820);
-check('у 4820 (Ружаны) обложка не своя', !т4820 || !свой(т4820.pic), т4820 && т4820.pic);
+check('у 4820 (Ружаны) обложка есть и она не своя', !!т4820 && !!т4820.pic && !свой(т4820.pic), т4820 && т4820.pic);
 const немново = ((await json('/api/places?q=' + encodeURIComponent('Немново'))).items || []).find(x => x.id === 910023);
 check('шлюз «Немново» — по-прежнему nemnovo.jpg', !!немново && немново.pic === '/фото-точек/nemnovo.jpg', немново && немново.pic);
 const версаль = ((await json('/api/places?q=' + encodeURIComponent('Версаль'))).items || []).find(x => x.id === 910025);
@@ -98,7 +99,8 @@ check('«Версаль» — по-прежнему «Парк-отель Вер
 // ── сами файлы ──────────────────────────────────────────────────────────
 console.log('\n=== файлы в фото-точек ===');
 const сНомером = readdirSync(ПАПКА).filter(f => /^\d+ .+\.jpg$/i.test(f));
-check('файлов с номером точки 17', сНомером.length === 17, String(сНомером.length));
+// Владелец добавляет снимки — число только растёт, поэтому «не меньше».
+check('файлов с номером точки не меньше 17', сНомером.length >= 17, String(сНомером.length));
 check('имена проходят проверку адреса (без «», запятых)',
       сНомером.every(f => /^[0-9A-Za-zА-Яа-яЁё _.()-]+\.(jpg|jpeg|png|webp)$/.test(f)), сНомером.filter(f => !/^[0-9A-Za-zА-Яа-яЁё _.()-]+\.jpg$/.test(f)).join('; '));
 // Размер JPEG — из маркера SOF: длинная сторона не больше 1600.

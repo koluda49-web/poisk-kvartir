@@ -71,19 +71,38 @@ else console.log('  (OSRM не ответил — legMinutes не провере
 
 // ── кэш и отказ OSRM: второй экземпляр сервера с поддельным маршрутизатором ──
 // Подделка отвечает как публичный OSRM под нагрузкой: 200 и «TooManyRequests».
-// Только для маршрута от Липнишек отдаёт настоящий ответ (прямую) — чтобы
-// проверить кэш ответа по дорогам с пустым списком мест.
+// Только для маршрута от Липнишек и для «пустой» пары отдаёт настоящий ответ
+// (прямую) — чтобы проверить кэш ответа по дорогам, в том числе с пустым списком.
+// Рядом с дорогой Липнишки—Вороново мест раньше не было, а теперь есть
+// (910030 Германишки), и справочник будет расти. Поэтому сколько мест ждать,
+// считаем здесь же по справочнику, а для пустого списка ищем пару, рядом
+// с которой мест правда нет.
+const доОтрезка = (p, a, b) => {
+  // та же равнопромежуточная проекция, что у сервера (косинус — по середине)
+  const кy = 6371 * Math.PI / 180, кx = кy * Math.cos((a.lat + b.lat) / 2 * Math.PI / 180);
+  const bx = (b.lng - a.lng) * кx, by = (b.lat - a.lat) * кy, px = (p.lng - a.lng) * кx, py = (p.lat - a.lat) * кy;
+  const t = Math.max(0, Math.min(1, (px * bx + py * by) / ((bx * bx + by * by) || 1)));
+  return Math.hypot(px - t * bx, py - t * by);
+};
+const поСправочнику = (места, a, b, skip) => места.filter(p => !skip.includes(String(p.id))
+  && доОтрезка(p, a, b) <= 5 && км(a.lat, a.lng, p.lat, p.lng) >= 0.3 && км(b.lat, b.lng, p.lat, p.lng) >= 0.3);
 {
   const корень = join(dirname(fileURLToPath(import.meta.url)), '..');
   const папка = mkdtempSync(join(tmpdir(), 'po-puti-'));
   const порт = 8193, портOSRM = 9623;
   const запросыOSRM = [];
+  // пара, до которой от всех мест справочника больше 8 км (запас к 5 км)
+  let пустая = null;
+  for (let lat = 51.6; lat < 55.6 && !пустая; lat += 0.2) for (let lng = 24.2; lng < 30.8 && !пустая; lng += 0.2) {
+    const a = { lat: +lat.toFixed(4), lng: +lng.toFixed(4) }, b = { lat: a.lat, lng: +(lng + 0.1).toFixed(4) };
+    if (все.every(p => доОтрезка(p, a, b) > 8)) пустая = [a, b];
+  }
   const osrm = createServer((req, res) => {
     запросыOSRM.push(req.url);
     const m = req.url.match(/\/route\/v1\/driving\/([^?]+)/);
     const coords = m ? decodeURIComponent(m[1]).split(';').map(x => x.split(',').map(Number)) : [];
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    if (coords.length > 1 && coords[0][1] === липнишки.lat) {
+    if (coords.length > 1 && (coords[0][1] === липнишки.lat || (пустая && coords[0][1] === пустая[0].lat))) {
       const legs = coords.slice(1).map((c, i) => ({ distance: 1000 * км(coords[i][1], coords[i][0], c[1], c[0]), duration: 60 * км(coords[i][1], coords[i][0], c[1], c[0]) }));
       res.end(JSON.stringify({ code: 'Ok', routes: [{ distance: legs.reduce((x, l) => x + l.distance, 0), duration: legs.reduce((x, l) => x + l.duration, 0), legs, geometry: { coordinates: coords } }] }));
     } else res.end('{"code":"TooManyRequests","message":"Too Many Requests"}');
@@ -132,14 +151,31 @@ else console.log('  (OSRM не ответил — legMinutes не провере
     // по дорогам и пусто — кэш 6 ч, повтор из кэша
     const р3 = await getJSON(второй + '/api/route?p=' + pЛВ);
     check('поддельный OSRM с маршрутом → legMinutes', р3.ok === true && Array.isArray(р3.legMinutes) && р3.legMinutes.length === 1, JSON.stringify(р3).slice(0, 120));
+    const местаВторого = (await getJSON(второй + '/api/places?light=1')).items || [];
+    const ждёмЛВ = Math.min(12, поСправочнику(местаВторого, липнишки, вороново, ['5069', '910027']).length);
     const сДо2 = (await служебный()).счёт.поПути;
     const e1 = await getJSON(второй + '/api/route/near?p=' + pЛВ + '&skip=5069,910027');
     const e2 = await getJSON(второй + '/api/route/near?p=' + pЛВ + '&skip=5069,910027');
     const с2 = await служебный();
-    check('пустой список по дорогам: ok и пусто', e1.ok === true && e1.items.length === 0 && e2.ok === true && e2.items.length === 0, JSON.stringify(e1).slice(0, 100));
-    check('пустой список: второй запрос из кэша', с2.счёт.поПути - сДо2 === 1, 'посчитали ' + (с2.счёт.поПути - сДо2));
-    const запПусто = с2.записи.find(z => z.ключ.startsWith(ключРядом(pЛВ)));
-    check('пустой список по дорогам живёт 6 ч', !!запПусто && запПусто.ttl === 6 * 60 * 60 * 1000 && запПусто.мест === 0, JSON.stringify(запПусто));
+    check('по дорогам Липнишки—Вороново: мест столько, сколько по справочнику (' + ждёмЛВ + ')',
+      e1.ok === true && e1.items.length === ждёмЛВ && JSON.stringify(e2) === JSON.stringify(e1), JSON.stringify(e1).slice(0, 160));
+    check('по дорогам: второй запрос из кэша', с2.счёт.поПути - сДо2 === 1, 'посчитали ' + (с2.счёт.поПути - сДо2));
+    const запЛВ = с2.записи.find(z => z.ключ.startsWith(ключРядом(pЛВ)));
+    check('ответ по дорогам живёт 6 ч', !!запЛВ && запЛВ.ttl === 6 * 60 * 60 * 1000 && запЛВ.мест === ждёмЛВ, JSON.stringify(запЛВ));
+
+    // Пустой список по дорогам — тоже 6 ч: общий cached() счёл бы его неудачей.
+    check('нашлась пара без мест в 8 км', !!пустая);
+    if (пустая) {
+      const pП = пара(...пустая);
+      const сДо3 = (await служебный()).счёт.поПути;
+      const п1 = await getJSON(второй + '/api/route/near?p=' + pП);
+      const п2 = await getJSON(второй + '/api/route/near?p=' + pП);
+      const с3 = await служебный();
+      check('пустой список по дорогам: ok и пусто', п1.ok === true && п1.items.length === 0 && п2.ok === true && п2.items.length === 0, JSON.stringify(п1).slice(0, 100));
+      check('пустой список: второй запрос из кэша', с3.счёт.поПути - сДо3 === 1, 'посчитали ' + (с3.счёт.поПути - сДо3));
+      const запПусто = с3.записи.find(z => z.ключ.startsWith(ключРядом(pП)));
+      check('пустой список по дорогам живёт 6 ч', !!запПусто && запПусто.ttl === 6 * 60 * 60 * 1000 && запПусто.мест === 0, JSON.stringify(запПусто));
+    }
   }
   сервер.kill();
   osrm.close();

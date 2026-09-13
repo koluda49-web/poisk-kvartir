@@ -65,7 +65,8 @@ check('на странице 404 ссылка на /m', нетHtml.includes('hre
 // имена свойств обычного объекта не должны «находить» маршрут и ронять сервер
 for (const slug of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
   const st = (await fetch(SITE + '/m/' + slug)).status;
-  check('/m/' + slug + ' — 404', st === 404, String(st));
+  // Прокси Render отвечает на /m/__proto__ сам (403), до сервера запрос не доходит.
+  check('/m/' + slug + ' — 404' + (slug === '__proto__' ? ' (или 403 от прокси)' : ''), st === 404 || (slug === '__proto__' && st === 403), String(st));
 }
 const карта = await (await fetch(SITE + '/sitemap.xml')).text();
 check('в sitemap.xml есть /m', карта.includes('<loc>https://poisk-kvartir.onrender.com/m</loc>'));
