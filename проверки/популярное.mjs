@@ -20,7 +20,6 @@ import { fileURLToPath } from 'node:url';
 
 const КОРЕНЬ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const САЙТ = 'http://127.0.0.1:8098', МОК_ПОРТ = 9614, CDP_ПОРТ = 9608;
-const СНИМОК = path.join(КОРЕНЬ, '.superpowers', 'sdd', '2026-09-13-marshruty-idei', 'task-9-strip.png');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let failed = 0, passed = 0;
 const check = (n, ok, d) => ok ? (passed++, console.log('  OK   ' + n)) : (failed++, console.log('  ПАДАЕТ ' + n + (d ? '  — ' + d : '')));
@@ -92,7 +91,13 @@ async function завершить(код) {
 }
 process.on('unhandledRejection', e => { console.log('ОШИБКА ПРОВЕРКИ: ' + (e && e.message || e)); завершить(1); });
 
-const голос = (v, id, ua = ЧЕЛОВЕК) => fetch(САЙТ + '/api/t', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': ua },
+// Сервер считает один голос на адрес и место, а адрес берёт из x-forwarded-for
+// (за прокси Render). Все запросы проверки идут с 127.0.0.1, поэтому каждому
+// посетителю даём свой адрес — как у настоящих людей.
+const адресаПосетителей = new Map();
+const адресДля = v => { if (!адресаПосетителей.has(v)) адресаПосетителей.set(v, '198.51.100.' + (адресаПосетителей.size + 1)); return адресаПосетителей.get(v); };
+const голос = (v, id, ua = ЧЕЛОВЕК, ip = адресДля(v)) => fetch(САЙТ + '/api/t', { method: 'POST',
+  headers: { 'Content-Type': 'application/json', 'User-Agent': ua, 'X-Forwarded-For': ip },
   body: JSON.stringify({ e: 'route_add', v, s: 'проверка', id }) });
 const популярное = async () => (await (await fetch(САЙТ + '/api/places/popular')).json());
 // Таблица на /stats: { всего, счёт: {id: n} }
@@ -126,6 +131,9 @@ try {
   await голос('', B);
   // одно место с одним голосом — в ленту не попадает, в таблицу попадает
   await голос('посетитель-1', E);
+  // Другое событие с id: номер в журнал статистики не пишется (он нужен только route_add).
+  await fetch(САЙТ + '/api/t', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': ЧЕЛОВЕК },
+    body: JSON.stringify({ e: 'places', v: 'журнал-1', s: 'проверка', id: A, total: 5 }) });
   await sleep(600);
 
   const поп = await популярное();
@@ -187,12 +195,6 @@ try {
   check('лента запрошена после списка мест', iСписка >= 0 && iЛенты > iСписка, iСписка + ' / ' + iЛенты);
   check('лента стоит под ссылками над списком', await js(`document.getElementById('plLinks').nextElementSibling === document.getElementById('plPop')`));
 
-  // снимок для отчёта
-  await js(`window.scrollTo(0, document.getElementById('plPop').getBoundingClientRect().top + scrollY - 260); 1`);
-  await ждать(`[...document.querySelectorAll('#plPopList img')].every(function(i){ return i.complete; })`, 40);
-  await sleep(400);
-  try { const сн = await send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(СНИМОК, Buffer.from(сн.data, 'base64')); } catch (e) { console.log('  (снимок не сохранился: ' + e.message + ')'); }
-
   // «+ в маршрут» в ленте
   const номерВЛенте = await js(`window.__pop[0].id`);
   await js(`document.querySelector('#plPopList .pop-b').click(); 1`);
@@ -247,6 +249,13 @@ try {
   const итог1 = await (async () => { const т = await таблица(); return т; })();
   check('последние голоса тоже ушли в GitHub', await дождаться(() => { try { const o = JSON.parse(вGitHub.текст); return Object.values(o).reduce((a, b) => a + b, 0) === итог1.всего; } catch { return false; } }, 40));
   const вGitHubПосле = JSON.parse(вGitHub.текст);
+  // Журнал пишется в файл раз в 30 с (а kill на Windows не даёт серверу дописать его при выходе).
+  const журнал = () => { try { return JSON.parse(fs.readFileSync(path.join(папка1, 'stats.json'), 'utf8')); } catch { return null; } };
+  await дождаться(() => (журнал() || []).some(e => e.e === 'places' && e.v === 'журнал-1'), 150, 250);
+  const события = журнал() || [];
+  const безНомера = события.find(e => e.e === 'places' && e.v === 'журнал-1');
+  check('в журнале у события places номера нет, остальные поля на месте', !!безНомера && !('id' in (безНомера.p || {})) && безНомера.p.total === 5, JSON.stringify(безНомера));
+  check('у route_add номер в журнале есть', события.some(e => e.e === 'route_add' && e.v === 'посетитель-1' && String(e.p && e.p.id) === String(A)));
   await остановить(сервер1);
 
   // ═══ второй экземпляр: устаревшая местная копия, GitHub отвечает не сразу ═══
@@ -271,6 +280,23 @@ try {
     'ждали ' + JSON.stringify(ждём2) + ', ушло ' + JSON.stringify(слитое));
   const т2 = await таблица();
   check('перезапущенный экземпляр показывает счёт из GitHub на /stats', т2.счёт[A] === ждём2[A] && т2.счёт[B] === ждём2[B] && т2.всего === итог1.всего + 1, JSON.stringify(т2));
+
+  // ═══ один адрес — один голос за место ═══
+  // v придумывает сам браузер: цикл запросов с новым v на каждый раз вытолкнул
+  // бы любое место наверх. Адрес так не подменить. Последним блоком — чтобы
+  // эти голоса не сдвинули числа, которые проверялись выше.
+  const свободные = места.filter(p => !использованы.has(String(p.id)) && !(String(p.id) in т2.счёт));
+  const [I, J] = свободные.slice(0, 2).map(p => p.id);
+  for (let k = 0; k < 5; k++) await голос('цикл-' + k, I, ЧЕЛОВЕК, '203.0.113.7');
+  await голос('сосед-1', J, ЧЕЛОВЕК, '203.0.113.8');
+  await голос('сосед-2', J, ЧЕЛОВЕК, '203.0.113.9');
+  await голос('сосед-1', J, ЧЕЛОВЕК, '203.0.113.10');   // тот же посетитель с другого адреса — повтор
+  await голос('сосед-3', I, ЧЕЛОВЕК, '203.0.113.8');    // адрес уже голосовал, но за другое место — считается
+  let тIP = null;
+  await дождаться(async () => { тIP = await таблица(); return т2.всего + 4 <= тIP.всего; }, 20);
+  check('один адрес с пятью разными v — один голос', !!I && тIP.счёт[I] === 2, 'голосов ' + тIP.счёт[I] + ' (ждали 2: цикл и сосед-3)');
+  check('разные адреса — разные голоса; тот же v с нового адреса — нет', !!J && тIP.счёт[J] === 2, 'голосов ' + тIP.счёт[J]);
+  check('всего прибавилось ровно 4 голоса', тIP.всего === т2.всего + 4, т2.всего + ' → ' + тIP.всего);
 } catch (e) {
   failed++; console.log('  ПАДАЕТ проверка оборвалась — ' + (e && e.stack || e));
 }
