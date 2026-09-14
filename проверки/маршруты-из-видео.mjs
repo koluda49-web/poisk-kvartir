@@ -19,6 +19,9 @@ const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 const PORT = 9602, sleep = ms => new Promise(r => setTimeout(r, ms));
 const ВИДЕО = JSON.parse(readFileSync(new URL('../маршруты-из-видео.json', import.meta.url), 'utf8'));
 const м = ВИДЕО.find(x => x.slug === 'lida-voronovo');
+// id точки без имени своей точки: m54.15020_25.31685~Кофе → m54.15020_25.31685
+const idТочки = t => String(t).split('~')[0];
+const N = м.points.length;
 
 let failed = 0, passed = 0;
 const check = (n, ok, d) => ok ? (passed++, console.log('  OK   ' + n)) : (failed++, console.log('  ПАДАЕТ ' + n + (d ? '  — ' + d : '')));
@@ -35,7 +38,7 @@ check('вступление под заголовком', html.includes('<p clas
 check('индексируется', /<meta name="robots" content="index,follow">/.test(html));
 check('canonical', html.includes('<link rel="canonical" href="https://poisk-kvartir.onrender.com/m/lida-voronovo">'));
 check('og:title и og:description', html.includes('<meta property="og:title" content="' + escHtml(м.title) + '">')
-  && html.includes('<meta property="og:description" content="' + escHtml(м.intro) + '">'));
+  && html.includes('<meta property="og:description" content="' + escHtml(м.description || м.intro) + '">'));
 const ogImage = (html.match(/<meta property="og:image" content="([^"]+)">/) || [])[1] || '';
 check('og:image — полный адрес', /^https:\/\/[^/]+\//.test(ogImage), ogImage);
 if (ogImage) {
@@ -43,19 +46,19 @@ if (ogImage) {
   check('og:image открывается', !!r && r.ok, r ? String(r.status) : 'нет ответа');
 }
 
-const имена = [];
-for (const id of м.points) {
-  const p = await (await fetch(SITE + '/api/place?id=' + id)).json();
-  имена.push(p.name);
-}
+// имена — как в справочнике сайта (строки списка берут их оттуда), у своей точки — из ссылки
+const справочник = (await (await fetch(SITE + '/api/places?light=1')).json()).items || [];
+const имена = м.points.map(t => /^[0-9]+$/.test(String(t))
+  ? (справочник.find(p => String(p.id) === String(t)) || {}).name
+  : decodeURIComponent(String(t).split('~')[1] || ''));
 
 const список = await fetch(SITE + '/m');
 const спHtml = await список.text();
 check('/m — 200', список.status === 200, String(список.status));
 check('/m — карточка со ссылкой на /m/lida-voronovo', /<a class="c" href="\/m\/lida-voronovo">/.test(спHtml));
-check('/m — дата «14 сентября»', спHtml.includes('>14 сентября<'));
-check('/m — «7 точек»', спHtml.includes('>7 точек<'));
-check('/m — подпись про ролики', спHtml.includes('Маршруты из роликов @poisk.kvartir в ТикТоке'));
+check('/m — строка note на карточке', спHtml.includes('<p class="note">' + escHtml(м.note) + '</p>'));
+check('/m — «' + N + ' мест»', спHtml.includes('>' + N + ' мест<'));
+check('/m — заголовок «Рекомендуемые маршруты»', спHtml.includes('<h1>Рекомендуемые маршруты</h1>'));
 check('/m — ссылка «← Ко всем местам»', спHtml.includes('>← Ко всем местам</a>'));
 check('/m — индексируется', /<meta name="robots" content="index,follow">/.test(спHtml));
 const нет = await fetch(SITE + '/m/net-takogo');
@@ -118,8 +121,8 @@ await js(`localStorage.clear(); 1`);
 await send('Page.navigate', { url: SITE + '/m/lida-voronovo' });
 await ждать(`typeof L !== 'undefined' && document.querySelectorAll('#rmap .pin').length === ${м.points.length}`);
 let r = await строки();
-check('в чистом профиле 7 точек в порядке файла', JSON.stringify(r) === JSON.stringify(имена), r.join(' | ') + '  ждали: ' + имена.join(' | '));
-check('номера меток на карте 1..7', await js(`JSON.stringify([...document.querySelectorAll('#rmap .pin')].map(function(e){return +e.textContent;}).sort(function(a,b){return a-b;})) === '[1,2,3,4,5,6,7]'`));
+check('в чистом профиле ' + N + ' точек в порядке файла', JSON.stringify(r) === JSON.stringify(имена), r.join(' | ') + '  ждали: ' + имена.join(' | '));
+check('номера меток на карте 1..' + N, await js(`JSON.stringify([...document.querySelectorAll('#rmap .pin')].map(function(e){return +e.textContent;}).sort(function(a,b){return a-b;})) === ${JSON.stringify(JSON.stringify(Array.from({ length: N }, (_, i) => i + 1)))}`));
 check('заголовок и вступление на странице', await js(`document.querySelector('h1').textContent === ${JSON.stringify(м.title)} && document.querySelector('.intro').textContent === ${JSON.stringify(м.intro)}`));
 let х = await хранилище();
 check('до правки в хранилище ничего не записано', х.route === null && х.order === null, JSON.stringify(х));
@@ -128,7 +131,7 @@ check('кнопки «Упорядочить автоматически» вид
 
 await скрытьИПоказать();
 r = await строки();
-check('/m: после ухода со страницы и возврата — все 7 точек', r.length === 7 && JSON.stringify(r) === JSON.stringify(имена), r.join(' | '));
+check('/m: после ухода со страницы и возврата — все ' + N + ' точек', r.length === N && JSON.stringify(r) === JSON.stringify(имена), r.join(' | '));
 х = await хранилище();
 check('/m: возврат на страницу ничего не пишет в хранилище', х.route === null && х.order === null, JSON.stringify(х));
 
@@ -172,7 +175,7 @@ check('storage: точки из другой вкладки показаны', (
 check('storage: заголовок стал «Маршрут на день»', (await js(`document.querySelector('h1').textContent`)) === 'Маршрут на день', await js(`document.querySelector('h1').textContent`));
 check('storage: вступление скрыто', await js(`!document.querySelector('.intro') || document.querySelector('.intro').offsetParent === null`));
 check('storage: title страницы — обычный маршрут', /^Маршрут на день/.test(await js(`document.title`)) && !(await js(`document.title`)).includes(м.title), await js(`document.title`));
-check('storage: текст про порядок из видео убран', !(await js(`document.querySelector('.how').textContent`)).includes('как в видео'));
+check('storage: текст про рекомендуемый порядок убран', !(await js(`document.querySelector('.how').textContent`)).includes('рекомендуемом порядке'));
 check('storage: адрес стал /marshrut', (await js(`location.pathname`)) === '/marshrut', await js(`location.pathname`));
 
 // то же через возврат на страницу
@@ -187,7 +190,7 @@ check('возврат: заголовок «Маршрут на день», вс
   && await js(`document.querySelector('.intro').offsetParent === null`)
   && /^Маршрут на день/.test(await js(`document.title`)), await js(`document.title`));
 
-// ── сохранён другой маршрут — страница из видео всё равно показывает свои 7 ─
+// ── сохранён другой маршрут — страница из видео всё равно показывает свои точки ─
 await js(`localStorage.clear(); localStorage.setItem('route', JSON.stringify([
   {id:2416,name:'Мирский замок',addr:'г. Мир',lat:53.451232,lng:26.473042},
   {id:244,name:'Несвижский замок',addr:'г. Несвиж',lat:53.222816,lng:26.691436},
@@ -200,10 +203,10 @@ const сохранённый = (await хранилище()).route;
 await send('Page.navigate', { url: SITE + '/m/lida-voronovo' });
 await ждать(`typeof L !== 'undefined' && document.querySelectorAll('#rmap .pin').length === ${м.points.length}`);
 r = await строки();
-check('при сохранённом другом маршруте — 7 точек из видео по порядку', JSON.stringify(r) === JSON.stringify(имена), r.join(' | '));
+check('при сохранённом другом маршруте — ' + N + ' точек из видео по порядку', JSON.stringify(r) === JSON.stringify(имена), r.join(' | '));
 await скрытьИПоказать();
 r = await строки();
-check('и после возврата на страницу — те же 7', JSON.stringify(r) === JSON.stringify(имена), r.join(' | '));
+check('и после возврата на страницу — те же ' + N, JSON.stringify(r) === JSON.stringify(имена), r.join(' | '));
 х = await хранилище();
 check('сохранённый маршрут не тронут, пока ничего не меняли', х.route === сохранённый && х.order === 'auto', JSON.stringify(х).slice(0, 120));
 
@@ -214,20 +217,20 @@ await sleep(400);
 const адрес = await js(`location.pathname + location.search`);
 check('после удаления адрес /marshrut?p=…&o=1', /^\/marshrut\?p=[^&]+&o=1$/.test(адрес), адрес);
 const вАдресе = decodeURIComponent(адрес).replace(/^\/marshrut\?p=/, '').replace(/&o=1$/, '').split(',').map(t => t.replace(/~.*$/, ''));
-const ждём = м.points.map(String).filter(t => t !== убираем);
-check('в адресе 6 точек в порядке видео', JSON.stringify(вАдресе) === JSON.stringify(ждём), вАдресе.join(','));
+const ждём = м.points.map(idТочки).filter(t => t !== убираем);
+check('в адресе ' + (N - 1) + ' точек в порядке видео', JSON.stringify(вАдресе) === JSON.stringify(ждём), вАдресе.join(','));
 х = await хранилище();
 const вХранилище = JSON.parse(х.route || '[]').map(p => String(p.id));
-check('в localStorage.route 6 точек в порядке видео', JSON.stringify(вХранилище) === JSON.stringify(ждём), вХранилище.join(','));
+check('в localStorage.route ' + (N - 1) + ' точек в порядке видео', JSON.stringify(вХранилище) === JSON.stringify(ждём), вХранилище.join(','));
 check('routeOrder = manual', х.order === 'manual', х.order);
 check('заголовок и вступление остались', await js(`document.querySelector('h1').textContent === ${JSON.stringify(м.title)} && document.querySelector('.intro').offsetParent !== null && document.title === ${JSON.stringify(м.title)}`));
 await скрытьИПоказать();
-check('после правки и возврата на страницу — 6 точек', (await строки()).length === 6);
+check('после правки и возврата на страницу — ' + (N - 1) + ' точек', (await строки()).length === N - 1);
 
 // перезагрузка по новому адресу — тот же маршрут
 await send('Page.reload');
-await ждать(`typeof L !== 'undefined' && document.querySelectorAll('#rmap .pin').length === 6`);
-check('после перезагрузки 6 точек в том же порядке', JSON.stringify(await js(`JSON.stringify(Т.map(function(p){ return String(p.id); }))`).then(JSON.parse)) === JSON.stringify(ждём));
+await ждать(`typeof L !== 'undefined' && document.querySelectorAll('#rmap .pin').length === ${N - 1}`);
+check('после перезагрузки ' + (N - 1) + ' точек в том же порядке', JSON.stringify(await js(`JSON.stringify(Т.map(function(p){ return String(p.id); }))`).then(JSON.parse)) === JSON.stringify(ждём));
 
 // ── «Упорядочить автоматически» на /m — это тоже правка ─────────────────
 await js(`localStorage.clear(); 1`);
@@ -236,14 +239,14 @@ await ждать(`typeof L !== 'undefined' && document.querySelectorAll('#rmap .
 await js(`document.getElementById('rAuto').click(); 1`);
 await sleep(400);
 х = await хранилище();
-check('«Упорядочить автоматически» на /m: routeOrder = auto, маршрут сохранён', х.order === 'auto' && JSON.parse(х.route || '[]').length === 7, JSON.stringify(х).slice(0, 80));
+check('«Упорядочить автоматически» на /m: routeOrder = auto, маршрут сохранён', х.order === 'auto' && JSON.parse(х.route || '[]').length === N, JSON.stringify(х).slice(0, 80));
 check('«Упорядочить автоматически» на /m: адрес без o=1', /^\/marshrut\?p=[^&]+$/.test(await js(`location.pathname + location.search`)), await js(`location.pathname + location.search`));
 
 // ── главная: ссылка на /m во вкладке «Что посетить» ──────────────────────
 await js(`localStorage.clear(); 1`);
 await send('Page.navigate', { url: SITE + '/?country=places' });
 await ждать(`!!document.querySelector('#plLinks a[href="/m"]') && document.querySelector('#plLinks').offsetParent !== null`, 60);
-check('на главной во вкладке мест видна ссылка «Маршруты из видео →»', await js(`(function(){ var a = document.querySelector('#plLinks a[href="/m"]'); return !!a && a.offsetParent !== null && /Маршруты из видео/.test(a.textContent); })()`));
+check('на главной во вкладке мест видна ссылка «Все маршруты →»', await js(`(function(){ var a = document.querySelector('#plLinks a[href="/m"]'); return !!a && a.offsetParent !== null && /Все маршруты/.test(a.textContent); })()`));
 await js(`setCountry('by', true); 1`);
 check('на вкладке жилья ссылки не видно', await js(`document.querySelector('#plLinks').offsetParent === null`));
 

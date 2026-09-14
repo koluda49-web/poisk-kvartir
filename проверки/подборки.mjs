@@ -240,7 +240,7 @@ let чипы = await чипыВДату('2026-09-15');
 check('15 сентября: первым чипом «Осенью»', чипы[0] === 'Осенью', чипы.join(' | '));
 check('15 сентября: «С детьми» последним', чипы[чипы.length - 1] === 'С детьми', чипы.join(' | '));
 check('чипы видны во вкладке мест, со ссылками на подборки', await js(`(function(){ var a = document.querySelector('#plSets a[href="/podborka/osen"]'); return !!a && a.offsetParent !== null && /Подборки/.test(document.querySelector('#plSets').textContent); })()`));
-check('ссылка «Маршруты из видео →» осталась', await js(`!!document.querySelector('#plLinks a[href="/m"]')`));
+check('ссылка «Все маршруты →» осталась', await js(`!!document.querySelector('#plLinks a[href="/m"]')`));
 await js(`setCountry('by', true); 1`);
 check('на вкладке жилья чипов не видно', await js(`document.querySelector('#plSets').offsetParent === null`));
 чипы = await чипыВДату('2026-04-10');

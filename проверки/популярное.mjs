@@ -193,7 +193,8 @@ try {
   check('заголовок «Чаще всего добавляют в маршрут»', await js(`document.querySelector('#plPop h2').textContent === 'Чаще всего добавляют в маршрут'`));
   const iСписка = адреса.findIndex(a => /\/api\/places\?/.test(a)), iЛенты = адреса.findIndex(a => /\/api\/places\/popular/.test(a));
   check('лента запрошена после списка мест', iСписка >= 0 && iЛенты > iСписка, iСписка + ' / ' + iЛенты);
-  check('лента стоит под ссылками над списком', await js(`document.getElementById('plLinks').nextElementSibling === document.getElementById('plPop')`));
+  // между ссылками и лентой — «Рекомендуемые маршруты» (задача 13)
+  check('лента стоит под ссылками и рекомендуемыми маршрутами, над списком', await js(`(function(){ var n = document.getElementById('plLinks').nextElementSibling; if(n && n.id === 'plRec') n = n.nextElementSibling; return n === document.getElementById('plPop'); })()`));
 
   // «+ в маршрут» в ленте
   const номерВЛенте = await js(`window.__pop[0].id`);

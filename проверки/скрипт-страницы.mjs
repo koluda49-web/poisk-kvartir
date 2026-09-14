@@ -20,6 +20,8 @@ const СТРАНИЦЫ = [
   ['страница места',    '/mesto/244-nesvizhskij-zamok'],
   ['страница маршрута', '/marshrut?p=2416,244'],
   ['подборка',          '/podborka/osen'],
+  ['готовый маршрут',   '/m/lida-voronovo'],
+  ['маршрут на 2 дня',  '/m/braslavshchina-2-dnya'],
 ];
 
 let checked = 0, bad = 0;

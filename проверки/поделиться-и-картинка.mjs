@@ -197,25 +197,31 @@ check('нажатие внутри карточки окно не закрыва
 await js(`document.getElementById('rPngView').click(); 1`);
 check('нажатие мимо карточки закрывает окно', await js(`!document.getElementById('rPngView')`));
 
-// ── /m/lida-voronovo: 7 строк на картинке ────────────────────────────────
+// ── /m/lida-voronovo: 12 строк на картинке ───────────────────────────────
 await js(`localStorage.clear(); 1`);
 await send('Page.navigate', { url: SITE + '/m/lida-voronovo' });
-await ждать(`typeof L !== 'undefined' && document.querySelectorAll('#rmap .pin').length === 7`);
+await ждать(`typeof L !== 'undefined' && document.querySelectorAll('#rmap .pin').length === 12`);
 await ждать(`!!ДОРОГА && ДОРОГА.к === ключДороги()`, 80);
 к = JSON.parse(await js(СОБРАТЬ));
-check('/m/lida-voronovo: в картинке-списке 7 строк', к.п && к.п.строки.length === 7, JSON.stringify(к.п && к.п.строки));
+// в список на картинке входит не больше 10 точек, дальше «и ещё N»
+check('/m/lida-voronovo: в картинке-списке 10 строк из 12 точек', к.п && к.п.строки.length === 10, JSON.stringify(к.п && к.п.строки));
 check('/m/lida-voronovo: строки «номер · название · адрес»', к.п && к.п.строки.every((s, i) => s.indexOf((i + 1) + ' · ') === 0), JSON.stringify(к.п && к.п.строки));
 check('/m/lida-voronovo: 1080×1920, линия по дорогам', к.w === 1080 && к.h === 1920 && к.п.поДорогам, JSON.stringify(к.п).slice(0, 200));
-check('/m/lida-voronovo: текст для «Поделиться» — «Маршрут на день: 7 точек»', (await js(`текстМаршрута()`)) === 'Маршрут на день: 7 точек');
-check('/m/lida-voronovo: до 7 точек — список в две строки (название, под ним адрес)', к.п && к.п.вДвеСтроки === true, JSON.stringify(к.п && к.п.вДвеСтроки));
-check('/m/lida-voronovo: длинные названия в две строки не обрезаны', к.п && !к.п.строки.some(s => s.split(' · ')[1].endsWith('…')), JSON.stringify(к.п && к.п.строки));
+check('/m/lida-voronovo: текст для «Поделиться» — «Маршрут на день: 12 точек»', (await js(`текстМаршрута()`)) === 'Маршрут на день: 12 точек');
+check('/m/lida-voronovo: больше 7 точек — список в одну строку на точку', к.п && к.п.вДвеСтроки === false, JSON.stringify(к.п && к.п.вДвеСтроки));
 if (ОБРАЗЕЦ) {
   const b64 = await js(`(async function(){ var b = await window.собратьКартинку(); return await new Promise(function(r){ var f = new FileReader(); f.onload = function(){ r(String(f.result).split(',')[1]); }; f.readAsDataURL(b); }); })()`);
   writeFileSync(ОБРАЗЕЦ, Buffer.from(b64, 'base64'));
   console.log('  образец сохранён: ' + ОБРАЗЕЦ);
 }
 
-// 11 точек: в одну строку, не больше 10, «и ещё 1». В хранилище не пишем — Т подменяем напрямую.
+// 7 точек: список в две строки (название, под ним адрес). В хранилище не пишем — Т подменяем напрямую.
+await js(`Т = Т.slice(0, 7); 1`);
+к = JSON.parse(await js(СОБРАТЬ));
+check('7 точек: список в две строки', к.п && к.п.вДвеСтроки === true && к.п.строки.length === 7, JSON.stringify(к.п && к.п.вДвеСтроки));
+check('7 точек: длинные названия в две строки не обрезаны', к.п && !к.п.строки.some(s => s.split(' · ')[1].endsWith('…')), JSON.stringify(к.п && к.п.строки));
+
+// 11 точек: в одну строку, не больше 10, «и ещё 1».
 await js(`Т = Т.concat([0,1,2,3].map(function(i){ return { id: 'm53.9' + i + '000_25.3' + i + '000', name: 'Своя точка ' + (i + 1), addr: '', lat: 53.9 + i / 100, lng: 25.3 + i / 100 }; })); 1`);
 к = JSON.parse(await js(СОБРАТЬ));
 check('11 точек: список в одну строку, 10 строк', к.п && к.п.вДвеСтроки === false && к.п.строки.length === 10, JSON.stringify(к.п).slice(0, 160));

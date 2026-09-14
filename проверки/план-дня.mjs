@@ -392,7 +392,7 @@ check('две точки: d из адреса убран', !(await js(`location.
 
 // ── /m/<slug>: настройки плана — не правка маршрута ──
 await js(`localStorage.clear(); 1`);
-await открыть(SITE + '/m/lida-voronovo', `Т.length === 7 && !document.getElementById('rPlan').hidden`);
+await открыть(SITE + '/m/lida-voronovo', `Т.length === 12 && !document.getElementById('rPlan').hidden`);
 check('/m: план дня и топливо есть', await js(`!document.getElementById('rPlan').hidden && !document.getElementById('rFuel').hidden`));
 await js(`(function(){ var s = document.querySelector('#rPlan1 select.ps'); s.value = '120'; s.dispatchEvent(new Event('change', { bubbles: true })); })(); 1`);
 await ввести('rStart', '10:00');
@@ -406,11 +406,10 @@ const Nm = await js(`НОЧЁВКА`);
 if (дорогаНаM) {
   const р = await ровнаяНочёвка(), дни = await js(`[...document.querySelectorAll('#rlist .dh')].map(function(e){ return e.textContent; }).join(' | ')`);
   check('/m/lida-voronovo: ночёвка там, где дни ровнее всего', Nm === р.N, 'на странице ' + Nm + ', посчитано ' + JSON.stringify(р) + ' · ' + дни);
-  check('/m/lida-voronovo: больше не 143 и 21 км', !/День 1 · 143 км/.test(дни) && !/День 2 · 21 км/.test(дни), дни);
 } else console.log('  (OSRM не ответил на /m/lida-voronovo — ровность дней по дорогам не проверена)');
 check('/m: два дня → адрес /m/lida-voronovo?d=N', (await js(`location.pathname + location.search`)) === '/m/lida-voronovo?d=' + Nm, await js(`location.pathname + location.search`));
 check('/m: после двух дней маршрут в хранилище не записан', (await js(`localStorage.getItem('route')`)) === null);
-await открыть(SITE + '/m/lida-voronovo?d=' + Nm, `Т.length === 7 && document.querySelectorAll('#rlist .dh').length === 2`);
+await открыть(SITE + '/m/lida-voronovo?d=' + Nm, `Т.length === 12 && document.querySelectorAll('#rlist .dh').length === 2`);
 check('/m?d=N: страница открылась с двумя днями', await js(`document.getElementById('rTwo').checked && НОЧЁВКА === ${Nm}`));
 check('/m?d=N: выезд 10:00 и «пробыть» 120 сохранились', (await js(`document.getElementById('rStart').value + '|' + document.querySelector('#rPlan1 select.ps').value`)) === '10:00|120');
 await js(`document.getElementById('rTwo').click(); 1`);
