@@ -3276,8 +3276,8 @@ async function mestoPageBuild(id){
   // тронет, пока человек не долистает. Иначе страница тянула бы мегабайты.
   const снимки = !кадры.length ? ''
     : (кадры.length === 1
-        ? ('<img class="hero" src="' + esc(кадры[0]) + '" alt="' + esc(p.name) + '">')
-        : ('<div class="ph" id="ph">'
+        ? ('<div class="ph" data-fit=""><img class="hero on" src="' + esc(кадры[0]) + '" alt="' + esc(p.name) + '"></div>')
+        : ('<div class="ph" id="ph" data-fit="">'
            + кадры.map((u, i) => '<img class="hero' + (i ? '' : ' on') + '"'
                + (i ? (' data-src="' + esc(u) + '"') : (' src="' + esc(u) + '"'))
                + ' alt="' + esc(p.name) + '">').join('')
@@ -3340,7 +3340,8 @@ async function mestoPageBuild(id){
     + '.back:hover{border-color:#9a3412;color:#9a3412}'
     + 'h1{font-size:clamp(24px,4.6vw,36px);line-height:1.15;margin:0 0 6px;letter-spacing:-.02em}'
     + '.where{color:#57534e;margin:0 0 16px}'
-    + '.hero{width:100%;max-height:460px;object-fit:cover;border-radius:14px;display:block;margin:0 0 16px}'
+    // снимок целиком: высота рамки — по кадру (подогнатьСнимки), кадр вписан без обрезки
+    + '.hero{width:100%;height:100%;object-fit:contain;display:block}'
     + '.txt{max-width:70ch}'
     + '.inr{margin:12px 0 0;font-weight:600}'
     + '.facts{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0}'
@@ -3359,7 +3360,7 @@ async function mestoPageBuild(id){
     + '.c .m{display:flex;gap:6px;flex-wrap:wrap}'
     + '.c .m span{font-size:12.5px;background:#f8f4ef;border:1px solid #f0eae1;border-radius:999px;padding:2px 9px;color:#57534e}'
     + '.c h3{font-size:14px;font-weight:600;margin:2px 0 0}'
-    + '.ph{position:relative;margin:0 0 18px}'
+    + '.ph{position:relative;margin:0 0 18px;height:min(66vw,460px);background:#f2efe9;border-radius:14px;overflow:hidden;transition:height .25s ease}'
     + '.ph .hero{display:none;margin:0}'
     + '.ph .hero.on{display:block}'
     + '.ph-b{position:absolute;top:50%;transform:translateY(-50%);width:42px;height:42px;'
@@ -3375,7 +3376,7 @@ async function mestoPageBuild(id){
     + 'footer{margin-top:36px;color:#9c948c;font-size:13.5px;max-width:75ch}'
     + '@media (prefers-color-scheme:dark){body{background:#14110e;color:#f6f2ed}'
     +   '.c,.facts a,.facts span,.near a,.back{background:#1d1916;border-color:#332c25;color:#f6f2ed}'
-    +   '.noimg{background:#2b251f}.where,.c .m span{color:#c2b7ab}a{color:#e2703a}}'
+    +   '.noimg{background:#2b251f}.where,.c .m span{color:#c2b7ab}a{color:#e2703a}.ph{background:#241f1a}}'
     + '</style></head><body><div class="w">'
     + '<a class="back" id="back" href="/?country=places">← Ко всем местам</a>'
     + '<h1>' + esc(p.name) + '</h1>'
@@ -3426,6 +3427,8 @@ async function mestoPageBuild(id){
     // человек оказывается на той же карточке, а не в начале ленты.
     + 'if(свой) a.addEventListener("click",function(e){e.preventDefault();history.back();});'
     + '})();</script>'
+    + (кадры.length ? ('<script>' + подогнатьСнимки.toString()
+      + 'подогнатьСнимки();window.addEventListener("resize",function(){подогнатьСнимки();});</' + 'script>') : '')
     + (кадры.length > 1 ? ('<script>'
       + '(function(){var к=document.getElementById("ph");if(!к)return;'
       + 'var с=к.querySelectorAll(".hero"), н=0, ном=document.getElementById("phn");'
@@ -3434,7 +3437,7 @@ async function mestoPageBuild(id){
       + 'function грузить(i){var э=с[i];if(э&&!э.src&&э.dataset.src)э.src=э.dataset.src;}'
       + 'function идти(ш){с[н].classList.remove("on");н=(н+ш+с.length)%с.length;'
       + '  грузить(н);грузить((н+1)%с.length);грузить((н-1+с.length)%с.length);'
-      + '  с[н].classList.add("on");ном.textContent=(н+1)+"/"+с.length;}'
+      + '  с[н].classList.add("on");ном.textContent=(н+1)+"/"+с.length;подогнатьСнимки(к);}'
       + 'к.querySelector(".ph-l").addEventListener("click",function(){идти(-1);});'
       + 'к.querySelector(".ph-r").addEventListener("click",function(){идти(1);});'
       // на телефоне листают пальцем, а не кнопками
@@ -3514,6 +3517,45 @@ function своюТочкуИзСсылки(t){
   return { id: 'm' + lat.toFixed(5) + '_' + lng.toFixed(5), name, addr: '', lat, lng, own: 1 };
 }
 
+// Снимки показываем целиком, без обрезки (просьба владельца 14.09): рамка
+// с атрибутом data-fit берёт высоту по пропорциям видимого снимка —
+// вертикальный кадр выше, горизонтальный на всю ширину, — но не выше предела:
+// data-fit="240" — в пикселях (окошки на карте), пустой — 70% высоты экрана
+// на телефоне и 80% на компьютере. Снимок вписан в рамку object-fit:contain,
+// остаток — спокойный фон. Пока следующий кадр грузится, рамка держит
+// прежнюю высоту и меняет её плавно, когда размеры кадра уже известны.
+// Код для браузера: вставляется в страницы своим текстом (.toString()).
+// После смены высоты зовёт window.__послеСнимка(рамка) — окошку на карте
+// нужно пересчитать своё место.
+// Окошко Leaflet после смены высоты снимка: update() заново вставил бы
+// содержимое (и сбросил высоту рамки), поэтому только размер, место и сдвиг карты.
+function пересчитатьОкошко(о){
+  if(о._updateLayout){ о._updateLayout(); о._updatePosition(); if(о._adjustPan) о._adjustPan(); }
+  else о.update();
+}
+function подогнатьСнимки(корень){
+  var рамки = [];
+  if(корень && корень.getAttribute && корень.hasAttribute('data-fit')) рамки = [корень];
+  else рамки = Array.prototype.slice.call((корень || document).querySelectorAll('[data-fit]'));
+  рамки.forEach(function(р){
+    var im = р.querySelector('img.on') || р.querySelector('img');
+    if(!im) return;
+    if(!(im.complete && im.naturalWidth)){
+      if(!im.__ждём){
+        im.__ждём = 1;
+        im.addEventListener('load', function(){ im.__ждём = 0; подогнатьСнимки(р); });
+      }
+      return;
+    }
+    var ш = р.clientWidth; if(!ш) return;
+    var предел = +р.getAttribute('data-fit') || Math.round(window.innerHeight * (window.innerWidth < 640 ? 0.7 : 0.8));
+    var в = Math.max(60, Math.min(Math.round(ш * im.naturalHeight / im.naturalWidth), предел)) + 'px';
+    if(р.style.height === в) return;
+    р.style.height = в;
+    if(typeof window.__послеСнимка === 'function') window.__послеСнимка(р);
+  });
+}
+
 // Карточка точки на странице маршрута (/marshrut, /m/<slug>) — код для
 // браузера, вставляется в страницу своим текстом, как перетаскиваниеСтрок.
 // Зачем: из ролика приходят посмотреть, что это за места, а название точки
@@ -3564,7 +3606,7 @@ function карточкаТочки(){
     var с = (pics || []).filter(Boolean).slice(0, 12);
     if(!с.length) return '';
     // первый кадр с адресом, остальные — с пометкой: грузятся, когда до них долистают
-    return '<div class="pc-ph">'
+    return '<div class="pc-ph" data-fit="">'
       + с.map(function(u, i){
           return '<img class="pc-im' + (i ? '' : ' on') + '"' + (i ? (' data-src="' + esc(u) + '"') : (' src="' + esc(u) + '"'))
             + ' alt="' + esc(имя) + '">';
@@ -3607,7 +3649,7 @@ function карточкаТочки(){
     var d = ГОТОВО[id], и = инфо(p), снимок = d && d.pics && d.pics[0];
     var кратко = и.d || короче(d && d.text);
     return '<div class="pp" data-id="' + esc(id) + '">'
-      + (снимок ? ('<img class="pp-im" src="' + esc(снимок) + '" alt="">') : '')
+      + (снимок ? ('<div class="pp-ph" data-fit="240"><img class="pp-im" src="' + esc(снимок) + '" alt=""></div>') : '')
       + '<b>' + esc(p.name) + '</b>' + (p.addr ? ('<small>' + esc(p.addr) + '</small>') : '')
       + (кратко ? ('<p>' + esc(кратко) + '</p>') : ((!d && !СБОЙ[id]) ? '<p>Загружаю описание…</p>' : ''))
       + '<div class="pp-b"><a href="' + esc(адресМеста(p)) + '">Подробнее →</a>'
@@ -3628,6 +3670,7 @@ function карточкаТочки(){
     }
     ряд.classList.add('open');
     var н = ряд.querySelector('.nm'); if(н) н.setAttribute('aria-expanded', 'true');
+    подогнатьСнимки(к);
     return к;
   }
   function закрытьОкошко(){
@@ -3651,6 +3694,7 @@ function карточкаТочки(){
     ПОПАП_ИД = String(p.id);
     ПОПАП.setLatLng([p.lat, p.lng]).setContent(htmlОкошка(p));
     if(!карта.hasLayer(ПОПАП)) ПОПАП.openOn(карта);
+    подогнатьСнимки(ПОПАП.getElement());
     // Leaflet не пускает нажатия из окошка дальше карты — слушаем на нём самом
     var el = ПОПАП.getElement();
     if(el && !el.__точка){
@@ -3671,7 +3715,7 @@ function карточкаТочки(){
       if(ОТКРЫТА !== id) return;
       var сейчас = точка(id); if(!сейчас) return;
       вставить(сейчас);
-      if(ПОПАП_ИД === id) ПОПАП.setContent(htmlОкошка(сейчас));
+      if(ПОПАП_ИД === id){ ПОПАП.setContent(htmlОкошка(сейчас)); подогнатьСнимки(ПОПАП.getElement()); }
     });
   }
   function переключить(p){ if(ОТКРЫТА === String(p.id)) закрыть(); else открыть(p); }
@@ -3688,6 +3732,7 @@ function карточкаТочки(){
     });
     с[н].classList.add('on');
     var сч = ph.querySelector('.pc-n'); if(сч) сч.textContent = (н + 1) + '/' + с.length;
+    подогнатьСнимки(ph);
   }
 
   // «Жильё рядом» — как у места на главной: до четырёх вариантов в 30 км
@@ -3754,6 +3799,9 @@ function карточкаТочки(){
     var d = document.createElement('div'); d.className = 'ni'; t.parentNode.replaceChild(d, t);
   }, true);
 
+  // снимок в окошке получил высоту — окошко пересчитывает своё место на карте
+  // update() заново вставил бы содержимое и сбросил высоту рамки — пересчитываем только размер и место
+  window.__послеСнимка = function(р){ if(ПОПАП && р.closest('.leaflet-popup') && карта && карта.hasLayer(ПОПАП)) пересчитатьОкошко(ПОПАП); };
   // Метка на карте: то же раскрытие, что и название в списке
   window.меткаТочки = function(p){ переключить(точка(p.id) || p); };
   // Список перерисован (правка, перестановка, точка из другой вкладки):
@@ -4409,9 +4457,9 @@ async function marshrutPage(ids, опции){
     +   'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}'
     + '.it.open .t .ds{display:none}'
     + '.pc{flex:0 0 100%;min-width:0;margin:6px 0 2px;padding:10px;background:#fff;border:1px solid #e9e2d8;border-radius:12px}'
-    + '.pc-ph{position:relative;height:200px;border-radius:9px;overflow:hidden;background:#f0eae1;margin:0 0 8px;touch-action:pan-y}'
-    + '.pc-ph.pc-wait{display:flex;align-items:center;justify-content:center;color:#9c948c;font-size:13.5px}'
-    + '.pc-im{display:none;width:100%;height:100%;object-fit:cover}.pc-im.on{display:block}'
+    + '.pc-ph{position:relative;height:220px;border-radius:9px;overflow:hidden;background:#f2efe9;margin:0 0 8px;touch-action:pan-y;transition:height .25s ease}'
+    + '.pc-ph.pc-wait{height:120px;display:flex;align-items:center;justify-content:center;color:#9c948c;font-size:13.5px}'
+    + '.pc-im{display:none;width:100%;height:100%;object-fit:contain}.pc-im.on{display:block}'
     + '.pc-arr{position:absolute;top:50%;transform:translateY(-50%);width:36px;height:36px;border:0;border-radius:999px;'
     +   'background:rgba(28,25,23,.55);color:#fff;font-size:22px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}'
     + '.pc-l{left:8px}.pc-r{right:8px}'
@@ -4423,7 +4471,8 @@ async function marshrutPage(ids, опции){
     +   'border:1px solid #e9e2d8;border-radius:9px;padding:7px 11px;text-decoration:none}'
     + '.pc-b a:hover,.pc-b button:hover{border-color:#9a3412}.pc-b .pc-drop{color:#57534e;font-weight:600}'
     + '.pc-st{margin:10px 0 0}.pc-st[hidden]{display:none}.pc-all{display:inline-block;margin-top:6px;font-weight:600;font-size:14.5px}'
-    + '.pp{font-size:13.5px;line-height:1.4;color:#1c1917}.pp-im{width:100%;height:110px;object-fit:cover;border-radius:8px;display:block;margin:0 0 6px}'
+    + '.pp{font-size:13.5px;line-height:1.4;color:#1c1917}.pp-ph{height:140px;background:#f2efe9;border-radius:8px;overflow:hidden;margin:0 0 6px}'
+    + '.pp-im{width:100%;height:100%;object-fit:contain;display:block}'
     + '.pp b{display:block;font-size:15px;line-height:1.25}.pp small{display:block;color:#9c948c;font-size:12px}'
     + '.pp p{margin:5px 0 7px;color:#57534e}.pp-b{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center}'
     + '.pp-b a,.pp-b button{font:inherit;font-weight:600;background:none;border:0;padding:0;color:#9a3412;cursor:pointer;text-decoration:underline}'
@@ -5088,6 +5137,7 @@ async function marshrutPage(ids, опции){
     // таблица перерисована — фокус обратно на выбор той же точки
     +   'var н=document.querySelectorAll("#rPlan select.ps");'
     +   'for(var i=0;i<н.length;i++)if(н[i].getAttribute("data-id")===id){try{н[i].focus({preventScroll:true});}catch(err){}break;}});'
+    + пересчитатьОкошко.toString() + подогнатьСнимки.toString() + 'window.addEventListener("resize",function(){подогнатьСнимки(document.getElementById("rlist"));});'
     + карточкаТочки.toString() + 'карточкаТочки();'
     + 'перетаскиваниеСтрок(document.getElementById("rlist"), переставить);'
     + 'нарисовать();'+ '(function(){var a=document.getElementById("back");if(!a)return;'+ 'try{ var r=document.referrer, с=localStorage.getItem("backTo");'+ '  if(r && r.indexOf(location.origin)===0 && /^\\/(\\?|$)/.test(r.slice(location.origin.length))) a.href=r;'+ '  else if(с && с.charAt(0)==="/") a.href=с; }catch(e){}})();'+ 'window.addEventListener("storage", function(e){if(e.key && e.key!=="route" && e.key!=="routeOrder")return;'
@@ -6296,6 +6346,7 @@ const PAGE = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
   --surface:#ffffff;
   --surface-2:#f8f4ef;
   --surface-3:#f0eae1;
+  --photo-bg:#f2efe9;
   --line:#e9e2d8;
   --line-strong:#d9cec0;
   --txt:#1c1917;
@@ -6326,6 +6377,7 @@ const PAGE = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
     --surface:#1d1916;
     --surface-2:#241f1a;
     --surface-3:#2b251f;
+    --photo-bg:#241f1a;
     --line:#332c25;
     --line-strong:#463d33;
     --txt:#f6f2ed;
@@ -6934,19 +6986,21 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
   overflow:hidden;display:flex;flex-direction:column;box-shadow:var(--shadow-sm)}
 .plc .ph{position:relative;aspect-ratio:16/10;background:var(--surface-3)}
 .plc .ph img{width:100%;height:100%;object-fit:cover;display:block}
-.mp-ph1{width:100%;height:120px;object-fit:cover;border-radius:8px;display:block;margin-bottom:8px}
-.mp-ph{position:relative}
+/* Снимки в окошках — целиком, без обрезки: высоту рамки подгоняет подогнатьСнимки(). */
+.mp-ph{position:relative;height:150px;background:var(--photo-bg);border-radius:8px;overflow:hidden;margin-bottom:8px}
+.mp-ph1{width:100%;height:100%;object-fit:contain;display:block}
 .mp-ph .mp-ph1{display:none}
-.mp-ph .mp-ph1.on{display:block}
-.mp-ph-b{position:absolute;top:52px;transform:translateY(-50%);width:28px;height:28px;border:0;
+.mp-ph .mp-ph1.on,.mp-ph-one .mp-ph1{display:block}
+.mp-ph-b{position:absolute;top:50%;transform:translateY(-50%);width:28px;height:28px;border:0;
   border-radius:999px;background:rgba(28,25,23,.55);color:#fff;font-size:19px;line-height:1;
   cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
 .mp-ph-b:hover{background:rgba(28,25,23,.82)}
 .mp-ph-l{left:6px}.mp-ph-r{right:6px}
-.mp-ph-n{position:absolute;right:8px;top:92px;background:rgba(28,25,23,.6);color:#fff;
+.mp-ph-n{position:absolute;right:8px;bottom:8px;background:rgba(28,25,23,.6);color:#fff;
   font-size:11px;padding:2px 7px;border-radius:999px}
 .mp-pl .mp-pic-box:empty{display:none}
-.mp-pl .mp-pic{width:100%;height:130px;object-fit:cover;border-radius:10px;margin-bottom:8px;display:block}
+.mp-pl .mp-pic-box{height:150px;background:var(--photo-bg);border-radius:10px;overflow:hidden;margin-bottom:8px}
+.mp-pl .mp-pic{width:100%;height:100%;object-fit:contain;display:block}
 .mp-pl .mp-tx:empty{display:none}
 .mp-pl .mp-tx{font-size:12.5px;line-height:1.45;color:var(--txt-2);margin:6px 0 8px;
   max-height:132px;overflow:auto}
@@ -7896,8 +7950,8 @@ function снимкиОкошка(photos){
   const с = (photos || []).filter(Boolean).slice(0, 8);
   if(!с.length) return '';
   if(с.length === 1)
-    return '<img class="mp-ph1" src="' + с[0] + '" alt="">';
-  return '<div class="mp-ph">'
+    return '<div class="mp-ph mp-ph-one" data-fit="240"><img class="mp-ph1 on" src="' + с[0] + '" alt=""></div>';
+  return '<div class="mp-ph" data-fit="240">'
     + с.map(function(u, i){
         return '<img class="mp-ph1' + (i ? '' : ' on') + '"'
              + (i ? (' data-src="' + u + '"') : (' src="' + u + '"')) + ' alt="">';
@@ -7920,6 +7974,7 @@ function окошкоЛистать(кн, шаг){
   });
   с[н].classList.add('on');
   к.querySelector('.mp-ph-n').textContent = (н + 1) + '/' + с.length;
+  подогнатьСнимки(к);
 }
 
 function plotMap(fit){
@@ -7927,6 +7982,10 @@ function plotMap(fit){
   if(!window.__map){
     window.__map=L.map('map',{scrollWheelZoom:true}).setView([53.70,27.95],6);
     window.__map.attributionControl.setPrefix('');
+    // снимки в окошке — целиком: рамка берёт высоту по кадру, окошко после этого пересчитывает место
+    window.__map.on('popupopen', function(e){ window.__окошко = e.popup; подогнатьСнимки(e.popup.getElement()); });
+    window.__map.on('popupclose', function(e){ if(window.__окошко === e.popup) window.__окошко = null; });
+    window.__послеСнимка = function(){ if(window.__окошко && window.__map.hasLayer(window.__окошко)) пересчитатьОкошко(window.__окошко); };
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(window.__map);
     // Метки в центре города наваливаются друг на друга сотнями и карта
     // становится нечитаемой. Близкие собираем в кружок с числом.
@@ -8679,7 +8738,7 @@ async function plotPlaces(){
     const mk = L.marker([p.lat, p.lng], { icon: icon });
     mk.bindTooltip(p.name, { direction:'top', offset:[0,-14] });
     mk.bindPopup('<div class="mp mp-pl">'
-      + '<div class="mp-pic-box" id="mpic' + i + '">'
+      + '<div class="mp-pic-box" data-fit="240" id="mpic' + i + '">'
       + (p.pic ? ('<img class="mp-pic" src="' + esc2(p.pic) + '" alt="">') : '') + '</div>'
       + '<div class="mp-meta">' + esc2(p.cat) + '</div>'
       + '<div class="mp-price" style="font-size:16px">' + esc2(p.name) + '</div>'
@@ -9101,6 +9160,10 @@ window.addEventListener('storage', function(e){
 
 ${перетаскиваниеСтрок.toString()}
 
+${пересчитатьОкошко.toString()}
+
+${подогнатьСнимки.toString()}
+
 // Копируем координаты в буфер. Если браузер не разрешил (так бывает на
 // старых телефонах) — выделяем текст, чтобы человек скопировал сам.
 function copyCoords(btn){
@@ -9138,6 +9201,7 @@ async function loadMapText(id, i){
     const pic = (d.pics || [])[0];
     if(pic && holder && !holder.firstChild){
       holder.innerHTML = '<img class="mp-pic" src="' + esc2(pic) + '" alt="">';
+      подогнатьСнимки(holder);
     }
   }catch(e){
     const b2 = document.getElementById('mtx' + i);
