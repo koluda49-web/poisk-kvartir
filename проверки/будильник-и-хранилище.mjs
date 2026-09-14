@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { временнаяПапка, удалитьПапку } from './_браузер.mjs';
 
 const КОРЕНЬ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const САЙТ = 'http://127.0.0.1:8097', МОК_ПОРТ = 9612;
@@ -78,7 +79,7 @@ const мок = http.createServer((req, res) => {
 await new Promise(r => мок.listen(МОК_ПОРТ, '127.0.0.1', r));
 
 // ── свой экземпляр сервера ───────────────────────────────────────────────
-const папка = fs.mkdtempSync(path.join(os.tmpdir(), 'данные-проверка-'));
+const папка = временнаяПапка('данные-проверка-');
 // Устаревшие местные копии — как файлы, пришедшие с кодом развёртывания.
 const записатьМестное = (имя, об) => fs.writeFileSync(path.join(папка, имя + '.json'), JSON.stringify(об));
 записатьМестное('из-github', { источник: 'локальный', старое: true });
@@ -108,7 +109,7 @@ async function завершить(код) {
     await new Promise(r => { if (п.exitCode !== null) r(); else { п.once('exit', r); setTimeout(r, 3000); } });
   }
   await new Promise(r => мок.close(r));
-  try { fs.rmSync(папка, { recursive: true, force: true }); } catch {}
+  удалитьПапку(папка);
   process.exit(код);
 }
 

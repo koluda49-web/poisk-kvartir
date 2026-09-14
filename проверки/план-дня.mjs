@@ -10,19 +10,16 @@
 // Сервер должен быть запущен.
 //   node проверки/план-дня.mjs
 //   node проверки/план-дня.mjs http://127.0.0.1:8095
-import { spawn } from 'node:child_process';
+import { запуститьChrome } from './_браузер.mjs';
 
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 const PORT = 9605, sleep = ms => new Promise(r => setTimeout(r, ms));
 let failed = 0, passed = 0;
 const check = (n, ok, d) => ok ? (passed++, console.log('  OK   ' + n)) : (failed++, console.log('  ПАДАЕТ ' + n + (d !== undefined && d !== '' ? '  — ' + d : '')));
 
-const chrome = spawn('C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new',
-  `--remote-debugging-port=${PORT}`, '--disable-gpu', '--hide-scrollbars', '--no-first-run',
-  '--no-default-browser-check', '--user-data-dir=' + process.env.TEMP + '/cdp-plan-' + process.pid,
-  'about:blank'], { stdio: 'ignore' });
+const { chrome, закрыть } = запуститьChrome(PORT, 'plan', { ловитьОшибки: false });
 // что бы ни случилось — свой Chrome не оставляем висеть
-const гасить = (e) => { console.error(e); try { chrome.kill(); } catch {} process.exit(1); };
+const гасить = async (e) => { console.error(e); await закрыть(); process.exit(1); };
 process.on('unhandledRejection', гасить);
 process.on('uncaughtException', гасить);
 
@@ -428,5 +425,5 @@ check('страница не прокручивается вбок на теле
 await js(`localStorage.clear(); 1`);
 check('в консоли нет ошибок', ошибки.length === 0, ошибки.slice(0, 2).join(' | '));
 console.log('\nПройдено ' + passed + ', падает ' + failed);
-ws.close(); chrome.kill();
+ws.close(); await закрыть();
 process.exit(failed ? 1 : 0);

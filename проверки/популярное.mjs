@@ -17,6 +17,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { запуститьChrome, временнаяПапка, удалитьПапку } from './_браузер.mjs';
 
 const КОРЕНЬ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const САЙТ = 'http://127.0.0.1:8098', МОК_ПОРТ = 9614, CDP_ПОРТ = 9608;
@@ -59,7 +60,7 @@ const изPUT = q => { try { const т = JSON.parse(q.тело); return { message
 
 // ── экземпляры сервера ───────────────────────────────────────────────────
 const процессы = [], папки = [];
-let chrome = null;
+let браузер = null;   // { chrome, закрыть } из _браузер.mjs
 function запустить(папка) {
   const п = spawn(process.execPath, ['kvartiry-server.js'], {
     cwd: КОРЕНЬ,
@@ -83,10 +84,10 @@ async function готов() {
   return false;
 }
 async function завершить(код) {
-  try { if (chrome) chrome.kill(); } catch {}
+  if (браузер) await браузер.закрыть();
   for (const п of процессы) await остановить(п);
   await new Promise(r => мок.close(r));
-  for (const п of папки) { try { fs.rmSync(п, { recursive: true, force: true }); } catch {} }
+  for (const п of папки) удалитьПапку(п);
   process.exit(код);
 }
 process.on('unhandledRejection', e => { console.log('ОШИБКА ПРОВЕРКИ: ' + (e && e.message || e)); завершить(1); });
@@ -112,7 +113,7 @@ const дождаться = async (fn, раз = 40, шаг = 250) => { for (let i
 
 try {
   // ═══ первый экземпляр: в GitHub файла ещё нет ═══
-  const папка1 = fs.mkdtempSync(path.join(os.tmpdir(), 'популярное-1-')); папки.push(папка1);
+  const папка1 = временнаяПапка('популярное-1-'); папки.push(папка1);
   const сервер1 = запустить(папка1);
   check('первый экземпляр запустился и знает места', await готов());
 
@@ -163,10 +164,7 @@ try {
   // ═══ браузер: лента на вкладке мест и голоса со всех страниц ═══
   // Обычный браузер, а не HeadlessChrome (--user-agent): иначе сервер примет голоса
   // за автоматику. Подмена через CDP слетает после перезагрузки страницы.
-  chrome = spawn('C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new',
-    `--remote-debugging-port=${CDP_ПОРТ}`, '--disable-gpu', '--hide-scrollbars', '--no-first-run',
-    '--no-default-browser-check', '--user-agent=' + ЧЕЛОВЕК, '--user-data-dir=' + process.env.TEMP + '/cdp-popular-' + process.pid,
-    'about:blank'], { stdio: 'ignore' });
+  браузер = запуститьChrome(CDP_ПОРТ, 'popular', { доп: ['--user-agent=' + ЧЕЛОВЕК], ловитьОшибки: false });
   let ws, n = 0; const pend = new Map(); const ошибки = []; const адреса = [];
   const send = (m, p = {}) => new Promise((res, rej) => { const k = ++n; pend.set(k, { res, rej }); ws.send(JSON.stringify({ id: k, method: m, params: p })); });
   let url;
@@ -244,7 +242,7 @@ try {
   const тПосле = await таблица();
   check('лента с главной дала один голос, повторное добавление — не дало', тПосле.счёт[номерВЛенте] === 4 && голосовДо === 14, 'место ' + тПосле.счёт[номерВЛенте] + ', до ' + голосовДо);
   check('в консоли нет ошибок', ошибки.length === 0, ошибки.slice(0, 2).join(' | '));
-  ws.close(); chrome.kill(); chrome = null;
+  ws.close(); await браузер.закрыть(); браузер = null;
 
   // что сейчас в GitHub — после всех голосов
   const итог1 = await (async () => { const т = await таблица(); return т; })();
@@ -260,7 +258,7 @@ try {
   await остановить(сервер1);
 
   // ═══ второй экземпляр: устаревшая местная копия, GitHub отвечает не сразу ═══
-  const папка2 = fs.mkdtempSync(path.join(os.tmpdir(), 'популярное-2-')); папки.push(папка2);
+  const папка2 = временнаяПапка('популярное-2-'); папки.push(папка2);
   // как файл, пришедший с кодом развёртывания: старый и меньше, чем в GitHub
   fs.writeFileSync(path.join(папка2, 'популярное.json'), JSON.stringify({ [A]: 5, [B]: 5, [C]: 5 }));
   let открыть; ворота = new Promise(r => открыть = r);

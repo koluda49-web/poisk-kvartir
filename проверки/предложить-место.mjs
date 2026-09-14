@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { запуститьChrome, временнаяПапка, удалитьПапку } from './_браузер.mjs';
 
 const КОРЕНЬ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SITE = 'http://127.0.0.1:8096', PORT = 9606, МОК_ПОРТ = 9626, КЛЮЧ = 'poisk2026';
@@ -65,7 +66,7 @@ const последнийPUT = имя => {
 
 // ── свой экземпляр сервера ───────────────────────────────────────────────
 const папки = [];
-let сервер = null, chrome = null;
+let сервер = null, браузер = null;   // браузер — { chrome, закрыть } из _браузер.mjs
 function запуститьСервер(папка) {
   const лог = [];
   const п = spawn(process.execPath, ['kvartiry-server.js'], {
@@ -96,18 +97,18 @@ let завершаемся = false;
 async function завершить(код) {
   if (завершаемся) return;
   завершаемся = true;
-  try { if (chrome) chrome.kill(); } catch {}
+  if (браузер) await браузер.закрыть();
   await остановитьСервер(сервер);
   try { мок.closeAllConnections(); } catch {}
   await new Promise(r => мок.close(r));
-  for (const п of папки) { try { fs.rmSync(п, { recursive: true, force: true }); } catch {} }
+  for (const п of папки) удалитьПапку(п);
   process.exit(код);
 }
 // Что бы ни случилось — свой Chrome и свой сервер гасим (только их, по pid).
 process.on('unhandledRejection', e => { console.log('Необработанный отказ:', e && e.message); failed++; завершить(1); });
 process.on('uncaughtException', e => { console.log('Непойманная ошибка:', e && e.message); failed++; завершить(1); });
 
-const папка1 = fs.mkdtempSync(path.join(os.tmpdir(), 'предложения-проверка-'));
+const папка1 = временнаяПапка('предложения-проверка-');
 папки.push(папка1);
 сервер = запуститьСервер(папка1);
 const поднялся = await ждатьПинг();
@@ -118,10 +119,7 @@ await дождаться(() => ['предложения', 'места-от-лю�
 await sleep(300);
 
 // ── браузер ──────────────────────────────────────────────────────────────
-chrome = spawn('C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new',
-  `--remote-debugging-port=${PORT}`, '--disable-gpu', '--hide-scrollbars', '--no-first-run',
-  '--no-default-browser-check', '--user-data-dir=' + process.env.TEMP + '/cdp-suggest-' + process.pid,
-  'about:blank'], { stdio: 'ignore' });
+браузер = запуститьChrome(PORT, 'suggest', { ловитьОшибки: false });
 let ws, id = 0; const pend = new Map(); const ошибки = [];
 const send = (m, p = {}) => new Promise((res, rej) => { const n = ++id; pend.set(n, { res, rej }); ws.send(JSON.stringify({ id: n, method: m, params: p })); });
 let url;
@@ -297,7 +295,7 @@ try {
   // ── перезапуск: новый экземпляр берёт данные из GitHub ─────────────────
   console.log('\n=== перезапуск ===');
   await остановитьСервер(сервер);
-  const папка2 = fs.mkdtempSync(path.join(os.tmpdir(), 'предложения-проверка-'));
+  const папка2 = временнаяПапка('предложения-проверка-');
   папки.push(папка2);
   // местные файлы — как пришедшие с кодом развёртывания: старые
   fs.writeFileSync(path.join(папка2, 'места-от-людей.json'), '[]');

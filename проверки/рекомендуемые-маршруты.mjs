@@ -16,11 +16,12 @@
 //   node проверки/рекомендуемые-маршруты.mjs
 //   node проверки/рекомендуемые-маршруты.mjs http://127.0.0.1:8095
 import { spawn } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { запуститьChrome, временнаяПапка, удалитьПапку } from './_браузер.mjs';
 
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 const PORT = 9610, sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -127,7 +128,7 @@ check('/api/places: служебного alt в ответе нет', (поис�
   let вМёртвый = 0;
   мёртвый.on('request', () => { вМёртвый++; });
 
-  const папка = mkdtempSync(join(tmpdir(), 'rec-routes-'));
+  const папка = временнаяПапка('rec-routes-');   // раньше оставалась в %TEMP% после каждого прогона
   const сервер = spawn(process.execPath, ['kvartiry-server.js'], { cwd: корень, stdio: 'ignore', env: Object.assign({}, process.env, {
     PORT: '8196', OSRM_URL: 'http://127.0.0.1:9625', KUDIN_DETAIL_URL: 'http://127.0.0.1:9627', DATA_DIR: папка, STATS_FILE: join(папка, 'stats.json'),
     KUFAR: 'off', REALT: 'off', FLATBOOK: 'off', CHECKIN: 'off', KVARTIRKA: 'off', GH_TOKEN: '', RENDER_EXTERNAL_URL: '' }) });
@@ -163,15 +164,14 @@ check('/api/places: служебного alt в ответе нет', (поис�
     check('kudin.by молчит: повторный показ не шлёт новых запросов описаний', вМёртвый === запросовПосле1 && запросовПосле1 > 0, запросовПосле1 + ' → ' + вМёртвый);
   }
   гасить2(); osrm.close(); висят.forEach(r => { try { r.destroy(); } catch {} }); мёртвый.close();
+  await new Promise(r => { if (сервер.exitCode !== null) r(); else { сервер.once('exit', r); setTimeout(r, 3000); } });
+  удалитьПапку(папка);
 }
 
 // ── в браузере ───────────────────────────────────────────────────────────
-const chrome = spawn('C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new',
-  `--remote-debugging-port=${PORT}`, '--disable-gpu', '--hide-scrollbars', '--no-first-run',
-  '--no-default-browser-check', '--user-data-dir=' + process.env.TEMP + '/cdp-rec-' + process.pid,
-  'about:blank'], { stdio: 'ignore' });
+const { chrome, закрыть } = запуститьChrome(PORT, 'rec', { ловитьОшибки: false });
 // что бы ни случилось — свой Chrome не оставляем висеть
-const гасить = (e) => { console.error(e); try { chrome.kill(); } catch {} process.exit(1); };
+const гасить = async (e) => { console.error(e); await закрыть(); process.exit(1); };
 process.on('unhandledRejection', гасить);
 process.on('uncaughtException', гасить);
 
@@ -424,5 +424,5 @@ if (await ждать(`!!(ДОРОГА && ДОРОГА.d && ДОРОГА.d.legs)`
 await js(`localStorage.clear(); 1`);
 check('в консоли нет ошибок', ошибки.length === 0, ошибки.slice(0, 2).join(' | '));
 console.log('\nПройдено ' + passed + ', падает ' + failed);
-ws.close(); chrome.kill();
+ws.close(); await закрыть();
 process.exit(failed ? 1 : 0);

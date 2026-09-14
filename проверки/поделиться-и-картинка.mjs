@@ -11,9 +11,9 @@
 //   node проверки/поделиться-и-картинка.mjs
 //   node проверки/поделиться-и-картинка.mjs http://127.0.0.1:8095 [файл.png]
 // Вторым аргументом можно дать путь — туда сохранится картинка /m/lida-voronovo.
-import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import http from 'node:http';
+import { запуститьChrome } from './_браузер.mjs';
 
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 const ОБРАЗЕЦ = process.argv[3] || '';
@@ -28,10 +28,7 @@ const молчун = http.createServer((req, res) => { висящие.push(res);
 await new Promise(r => молчун.listen(0, '127.0.0.1', r));
 const МОЛЧУН = 'http://127.0.0.1:' + молчун.address().port + '/{z}/{x}/{y}.png';
 
-const chrome = spawn('C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new',
-  `--remote-debugging-port=${PORT}`, '--disable-gpu', '--hide-scrollbars', '--no-first-run',
-  '--no-default-browser-check', '--user-data-dir=' + process.env.TEMP + '/cdp-share-' + process.pid,
-  'about:blank'], { stdio: 'ignore' });
+const { chrome, закрыть } = запуститьChrome(PORT, 'share');
 let ws, id = 0; const pend = new Map(); const ошибки = [];
 const send = (m, p = {}) => new Promise((res, rej) => { const n = ++id; pend.set(n, { res, rej }); ws.send(JSON.stringify({ id: n, method: m, params: p })); });
 let url;
@@ -229,5 +226,5 @@ check('11 точек: список в одну строку, 10 строк', к.
 await js(`localStorage.clear(); 1`);
 check('в консоли нет ошибок', ошибки.length === 0, ошибки.slice(0, 2).join(' | '));
 console.log('\nПройдено ' + passed + ', падает ' + failed);
-ws.close(); chrome.kill(); молчун.close();
+ws.close(); await закрыть(); молчун.close();
 process.exit(failed ? 1 : 0);

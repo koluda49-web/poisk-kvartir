@@ -9,13 +9,11 @@
 //   node проверки/маршрут-на-карте.mjs
 //   node проверки/маршрут-на-карте.mjs https://poisk-kvartir.onrender.com
 import { spawn } from 'node:child_process';
+import { запуститьChrome } from './_браузер.mjs';
 
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 const PORT = 9561, sleep = ms => new Promise(r => setTimeout(r, ms));
-const chrome = spawn('C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new',
-  `--remote-debugging-port=${PORT}`, '--disable-gpu', '--hide-scrollbars', '--no-first-run',
-  '--no-default-browser-check', '--user-data-dir=' + process.env.TEMP + '/cdp-rtm-' + process.pid,
-  'about:blank'], { stdio: 'ignore' });
+const { chrome, закрыть } = запуститьChrome(PORT, 'rtm');
 let ws, id = 0; const pend = new Map(); const ошибки = [];
 const send = (m, p = {}) => new Promise((res, rej) => { const n = ++id; pend.set(n, { res, rej }); ws.send(JSON.stringify({ id: n, method: m, params: p })); });
 let url;
@@ -91,5 +89,5 @@ await js(`clearRoute(); 1`);
 
 check('в консоли нет ошибок', ошибки.length === 0, ошибки.slice(0, 2).join(' | '));
 console.log('\nПройдено ' + passed + ', падает ' + failed);
-ws.close(); chrome.kill();
+ws.close(); await закрыть();
 process.exit(failed ? 1 : 0);

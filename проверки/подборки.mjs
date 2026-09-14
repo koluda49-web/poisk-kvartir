@@ -17,6 +17,7 @@
 //   node проверки/подборки.mjs http://127.0.0.1:8095
 import { spawn } from 'node:child_process';
 import { readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { запуститьChrome, удалитьПапку } from './_браузер.mjs';
 
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 const PORT = 9607, sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -104,6 +105,8 @@ check('все подборки в sitemap.xml', ПОДБОРКИ.every(п => к�
   const папка = process.env.TEMP + '/podborki-test-' + process.pid;
   const настоящие = ПОДБОРКИ.find(п => п.slug === 'osen').ids.slice(0, 10);
   const файл = папка + '-podborki.json';
+  // упадёт проверка раньше finally — папку и файл всё равно убрать
+  process.on('exit', () => { try { rmSync(файл, { force: true }); } catch {} удалитьПапку(папка); });
   writeFileSync(файл, JSON.stringify([
     { slug: 'proba', chip: 'Проба', title: 'Проба', months: [0, 13, 9, 'x'], intro: 'Проба.', ids: [...настоящие.slice(0, 5), 999999999, ...настоящие.slice(5)] },
     { slug: 'kruglyj-god', chip: 'Круглый год', title: 'Круглый год', months: [0, 13], intro: 'Проба.', ids: настоящие },
@@ -134,17 +137,15 @@ check('все подборки в sitemap.xml', ПОДБОРКИ.every(п => к�
   } finally {
     второй.kill();   // ровно наш процесс, по его pid
     await new Promise(r => { if (второй.exitCode !== null) r(); else { второй.once('exit', r); setTimeout(r, 3000); } });
-    try { rmSync(файл, { force: true }); rmSync(папка, { recursive: true, force: true }); } catch {}
+    try { rmSync(файл, { force: true }); } catch {}
+    удалитьПапку(папка);
   }
 }
 
 // ── в браузере ───────────────────────────────────────────────────────────
-const chrome = spawn('C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new',
-  `--remote-debugging-port=${PORT}`, '--disable-gpu', '--hide-scrollbars', '--no-first-run',
-  '--no-default-browser-check', '--user-data-dir=' + process.env.TEMP + '/cdp-podborki-' + process.pid,
-  'about:blank'], { stdio: 'ignore' });
+const { chrome, закрыть } = запуститьChrome(PORT, 'podborki', { ловитьОшибки: false });
 // упала проверка — Chrome за собой не оставляем
-process.on('unhandledRejection', e => { console.log('ОШИБКА ПРОВЕРКИ: ' + (e && e.message || e)); chrome.kill(); process.exit(1); });
+process.on('unhandledRejection', async e => { console.log('ОШИБКА ПРОВЕРКИ: ' + (e && e.message || e)); await закрыть(); process.exit(1); });
 let ws, id = 0; const pend = new Map(); const ошибки = [];
 const send = (m, p = {}) => new Promise((res, rej) => { const n = ++id; pend.set(n, { res, rej }); ws.send(JSON.stringify({ id: n, method: m, params: p })); });
 let url;
@@ -251,5 +252,5 @@ check('20 января: первым «Зимой», «С детьми» пос�
 await js(`localStorage.clear(); 1`);
 check('в консоли нет ошибок', ошибки.length === 0, ошибки.slice(0, 2).join(' | '));
 console.log('\nПройдено ' + passed + ', падает ' + failed);
-ws.close(); chrome.kill();
+ws.close(); await закрыть();
 process.exit(failed ? 1 : 0);

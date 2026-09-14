@@ -10,26 +10,23 @@
 //   node проверки/шапка.mjs https://poisk-kvartir.onrender.com
 // Снимки шапки (375 и 1200 px) пишутся, если задан префикс пути:
 //   SNIMKI=C:/папка/шапка- node проверки/шапка.mjs   → шапка-375.png, шапка-1200.png
-import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
+import { запуститьChrome } from './_браузер.mjs';
 
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 const PORT = 9609, sleep = ms => new Promise(r => setTimeout(r, ms));
 let failed = 0, passed = 0;
 const check = (n, ok, d) => ok ? (passed++, console.log('  OK   ' + n)) : (failed++, console.log('  ПАДАЕТ ' + n + (d ? '  — ' + d : '')));
 
-const chrome = spawn(process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new',
-  `--remote-debugging-port=${PORT}`, '--disable-gpu', '--hide-scrollbars', '--no-first-run',
-  '--no-default-browser-check', '--user-data-dir=' + process.env.TEMP + '/cdp-hero-' + process.pid,
-  'about:blank'], { stdio: 'ignore' });
+const { chrome, закрыть } = запуститьChrome(PORT, 'hero', { ловитьОшибки: false });
 // Упала проверка — Chrome не должен остаться висеть
-process.on('unhandledRejection', e => { console.log('Ошибка: ' + (e && e.message || e)); try { chrome.kill(); } catch {} process.exit(1); });
+process.on('unhandledRejection', async e => { console.log('Ошибка: ' + (e && e.message || e)); await закрыть(); process.exit(1); });
 
 let ws, id = 0; const pend = new Map(); const ошибки = [];
 const send = (m, p = {}) => new Promise((res, rej) => { const n = ++id; pend.set(n, { res, rej }); ws.send(JSON.stringify({ id: n, method: m, params: p })); });
 let url;
 for (let i = 0; i < 60 && !url; i++) { try { const l = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json(); url = l.find(t => t.type === 'page')?.webSocketDebuggerUrl; } catch {} if (!url) await sleep(500); }
-if (!url) { console.log('Не удалось запустить Chrome — проверка пропущена'); chrome.kill(); process.exit(0); }
+if (!url) { console.log('Не удалось запустить Chrome — проверка пропущена'); await закрыть(); process.exit(0); }
 ws = new WebSocket(url);
 await new Promise(r => ws.addEventListener('open', r));
 ws.addEventListener('message', e => {
@@ -104,5 +101,5 @@ await снимок(375);
 
 check('в консоли нет ошибок', ошибки.length === 0, ошибки.slice(0, 2).join(' | '));
 console.log('\nПройдено ' + passed + ', падает ' + failed);
-ws.close(); chrome.kill();
+ws.close(); await закрыть();
 process.exit(failed ? 1 : 0);

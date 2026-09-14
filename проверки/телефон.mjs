@@ -13,14 +13,12 @@
 //   node проверки/телефон.mjs
 //   node проверки/телефон.mjs https://poisk-kvartir.onrender.com
 import { spawn } from 'node:child_process';
+import { запуститьChrome } from './_браузер.mjs';
 
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 const PORT = 9463, sleep = ms => new Promise(r => setTimeout(r, ms));
 
-const chrome = spawn('C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new',
-  `--remote-debugging-port=${PORT}`, '--disable-gpu', '--hide-scrollbars', '--no-first-run',
-  '--no-default-browser-check', '--user-data-dir=' + process.env.TEMP + '/cdp-tel-' + process.pid,
-  'about:blank'], { stdio: 'ignore' });
+const { chrome, закрыть } = запуститьChrome(PORT, 'tel');
 
 let ws, id = 0; const pend = new Map();
 const send = (m, p = {}) => new Promise((res, rej) => {
@@ -175,5 +173,5 @@ if (!живое.реалт) {
 }
 
 console.log('\nПройдено ' + passed + ', падает ' + failed);
-ws.close(); chrome.kill();
+ws.close(); await закрыть();
 process.exit(failed ? 1 : 0);

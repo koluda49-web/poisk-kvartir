@@ -12,8 +12,8 @@
 // Сервер должен быть запущен.
 //   node проверки/маршруты-из-видео.mjs
 //   node проверки/маршруты-из-видео.mjs https://poisk-kvartir.onrender.com
-import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { запуститьChrome } from './_браузер.mjs';
 
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 const PORT = 9602, sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -76,10 +76,7 @@ check('в sitemap.xml есть /m', карта.includes('<loc>https://poisk-kvar
 check('в sitemap.xml есть /m/lida-voronovo', карта.includes('<loc>https://poisk-kvartir.onrender.com/m/lida-voronovo</loc>'));
 
 // ── в браузере ───────────────────────────────────────────────────────────
-const chrome = spawn('C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new',
-  `--remote-debugging-port=${PORT}`, '--disable-gpu', '--hide-scrollbars', '--no-first-run',
-  '--no-default-browser-check', '--user-data-dir=' + process.env.TEMP + '/cdp-video-' + process.pid,
-  'about:blank'], { stdio: 'ignore' });
+const { chrome, закрыть } = запуститьChrome(PORT, 'video');
 let ws, id = 0; const pend = new Map(); const ошибки = [];
 const send = (m, p = {}) => new Promise((res, rej) => { const n = ++id; pend.set(n, { res, rej }); ws.send(JSON.stringify({ id: n, method: m, params: p })); });
 let url;
@@ -253,5 +250,5 @@ check('на вкладке жилья ссылки не видно', await js(`d
 await js(`localStorage.clear(); 1`);
 check('в консоли нет ошибок', ошибки.length === 0, ошибки.slice(0, 2).join(' | '));
 console.log('\nПройдено ' + passed + ', падает ' + failed);
-ws.close(); chrome.kill();
+ws.close(); await закрыть();
 process.exit(failed ? 1 : 0);

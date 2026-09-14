@@ -1,11 +1,10 @@
 // Слайдер на странице места должен быть ленивым: при открытии в сети только
 // первый снимок, остальные подтягиваются, когда до них долистали.
 import { spawn } from 'node:child_process';
+import { запуститьChrome } from './_браузер.mjs';
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 const PORT = 9451, sleep = ms => new Promise(r => setTimeout(r, ms));
-const chrome = spawn('C:/Program Files/Google/Chrome/Application/chrome.exe', ['--headless=new',
-  `--remote-debugging-port=${PORT}`, '--disable-gpu', '--hide-scrollbars', '--no-first-run',
-  '--user-data-dir=' + process.env.TEMP + '/cdp-sl-' + process.pid, 'about:blank'], { stdio: 'ignore' });
+const { chrome, закрыть } = запуститьChrome(PORT, 'sl');
 let ws, id = 0; const pend = new Map();
 const send = (m, p = {}) => new Promise((res, rej) => { const n = ++id; pend.set(n, { res, rej }); ws.send(JSON.stringify({ id: n, method: m, params: p })); });
 let url;
@@ -50,4 +49,4 @@ await sleep(800);
 check('назад тоже работает', (await js('document.getElementById("phn").textContent')) === '1/' + всего);
 
 console.log('\nИтог: успешно ' + passed + ', провалено ' + failed);
-ws.close(); chrome.kill(); process.exit(failed ? 1 : 0);
+ws.close(); await закрыть(); process.exit(failed ? 1 : 0);

@@ -13,6 +13,7 @@
 //   npm run проверка-поездки https://poisk-kvartir.onrender.com
 
 import { spawn } from 'node:child_process';
+import { запуститьChrome } from './_браузер.mjs';
 
 // Порт отладки и профиль — свои на каждый прогон: иначе вторая проверка
 // подряд не запускается, прежний Chrome ещё держит и то и другое.
@@ -20,13 +21,7 @@ const PORT = 9355 + (process.pid % 400), sleep = ms => new Promise(r => setTimeo
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 const CHROME = process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 
-const chrome = spawn(CHROME, [
-  '--headless=new', `--remote-debugging-port=${PORT}`, '--disable-gpu', '--hide-scrollbars',
-  '--no-first-run', '--no-default-browser-check',
-  // Свой профиль на каждый прогон: общий держал бы прошлый Chrome,
-  // и вторая проверка подряд не запускалась бы вовсе.
-  '--user-data-dir=' + process.env.TEMP + '/cdp-trip-' + process.pid, 'about:blank',
-], { stdio: 'ignore' });
+const { chrome, закрыть } = запуститьChrome(PORT, 'trip');
 
 let ws, id = 0; const pend = new Map();
 const send = (m, p = {}) => new Promise((res, rej) => { const n = ++id; pend.set(n, { res, rej }); ws.send(JSON.stringify({ id: n, method: m, params: p })); });
@@ -35,7 +30,7 @@ for (let i = 0; i < 40 && !url; i++) {
   try { const l = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json(); url = l.find(t => t.type === 'page')?.webSocketDebuggerUrl; } catch {}
   if (!url) await sleep(500);
 }
-if (!url) { console.log('Chrome не запустился — проверка НЕ выполнена'); process.exit(1); }
+if (!url) { console.log('Chrome не запустился — проверка НЕ выполнена'); await закрыть(); process.exit(1); }
 
 ws = new WebSocket(url);
 await new Promise(r => ws.addEventListener('open', r));
@@ -311,6 +306,6 @@ try {
 } finally {
   console.log('\nИтог: успешно ' + passed + ', провалено ' + failed);
   try { ws.close(); } catch {}
-  chrome.kill();
+  await закрыть();
 }
 process.exit(failed ? 1 : 0);

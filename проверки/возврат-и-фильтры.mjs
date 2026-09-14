@@ -17,14 +17,13 @@
 //   npm run проверка-возврата https://poisk-kvartir.onrender.com
 
 import { spawn } from 'node:child_process';
+import { запуститьChrome } from './_браузер.mjs';
 
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 const PORT = 9460 + (process.pid % 300), sleep = ms => new Promise(r => setTimeout(r, ms));
 const CHROME = process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 
-const chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${PORT}`,
-  '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
-  '--user-data-dir=' + process.env.TEMP + '/cdp-back-' + process.pid, 'about:blank'], { stdio: 'ignore' });
+const { chrome, закрыть } = запуститьChrome(PORT, 'back');
 
 let ws, id = 0; const pend = new Map();
 const send = (m, p = {}) => new Promise((res, rej) => { const n = ++id; pend.set(n, { res, rej }); ws.send(JSON.stringify({ id: n, method: m, params: p })); });
@@ -242,6 +241,6 @@ try {
 } finally {
   console.log('\nИтог: успешно ' + passed + ', провалено ' + failed);
   try { ws.close(); } catch {}
-  chrome.kill();
+  await закрыть();
 }
 process.exit(failed ? 1 : 0);
