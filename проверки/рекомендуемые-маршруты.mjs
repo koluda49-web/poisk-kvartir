@@ -25,7 +25,8 @@ import { fileURLToPath } from 'node:url';
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 const PORT = 9610, sleep = ms => new Promise(r => setTimeout(r, ms));
 const корень = join(dirname(fileURLToPath(import.meta.url)), '..');
-const ОТЧЁТ = join(корень, '.superpowers', 'sdd', '2026-09-13-marshruty-idei');
+// снимки экрана — в SHOTS_DIR (например, папку отчёта), по умолчанию во временную папку
+const ОТЧЁТ = process.env.SHOTS_DIR || tmpdir();
 const МАРШРУТЫ = JSON.parse(readFileSync(join(корень, 'маршруты-из-видео.json'), 'utf8'));
 const лв = МАРШРУТЫ.find(м => м.slug === 'lida-voronovo');
 const бр = МАРШРУТЫ.find(м => м.slug === 'braslavshchina-2-dnya');
@@ -118,9 +119,17 @@ check('/api/places: служебного alt в ответе нет', (поис�
     res.end(JSON.stringify({ code: 'Ok', routes: [{ distance: 10000 * legs.length, duration: 600 * legs.length, legs, geometry: { coordinates: coords } }] }));
   });
   await new Promise(r => osrm.listen(9625, '127.0.0.1', r));
+  // «kudin.by лежит»: описания точек спрашиваются у сервера, который принимает
+  // соединение и молчит. Страница маршрута должна заплатить ожиданием один раз.
+  const висят = [];
+  const мёртвый = createServer((req, res) => { висят.push(res); });
+  await new Promise(r => мёртвый.listen(9627, '127.0.0.1', r));
+  let вМёртвый = 0;
+  мёртвый.on('request', () => { вМёртвый++; });
+
   const папка = mkdtempSync(join(tmpdir(), 'rec-routes-'));
   const сервер = spawn(process.execPath, ['kvartiry-server.js'], { cwd: корень, stdio: 'ignore', env: Object.assign({}, process.env, {
-    PORT: '8196', OSRM_URL: 'http://127.0.0.1:9625', DATA_DIR: папка, STATS_FILE: join(папка, 'stats.json'),
+    PORT: '8196', OSRM_URL: 'http://127.0.0.1:9625', KUDIN_DETAIL_URL: 'http://127.0.0.1:9627', DATA_DIR: папка, STATS_FILE: join(папка, 'stats.json'),
     KUFAR: 'off', REALT: 'off', FLATBOOK: 'off', CHECKIN: 'off', KVARTIRKA: 'off', GH_TOKEN: '', RENDER_EXTERNAL_URL: '' }) });
   const гасить2 = () => { try { сервер.kill(); } catch {} };
   process.on('exit', гасить2);
@@ -143,8 +152,17 @@ check('/api/places: служебного alt в ответе нет', (поис�
     const r12 = await (await fetch('http://127.0.0.1:8196/api/route?p=' + encodeURIComponent(пары.split(';').slice(1, 13).join(';')))).json();
     // другие 12 точек: первые 12 уже лежат в кэше как первая часть
     check('12 точек — одним запросом, как раньше', r12.ok && r12.legs.length === 11 && запросы.length === до + 1, JSON.stringify(запросы));
+    // описания при мёртвом kudin.by: справочник мест сперва загружаем, чтобы мерить только описания
+    for (let i = 0; i < 60; i++) { try { if (((await (await fetch('http://127.0.0.1:8196/api/places?light=1')).json()).items || []).length) break; } catch {} await sleep(1000); }
+    const мерить = async () => { const t = Date.now(); const о = await fetch('http://127.0.0.1:8196/m/braslavshchina-2-dnya'); const h = await о.text(); return { мс: Date.now() - t, код: о.status, строк: (h.match(/<div class="it">/g) || []).length }; };
+    const п1 = await мерить();
+    const запросовПосле1 = вМёртвый;
+    const п2 = await мерить();
+    check('kudin.by молчит: первый показ /m/… — 200 и все 25 точек, ждём описания не дольше ~3,5 с', п1.код === 200 && п1.строк === 25 && п1.мс < 6000, JSON.stringify(п1));
+    check('kudin.by молчит: повторный показ быстрый (описания не ждём снова)', п2.код === 200 && п2.мс < 1500, JSON.stringify(п2));
+    check('kudin.by молчит: повторный показ не шлёт новых запросов описаний', вМёртвый === запросовПосле1 && запросовПосле1 > 0, запросовПосле1 + ' → ' + вМёртвый);
   }
-  гасить2(); osrm.close();
+  гасить2(); osrm.close(); висят.forEach(r => { try { r.destroy(); } catch {} }); мёртвый.close();
 }
 
 // ── в браузере ───────────────────────────────────────────────────────────
@@ -256,8 +274,10 @@ check('у названия aria-expanded="true"', await js(`document.querySelect
 await sleep(600);
 кадр = await безОбрезки('#rlist .it:nth-child(2) .pc img.pc-im.on');
 check('карточка точки: снимок целиком, без обрезки', цел(кадр), JSON.stringify(кадр));
+await ждать(`!!document.querySelector('#rmap .leaflet-popup .pp img.pp-im') && document.querySelector('#rmap .leaflet-popup .pp img.pp-im').naturalWidth > 0`, 40);
+await sleep(300);
 кадр = await безОбрезки('#rmap .leaflet-popup .pp img.pp-im');
-check('окошко на карте: снимок целиком, без обрезки', !!кадр.нет || цел(кадр), JSON.stringify(кадр));
+check('окошко на карте: снимок есть и показан целиком', цел(кадр), JSON.stringify(кадр));
 check('листание снимков: второй кадр получил адрес', await js(`(function(){ var b = document.querySelector('#rlist .it:nth-child(2) .pc .pc-r'); if(!b) return true; b.click(); var on = document.querySelector('#rlist .it:nth-child(2) .pc img.pc-im.on'); return !!on.getAttribute('src') && document.querySelector('#rlist .it:nth-child(2) .pc .pc-n').textContent.indexOf('2/') === 0; })()`));
 check('открытие ничего не пишет в хранилище', (await js(`localStorage.getItem('route')`)) === null);
 await js(`document.querySelector('#rlist .it:nth-child(2)').scrollIntoView({ block: 'start', behavior: 'instant' }); window.scrollBy(0, -10); 1`);
@@ -314,6 +334,19 @@ check('/marshrut: нажатие на название раскрывает ка
 check('/marshrut: снимки и описание загрузились', await ждать(`!!document.querySelector('#rlist .it:nth-child(1) .pc img.pc-im.on') && (document.querySelector('#rlist .it:nth-child(1) .pc .pc-t')||{textContent:''}).textContent.length > 10 && !/Загружаю/.test(document.querySelector('#rlist .it:nth-child(1) .pc').textContent)`, 40));
 check('/marshrut: окошко на карте', await ждать(`!!document.querySelector('#rmap .leaflet-popup .pp')`, 10));
 check('/marshrut: адрес не сменился', (await js(`location.pathname`)) === '/marshrut');
+// «Жильё рядом» в карточке: список рядом и ссылка на поиск жилья в области
+await нажать('#rlist .it:nth-child(1) .pc .pc-stay');
+check('«Жильё рядом» раскрывает блок жилья в карточке', await ждать(`(function(){ var б = document.querySelector('#rlist .it:nth-child(1) .pc .pc-st'); return !!б && !б.hidden && !/Ищу жильё/.test(б.textContent); })()`, 80));
+const жильёАПИ = await (await fetch(SITE + '/api/places/stay?lat=' + (await js(`Т[0].lat`)) + '&lng=' + (await js(`Т[0].lng`)) + '&r=30')).json();
+const всёЖильё = await js(`(document.querySelector('#rlist .it:nth-child(1) .pc .pc-all')||{getAttribute:function(){return '';}}).getAttribute('href')`);
+check('«Всё жильё рядом →» ведёт в поиск по области точки', !!жильёАПИ.region && всёЖильё === '/?region=' + encodeURIComponent(жильёАПИ.region) + '&type=flat&source=both', всёЖильё + ' / область ' + жильёАПИ.region);
+if (всёЖильё) {
+  await send('Page.navigate', { url: SITE + всёЖильё });
+  await ждать(`!!document.getElementById('region') && document.getElementById('region').value === ${JSON.stringify(жильёАПИ.region || '')}`, 60);
+  check('главная открылась на жилье этой области: регион, квартиры, все источники', await js(`window.__mode === 'by' && document.getElementById('region').value === ${JSON.stringify(жильёАПИ.region || '')} && document.getElementById('type').value === 'flat' && document.getElementById('source').value === 'both'`),
+    await js(`window.__mode + ' ' + document.getElementById('region').value + ' ' + document.getElementById('type').value + ' ' + document.getElementById('source').value`));
+}
+
 
 // ── «Вернуть мой порядок» на /marshrut ───────────────────────────────────
 // Мир → Лида → Несвиж → Новогрудок: жадный объезд от Мира переставит их.
@@ -355,6 +388,18 @@ await js(`document.getElementById('rtBack').click(); 1`);
 await sleep(300);
 check('главная: «Вернуть мой порядок» восстановил порядок и режим manual', (await js(`JSON.stringify(window.__route.map(function(p){ return String(p.id); }))`)) === JSON.stringify(мойГл) && (await js(`localStorage.getItem('routeOrder')`)) === 'manual');
 check('главная: ссылка на маршрут снова с o=1, кнопка скрыта', /o=1/.test(await js(`document.getElementById('routeGo').getAttribute('href')`)) && await js(`document.getElementById('rtBack').hidden`));
+// любая следующая правка на главной стирает прежний порядок — и возврат точки его не вернёт
+await js(`document.getElementById('rtAuto').click(); 1`);
+await sleep(300);
+check('главная: снова «Упорядочить автоматически» — «Вернуть» видна', await js(`!document.getElementById('rtBack').hidden && localStorage.getItem('routePrevOrder') !== null`));
+const убранная = await js(`JSON.stringify(window.__route[3])`).then(JSON.parse);
+await js(`dropRoute(${JSON.stringify(String(убранная.id))}); 1`);
+await sleep(300);
+check('главная: убрали точку — «Вернуть» скрыта, routePrevOrder стёрт', await js(`document.getElementById('rtBack').hidden && localStorage.getItem('routePrevOrder') === null`));
+await js(`routeToggle(${JSON.stringify(убранная)}); 1`);
+await sleep(300);
+check('главная: вернули ту же точку — прежний порядок не вернулся', await js(`window.__route.length === 4 && document.getElementById('rtBack').hidden && localStorage.getItem('routePrevOrder') === null`));
+
 
 // ── /m/braslavshchina-2-dnya на телефоне ─────────────────────────────────
 await телефон();
