@@ -8197,9 +8197,19 @@ function plotMap(fit){
     // снимки в окошке — целиком: рамка берёт высоту по кадру, окошко после этого пересчитывает место
     window.__map.on('popupopen', function(e){ window.__окошко = e.popup; подогнатьСнимки(e.popup.getElement()); });
     window.__map.on('popupclose', function(e){ if(window.__окошко === e.popup) window.__окошко = null; });
-    // Карту не двигаем: окошко уже подвинуло её при открытии, а поздний сдвиг
-    // (кадр догрузился) сбивал человека, который в этот момент листает или жмёт кнопку.
-    window.__послеСнимка = function(){ if(window.__окошко && window.__map.hasLayer(window.__окошко)) пересчитатьОкошко(window.__окошко, true); };
+    // Карту без нужды не двигаем: окошко уже подвинуло её при открытии, а поздний
+    // сдвиг (кадр догрузился) сбивал человека, который в этот момент листает или
+    // жмёт кнопку. Но если выросшее окошко вылезло за край карты — а на телефоне
+    // высокий снимок срезал верх окошка вместе с названием, — сдвигаем, как при открытии.
+    window.__послеСнимка = function(){
+      const о = window.__окошко;
+      if(!о || !window.__map.hasLayer(о)) return;
+      пересчитатьОкошко(о, true);
+      const э = о.getElement && о.getElement();
+      if(!э) return;
+      const r = э.getBoundingClientRect(), к = window.__map.getContainer().getBoundingClientRect();
+      if(r.top < к.top || r.bottom > к.bottom) пересчитатьОкошко(о);
+    };
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(window.__map);
     // Метки в центре города наваливаются друг на друга сотнями и карта
     // становится нечитаемой. Близкие собираем в кружок с числом.

@@ -254,6 +254,47 @@ await sleep(700);
 кадр = await безОбрезки('#ph img.hero.on');
 check('/mesto/5069: после листания кадр тоже целиком', цел(кадр), JSON.stringify(кадр));
 
+// ── главная на телефоне: окошко места после загрузки снимка (ревью задачи 13) ──
+// Снимок догружается, рамка растёт вверх — высокое окошко на телефоне теряло
+// верх. Карту сдвигаем только тогда, когда окошко вылезло за край, а если
+// оно и так видно целиком, карта стоит на месте.
+await телефон();
+await send('Page.navigate', { url: SITE + '/?country=places' });
+await ждать(`(window.__places || []).length > 100`, 80);
+await js(`setView('map'); 1`);
+await ждать(`!!window.__plMarkers && !!window.__plMarkers['910032'] && !!window.__map`, 80);
+await js(`window.__map.getContainer().scrollIntoView({ block: 'start', behavior: 'instant' }); 1`);
+// карта ещё может перерисовать метки после загрузки списка и закрыть окошко — открываем, пока не откроется
+for (let i = 0; i < 12; i++) {
+  // без анимаций: приближаем карту к метке, чтобы кружок-кластер распался, и открываем её окошко
+  await js(`(function(){ var mk = window.__plMarkers['910032']; window.__map.setView(mk.getLatLng(), 17, { animate: false }); setTimeout(function(){ if(mk._map) mk.openPopup(); else открытьТочкуНаКарте(910032); }, 400); return 1; })()`);
+  if (await ждать(`!!document.querySelector('.leaflet-popup .mp-pl')`, 8)) break;
+}
+const окноСнимок = `(function(){ var i = document.querySelector('.leaflet-popup .mp-pic'); return !!i && i.naturalWidth > 0 && !!i.closest('[data-fit]').style.height; })()`;
+const видноОкно = `(function(){ var э = document.querySelector('.leaflet-popup'); if(!э) return JSON.stringify({ нет: 1, окошко: !!window.__окошко, вид: window.__view, режим: window.__mode });
+  var r = э.getBoundingClientRect(), к = window.__map.getContainer().getBoundingClientRect();
+  return JSON.stringify({ верх: Math.round(r.top - к.top), низ: Math.round(к.bottom - r.bottom), высота: Math.round(r.height) }); })()`;
+const окноОткрылось = await ждать(окноСнимок, 80);
+check('телефон, главная: окошко места со снимком открылось', окноОткрылось, окноОткрылось ? '' : await js(`JSON.stringify({ меток: Object.keys(window.__plMarkers || {}).length, вид: window.__view, окошко: !!document.querySelector('.leaflet-popup'), снимок: !!document.querySelector('.leaflet-popup .mp-pic'), ширина: (document.querySelector('.leaflet-popup .mp-pic') || {}).naturalWidth, рамка: (document.querySelector('.leaflet-popup [data-fit]') || { style: {} }).style.height, карта: window.__map && window.__map.getContainer().offsetHeight })`));
+if (окноОткрылось) {
+  await sleep(900);   // рамка меняет высоту плавно, сдвиг карты — тоже
+  let в = JSON.parse(await js(видноОкно));
+  check('телефон, главная: после загрузки снимка окошко целиком в карте', в.верх >= -1 && в.низ >= -1, JSON.stringify(в));
+  const центр = () => js(`JSON.stringify(window.__map.getCenter())`);
+  const былЦентр = await центр();
+  await js(`window.__послеСнимка(); 1`);
+  await sleep(500);
+  check('телефон, главная: окошко видно целиком — повторный пересчёт карту не двигает', (await центр()) === былЦентр);
+  // сдвигаем карту так, чтобы верх окошка ушёл за край, и снова «догрузился снимок»
+  await js(`window.__map.panBy([0, ${Math.max(0, в.верх) + 60}], { animate: false }); 1`);
+  await sleep(300);
+  const срезано = JSON.parse(await js(видноОкно));
+  await js(`window.__послеСнимка(); 1`);
+  await sleep(900);
+  в = JSON.parse(await js(видноОкно));
+  check('телефон, главная: верх окошка за краем — карта сдвигается и окошко снова видно целиком', срезано.верх < 0 && в.верх >= -1 && в.низ >= -1, JSON.stringify({ срезано, после: в }));
+}
+
 // ── /m/lida-voronovo на телефоне: карточка точки ─────────────────────────
 await телефон();
 await js(`localStorage.clear(); 1`);
