@@ -2046,6 +2046,9 @@ function местаОтЛюдей(){
 function своиМеста(){ return EXTRA_PLACES.concat(местаОтЛюдей()); }
 
 const KUDIN = 'https://kudin.by';
+// Адрес описаний точек отдельно от KUDIN (тот же kudin.by): проверка подставляет
+// сюда мёртвый сервер и смотрит, что страница маршрута не ждёт его каждый раз.
+const KUDIN_DETAIL = process.env.KUDIN_DETAIL_URL || KUDIN;
 const PLACES_TTL = 6 * 60 * 60 * 1000;   // список памятников меняется раз в месяцы
 const DETAIL_TTL = 24 * 60 * 60 * 1000;
 
@@ -2834,8 +2837,8 @@ async function placeDetail(id){
                    more: own.src || '' };
   const правка = ПРАВКИ_ТОЧЕК[id];
   const d = await cached('raw|place|' + id, async ()=>{
-    const j = await (await fetch(KUDIN + '/api/v1/detail/?id=' + encodeURIComponent(id),
-                                 {headers:{'User-Agent':UA}})).json();
+    const j = await (await fetch(KUDIN_DETAIL + '/api/v1/detail/?id=' + encodeURIComponent(id),
+                                 ждём({headers:{'User-Agent':UA}}))).json();
     const it = (j && j.item) || {};
     const text = String(it.description || '')
       .replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, ' ')
@@ -3529,8 +3532,8 @@ function своюТочкуИзСсылки(t){
 // нужно пересчитать своё место.
 // Окошко Leaflet после смены высоты снимка: update() заново вставил бы
 // содержимое (и сбросил высоту рамки), поэтому только размер, место и сдвиг карты.
-function пересчитатьОкошко(о){
-  if(о._updateLayout){ о._updateLayout(); о._updatePosition(); if(о._adjustPan) о._adjustPan(); }
+function пересчитатьОкошко(о, безСдвига){
+  if(о._updateLayout){ о._updateLayout(); о._updatePosition(); if(!безСдвига && о._adjustPan) о._adjustPan(); }
   else о.update();
 }
 function подогнатьСнимки(корень){
@@ -3540,10 +3543,15 @@ function подогнатьСнимки(корень){
   рамки.forEach(function(р){
     var im = р.querySelector('img.on') || р.querySelector('img');
     if(!im) return;
+    // снимок не загрузился — рамка сжимается до спокойной полоски вместо пустого окна
+    function битый(){ if(р.style.height === '64px') return; р.style.height = '64px';
+      if(typeof window.__послеСнимка === 'function') window.__послеСнимка(р); }
+    if(im.complete && !im.naturalWidth && im.getAttribute('src')){ битый(); return; }
     if(!(im.complete && im.naturalWidth)){
       if(!im.__ждём){
         im.__ждём = 1;
         im.addEventListener('load', function(){ im.__ждём = 0; подогнатьСнимки(р); });
+        im.addEventListener('error', function(){ im.__ждём = 0; if(im === (р.querySelector('img.on') || р.querySelector('img'))) битый(); });
       }
       return;
     }
@@ -4188,8 +4196,10 @@ function парыМаршрута(p){
 // свой адрес и посмотреть, что будет без настоящего маршрутизатора.
 const OSRM_URL = process.env.OSRM_URL || 'https://router.project-osrm.org';
 const СЧЁТ_ДОРОГ = { osrm: 0, поПути: 0 };   // сколько раз правда считали — для проверки кэша
+const ДОРОГА_ЖИВЁТ = 24 * 60 * 60 * 1000;
+function ключOSRM(пары){ return 'osrm|' + пары.map(c => c[0].toFixed(5) + ',' + c[1].toFixed(5)).join(';'); }
 async function маршрутПоДорогам(пары){
-  const ключ = 'osrm|' + пары.map(c => c[0].toFixed(5) + ',' + c[1].toFixed(5)).join(';');
+  const ключ = ключOSRM(пары);
   return cached(ключ, async ()=>{
     СЧЁТ_ДОРОГ.osrm++;
     const coords = пары.map(c => c[1] + ',' + c[0]).join(';');
@@ -4209,7 +4219,7 @@ async function маршрутПоДорогам(пары){
              // минуты каждого перегона — для плана дня по часам
              legMinutes: (r.legs || []).map(l => Math.round(l.duration / 60)),
              line: (r.geometry.coordinates || []).map(c => [c[1], c[0]]) };
-  }, 24 * 60 * 60 * 1000);
+  }, ДОРОГА_ЖИВЁТ);
 }
 
 // Маршрут длиннее 12 точек (Браславщина за два дня — 25) считаем частями
@@ -4243,9 +4253,8 @@ async function маршрутЧастями(пары){
 function кмИзКэша(пары){
   let км = 0;
   for(const ч of частиМаршрута(пары)){
-    const ключ = 'osrm|' + ч.map(c => c[0].toFixed(5) + ',' + c[1].toFixed(5)).join(';');
-    const hit = SEARCH_CACHE.get(ключ);
-    if(!hit || !hit.data || !hit.data.ok) return null;
+    const hit = SEARCH_CACHE.get(ключOSRM(ч));
+    if(!hit || !hit.data || !hit.data.ok || Date.now() - hit.at > ДОРОГА_ЖИВЁТ) return null;
     км += hit.data.km;
   }
   return км;
@@ -5248,14 +5257,31 @@ function короткоеОписание(текст){
 // Описания точек маршрута для страницы /m/<slug>: они должны быть в HTML сразу.
 // Ответы kudin.by кэшируются на сутки (placeDetail); первый раз ждём не дольше
 // 3,5 с — не успевшие точки идут без описания, а их ответ ляжет в кэш.
+// Набор описаний помним на уровне маршрута: если kudin.by лежит, каждый
+// показ /m/braslavshchina-2-dnya иначе заново слал бы два десятка запросов
+// и ждал 3,5 с. Все ответы пришли — помним 6 ч (placeDetail и так держит их
+// сутки), чего-то не хватило — 5 мин, потом пробуем снова. Опоздавшие ответы
+// дописываются в тот же объект. Одновременные показы ждут один сбор.
+const ОПИСАНИЯ_ТОЧЕК = new Map();
+const ОПИСАНИЯ_ЖИВУТ = 6 * 60 * 60 * 1000, ОПИСАНИЯ_БЕЗ_ЧАСТИ = 5 * 60 * 1000;
 async function описанияТочек(ids){
   const номера = ids.filter(function(t){ return /^[0-9]+$/.test(t); });
+  const ключ = номера.join(',');
+  const есть = ОПИСАНИЯ_ТОЧЕК.get(ключ);
+  if(есть && (есть.идёт || Date.now() - есть.at <= есть.ttl)) return есть.идёт || есть.data;
   const итог = Object.create(null);
-  const все = Promise.all(номера.map(function(id){
-    return placeDetail(id).then(function(d){ итог[id] = String((d && d.text) || ''); }).catch(function(){});
-  }));
-  await Promise.race([все, new Promise(function(r){ setTimeout(r, 3500).unref(); })]);
-  return итог;
+  let пришло = 0;
+  const идёт = (async function(){
+    const все = Promise.all(номера.map(function(id){
+      return placeDetail(id).then(function(d){ итог[id] = String((d && d.text) || ''); пришло++; }).catch(function(){});
+    }));
+    await Promise.race([все, new Promise(function(r){ setTimeout(r, 3500).unref(); })]);
+    ОПИСАНИЯ_ТОЧЕК.set(ключ, { at: Date.now(), ttl: пришло === номера.length ? ОПИСАНИЯ_ЖИВУТ : ОПИСАНИЯ_БЕЗ_ЧАСТИ, data: итог });
+    return итог;
+  })();
+  ОПИСАНИЯ_ТОЧЕК.set(ключ, { идёт: идёт });
+  try{ return await идёт; }
+  catch(e){ ОПИСАНИЯ_ТОЧЕК.delete(ключ); return итог; }
 }
 
 async function видеоМаршрутPage(slug){
@@ -7985,7 +8011,9 @@ function plotMap(fit){
     // снимки в окошке — целиком: рамка берёт высоту по кадру, окошко после этого пересчитывает место
     window.__map.on('popupopen', function(e){ window.__окошко = e.popup; подогнатьСнимки(e.popup.getElement()); });
     window.__map.on('popupclose', function(e){ if(window.__окошко === e.popup) window.__окошко = null; });
-    window.__послеСнимка = function(){ if(window.__окошко && window.__map.hasLayer(window.__окошко)) пересчитатьОкошко(window.__окошко); };
+    // Карту не двигаем: окошко уже подвинуло её при открытии, а поздний сдвиг
+    // (кадр догрузился) сбивал человека, который в этот момент листает или жмёт кнопку.
+    window.__послеСнимка = function(){ if(window.__окошко && window.__map.hasLayer(window.__окошко)) пересчитатьОкошко(window.__окошко, true); };
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(window.__map);
     // Метки в центре города наваливаются друг на друга сотнями и карта
     // становится нечитаемой. Близкие собираем в кружок с числом.
@@ -8833,6 +8861,7 @@ function toggleRoute(i){
 // Точку добавляют и из ленты, и из окошка на карте. Номера там разные
 // (в ленте триста точек, на карте все), поэтому работаем по самой точке.
 function routeToggle(p){
+  забытьПрежнийПорядок();   // правка маршрута — «Вернуть мой порядок» больше не к чему
   const было = inRoute(p.id);
   if(было) window.__route = window.__route.filter(function(x){ return x.id !== p.id; });
   else window.__route = window.__route.concat([{ id:p.id, name:p.name, addr:p.addr || '', lat:p.lat, lng:p.lng }]);
@@ -8948,6 +8977,7 @@ function поставитьСвоюТочку(lat, lng){
   имя = String(имя).replace(/[<>~,]/g, ' ').split(' ').filter(Boolean).join(' ').slice(0, 60) || 'Своя точка';
   const id = свойИд(lat, lng);
   if(inRoute(id)) return;
+  забытьПрежнийПорядок();
   window.__route = (window.__route || []).concat([{ id:id, name:имя, lat:+lat.toFixed(5), lng:+lng.toFixed(5) }]);
   try{ localStorage.setItem('route', JSON.stringify(window.__route)); }catch(e){}
   if(window.__T) window.__T('route_add', { id:'m' });
@@ -8957,6 +8987,7 @@ function поставитьСвоюТочку(lat, lng){
 function передвинутьСвою(id, lat, lng){
   const т = (window.__route || []).find(function(p){ return String(p.id) === String(id); });
   if(!т) return;
+  забытьПрежнийПорядок();
   т.lat = +lat.toFixed(5); т.lng = +lng.toFixed(5); т.id = свойИд(lat, lng);
   try{ localStorage.setItem('route', JSON.stringify(window.__route)); }catch(e){}
   drawRoute();
@@ -8981,6 +9012,7 @@ function markRoute(i, on){
 }
 
 function clearRoute(){
+  забытьПрежнийПорядок();
   const были = (window.__route || []).map(function(p){ return p.id; });
   window.__route = [];
   try{ localStorage.removeItem('route'); }catch(e){}
@@ -9078,6 +9110,7 @@ function drawRoute(){
 }
 
 function dropRoute(id){
+  забытьПрежнийПорядок();
   window.__route = (window.__route || []).filter(function(p){ return String(p.id) !== String(id); });
   try{ localStorage.setItem('route', JSON.stringify(window.__route)); }catch(e){}
   // если эта точка сейчас видна в ленте — снимаем отметку с её кнопки
@@ -9093,6 +9126,7 @@ function переставитьМаршрут(откуда, куда){
   const list = (window.__route || []).slice();
   const p = list.splice(откуда, 1)[0];
   if(!p) return;
+  забытьПрежнийПорядок();
   list.splice(куда, 0, p);
   window.__route = list;
   поставитьПорядокМаршрута('manual');
