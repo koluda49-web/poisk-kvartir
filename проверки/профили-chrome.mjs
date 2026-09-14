@@ -20,7 +20,11 @@
 //  - совпадение --user-data-dir точное: процесс с профилем …cdp-x-12 не
 //    гасится уборкой профиля …cdp-x-1, а уборкой своего …cdp-x-12 — гасится;
 //  - пустой или относительный путь профиля — ошибка, и ничего не погашено:
-//    процессы с «--user-data-dir=» и «--user-data-dir=cdp-rel-…» живы.
+//    процессы с «--user-data-dir=» и «--user-data-dir=cdp-rel-…» живы;
+//  - не удалилась папка — в журнале код ошибки, оставшиеся файлы и процессы,
+//    у которых она в командной строке;
+//  - профили прошлых прогонов (cdp-…-<номер умершего процесса>) подбирает
+//    следующая проверка; папку живого node и занятую живым chrome.exe — нет.
 //
 // Сервер должен быть запущен.
 //   node проверки/профили-chrome.mjs
@@ -30,7 +34,8 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { закрытьChrome, закрытьChromeСинхронно, добить, добитьСинхронно, командаДобивания } from './_браузер.mjs';
+import { закрытьChrome, закрытьChromeСинхронно, добить, добитьСинхронно, командаДобивания,
+         удалитьПапку, удалитьПапкуЖдя, CHROME } from './_браузер.mjs';
 
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 const КОРЕНЬ = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -117,8 +122,33 @@ console.log('\n=== пустой или относительный путь пр�
   check('процесс с пустым --user-data-dir= жив', жив(сПустым));
   сОтносительным.kill(); сПустым.kill();
   // Типографские одинарные кавычки PowerShell тоже считает кавычками — удваиваются
-  const скрипт = командаДобивания(join(ВРЕМЕННЫЕ, 'cdp-q' + String.fromCharCode(0x2019) + 'x' + String.fromCharCode(0x2018) + "y'z"), 'node.exe')[3];
-  check('кавычки U+2018/U+2019 и \' в пути удвоены', скрипт.includes('cdp-q' + '’’x‘‘y' + "''z"), скрипт.slice(0, 120));
+  const к = n => String.fromCharCode(n);
+  const скрипт = командаДобивания(join(ВРЕМЕННЫЕ, 'cdp-q' + к(0x2018) + 'a' + к(0x2019) + 'b' + к(0x201A) + 'c' + к(0x201B) + "d'e"), 'node.exe')[3];
+  check('кавычки U+2018–U+201B и \' в пути удвоены',
+        скрипт.includes('cdp-q' + к(0x2018).repeat(2) + 'a' + к(0x2019).repeat(2) + 'b' + к(0x201A).repeat(2) + 'c' + к(0x201B).repeat(2) + "d''e"), скрипт.slice(0, 140));
+}
+
+console.log('\n=== папка не удалилась: в журнале код, файлы и кто держит ===');
+{
+  const папка = профильДляПроверки('cdp-lock-' + process.pid + '-a');   // с файлом Default/x
+  // Файл держит открытым PowerShell без права совместного удаления; путь — в его командной строке
+  const держатель = spawn('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+    "$f = [IO.File]::Open('" + join(папка, 'Default', 'x') + "', 'Open', 'Read', 'None'); Write-Output 1; Start-Sleep 180"],
+    { stdio: ['ignore', 'pipe', 'ignore'] });
+  подставные.push(держатель);
+  await new Promise(r => { держатель.stdout.once('data', r); держатель.once('exit', r); setTimeout(r, 90000); });
+  const журнал = [], лог = console.log;
+  console.log = (...a) => журнал.push(a.join(' '));
+  let удалена;
+  try { удалена = await удалитьПапкуЖдя(папка, { ждать: 1000, что: 'профиль не удалён' }); } finally { console.log = лог; }
+  const текст = журнал.join(' | ');
+  check('занятая папка не удалена, строка «профиль не удалён: <путь>»', удалена === false && текст.includes('профиль не удалён: ' + папка), текст);
+  check('в журнале код ошибки (EBUSY/EPERM…)', /код E[A-Z]+;/.test(текст), текст);
+  check('в журнале оставшиеся файлы', /осталось: [^;]*Default/.test(текст), текст);
+  check('в журнале процесс, у которого эта папка в командной строке', текст.includes('powershell.exe:' + держатель.pid), текст);
+  держатель.kill();
+  await new Promise(r => { if (!жив(держатель)) r(); else { держатель.once('exit', r); setTimeout(r, 5000); } });
+  check('освободили — папка удаляется', await удалитьПапкуЖдя(папка, { ждать: 10000 }) && !existsSync(папка));
 }
 
 // Живые chrome.exe с этим профилем — только чтение, ничего не гасим
@@ -127,7 +157,8 @@ function процессыСПрофилем(профиль) {
     return execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
       "$p = [regex]::Escape('" + профиль.replace(/'/g, "''") + "'); $q = [string][char]34; "
       + "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'chrome.exe' -and $_.CommandLine -match ('--user-data-dir=' + $q + '?' + $p + '(' + $q + '|\\s|$)') } | ForEach-Object { $_.ProcessId }"],
-      { encoding: 'utf8', timeout: 15000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+      // PowerShell на этой машине бывает запускается и по 20 с — ждём с запасом
+      { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   } catch { return '?'; }
 }
 
@@ -153,9 +184,42 @@ function итог(р, что) {
   check(что + ': нет chrome.exe с этим профилем', р.процессы === '', р.процессы);
   check(что + ': нет строки «профиль не удалён»', !/профиль не удалён/.test(р.вывод), (р.вывод.match(/профиль не удалён[^\n]*/) || [''])[0]);
 }
+// Остатки «прошлых прогонов» — их должна подобрать следующая проверка (слайдер
+// ниже) перед запуском своего Chrome: папку с номером умершего процесса удалить,
+// с номером живого node (наш process.pid) и занятую живым chrome.exe — оставить.
+// Номер, которого нет: кратный 4, как у Windows, и process.kill(n, 0) — ESRCH.
+const свободныйНомер = от => { for (let n = от; ; n += 4) { try { process.kill(n, 0); } catch (e) { if (e.code === 'ESRCH') return n; } } };
+const номерМёртвый = свободныйНомер(4000004), номерСChrome = свободныйНомер(номерМёртвый + 4);
+const остатокМёртвый = профильДляПроверки('cdp-test-' + номерМёртвый);
+const остатокЖивой = профильДляПроверки('cdp-test-' + process.pid);
+const остатокСChrome = join(ВРЕМЕННЫЕ, 'cdp-test-' + номерСChrome);
+// Chrome, переживший свою проверку: наш процесс, гасим в конце только через его объект
+const заблудший = spawn(CHROME, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
+  '--disable-breakpad', '--disable-crash-reporter', '--user-data-dir=' + остатокСChrome, 'about:blank'], { stdio: 'ignore' });
+process.on('exit', () => {
+  if (existsSync(остатокСChrome)) закрытьChromeСинхронно(заблудший, остатокСChrome);
+  удалитьПапку(остатокЖивой); удалитьПапку(остатокМёртвый);
+});
+for (let i = 0; i < 150 && !existsSync(join(остатокСChrome, 'Default')); i++) await sleep(100);
+await sleep(1000);
+
 const удачно = await прогнать('слайдер.mjs', 'sl', SITE);
 check('слайдер.mjs прошёл (код 0)', удачно.код === 0, 'код ' + удачно.код + ': ' + удачно.вывод.slice(-300));
 итог(удачно, 'слайдер');
+
+console.log('\n=== профили прошлых прогонов подобраны перед запуском Chrome ===');
+check('cdp-test-<номер умершего процесса> с файлом удалён', !existsSync(остатокМёртвый));
+check('в выводе проверки: «убраны профили прошлых прогонов: … cdp-test-' + номерМёртвый + '»',
+      /убраны профили прошлых прогонов:[^\n]*cdp-test-/.test(удачно.вывод) && удачно.вывод.includes('cdp-test-' + номерМёртвый), (удачно.вывод.match(/убраны[^\n]*/) || [''])[0]);
+check('cdp-test-<process.pid> (живой node) оставлен', existsSync(остатокЖивой));
+check('cdp-test-<номер умершего>, занятый живым chrome.exe, оставлен', existsSync(остатокСChrome) && жив(заблудший));
+check('заблудший Chrome не погашен уборкой', жив(заблудший));
+// Закрываем его обычной уборкой; под нагрузкой Chrome на этой машине гаснет
+// медленно — тогда ещё минута с добиванием, это не то, что здесь проверяется.
+if (!await закрытьChrome(заблудший, остатокСChrome))
+  await удалитьПапкуЖдя(остатокСChrome, { ждать: 60000, послеНеудачи: () => добить(остатокСChrome), что: 'профиль не удалён' });
+check('его закрытие убирает папку', !existsSync(остатокСChrome));
+await удалитьПапкуЖдя(остатокЖивой);
 
 console.log('\n=== проверка упала необработанной ошибкой: профиль тоже удалён ===');
 const упала = await прогнать('слайдер.mjs', 'sl', 'не-адрес');

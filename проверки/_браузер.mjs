@@ -32,9 +32,11 @@
 //    несёт наш путь;
 //  - совпадение пути — с границей после него: cdp-x-1 не совпадает с cdp-x-12;
 //  - пустой, относительный или не «cdp-…» во временной папке путь профиля —
-//    ошибка до того, как что-либо запущено или погашено (проверитьПрофиль).
+//    ошибка до того, как что-либо запущено или погашено (проверитьПрофиль);
+//  - профили прошлых прогонов, чья проверка уже не жива, подбираются перед
+//    запуском Chrome (убратьОстатки) — только удаление папок, ничего не гасится.
 import { spawn, execFile, execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, relative, basename, isAbsolute } from 'node:path';
 
@@ -56,10 +58,40 @@ function разрешено(папка) {
   if (папка) console.log('  (не удаляю ' + папка + ': не во временной папке)');
   return false;
 }
-// Одна попытка: true — папки больше нет.
+// Одна попытка: null — папки больше нет; иначе код ошибки rmSync
+// (или «осталась», если rmSync не бросил, а папка на месте).
 function попытка(папка) {
-  try { rmSync(папка, { recursive: true, force: true }); } catch {}
-  return !existsSync(папка);
+  let код = 'осталась';
+  try { rmSync(папка, { recursive: true, force: true }); } catch (e) { код = (e && e.code) || String(e); }
+  return existsSync(папка) ? код : null;
+}
+
+// Кто держит папку: процессы, у которых путь есть в командной строке
+// (кроме самого запроса). Только чтение. Путь передаём через окружение —
+// так его не нужно экранировать для PowerShell.
+// PowerShell на этой машине запускается и по 20 с — запросы только читают, ждём с запасом
+const ЖДАТЬ_ЧТЕНИЯ = 60000;
+const СКРИПТ_КТО_ДЕРЖИТ = String.raw`
+$p = [regex]::Escape($env:CDP_PAPKA);
+Get-CimInstance Win32_Process |
+  Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine -match $p } |
+  ForEach-Object { $_.Name + ':' + $_.ProcessId }
+`.replace(/\r?\n\s*/g, ' ');
+function ктоДержит(папка) {
+  if (process.platform !== 'win32') return '?';
+  try {
+    const вывод = execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', СКРИПТ_КТО_ДЕРЖИТ],
+      { encoding: 'utf8', timeout: ЖДАТЬ_ЧТЕНИЯ, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, CDP_PAPKA: папка } });
+    return вывод.trim().split(/\s+/).filter(Boolean).join(', ') || 'нет процессов с этим путём';
+  } catch { return 'не удалось узнать'; }
+}
+// Почему папка осталась — чтобы следующую утечку профилей было чем разобрать,
+// а не гадать (однажды их набралось на двадцать гигабайт).
+function почемуОсталась(папка, код) {
+  let файлы;
+  try { const все = readdirSync(папка, { recursive: true }); файлы = все.slice(0, 5).join(', ') + (все.length > 5 ? ' … (всего ' + все.length + ')' : ''); }
+  catch (e) { файлы = '(не прочитать: ' + ((e && e.code) || e) + ')'; }
+  return '  код ' + код + '; осталось: ' + (файлы || '—') + '; держат: ' + ктоДержит(папка);
 }
 
 // Удалить папку синхронно, с настоящими паузами между попытками (годится
@@ -67,27 +99,86 @@ function попытка(папка) {
 export function удалитьПапку(папка, { ждать = 5000, послеНеудачи, что = 'папка не удалена' } = {}) {
   if (!разрешено(папка)) return true;
   const до = Date.now() + ждать;
+  let код;
   for (let i = 0; ; i++) {
-    if (попытка(папка)) return true;
+    if ((код = попытка(папка)) === null) return true;
     if (Date.now() >= до) break;
     if (послеНеудачи && i % 10 === 9) послеНеудачи();
     спатьСинхронно(200);
   }
   console.log(что + ': ' + папка);
+  console.log(почемуОсталась(папка, код));
   return false;
 }
 // То же без блокировки — для обычного завершения проверки.
 export async function удалитьПапкуЖдя(папка, { ждать = 15000, послеНеудачи, что = 'папка не удалена' } = {}) {
   if (!разрешено(папка)) return true;
   const до = Date.now() + ждать;
+  let код;
   for (let i = 0; ; i++) {
-    if (попытка(папка)) return true;
+    if ((код = попытка(папка)) === null) return true;
     if (Date.now() >= до) break;
     if (послеНеудачи && i % 10 === 9) await послеНеудачи();
     await спать(200);
   }
   console.log(что + ': ' + папка);
+  console.log(почемуОсталась(папка, код));
   return false;
+}
+
+// Остатки прошлых прогонов. Профиль называется cdp-<имя>-<pid>, где pid —
+// номер процесса node.exe проверки. Если проверку убили (закрыли окно,
+// Ctrl+C до обработчиков, падение машины), её уборка не выполнилась, и папка
+// лежит вечно. Перед каждым запуском Chrome подбираем такие папки:
+//  - только папки cdp-…-<число> прямо во временной папке;
+//  - <pid> в имени — не живой node.exe (жив — значит, проверка ещё идёт
+//    или номер уже у другого node; и то и другое не трогаем);
+//  - ни у одного живого chrome.exe нет этой папки в командной строке
+//    (Chrome пережил свою проверку и ещё держит профиль);
+//  - не узнали, какие процессы живы, — не трогаем ничего.
+// Процессы здесь не гасятся никогда — только читаем список и удаляем папки.
+const СКРИПТ_ЖИВЫХ = String.raw`
+$n = @(Get-CimInstance Win32_Process -Filter 'Name=''node.exe''' | ForEach-Object { $_.ProcessId });
+$c = @(Get-CimInstance Win32_Process -Filter 'Name=''chrome.exe''' | Where-Object { $_.CommandLine } | ForEach-Object { $_.CommandLine });
+ConvertTo-Json -Compress -InputObject @{ n = $n; c = $c }
+`.replace(/\r?\n\s*/g, ' ');
+const ОСТАТОК = /^cdp-.+-(\d+)$/;
+// Путь в командной строке с границей после него: cdp-x-1 не совпадает с cdp-x-12.
+// Без учёта регистра — Windows его не различает, а лишний пропуск безопасен.
+function естьВСтроке(папка, строка) {
+  const п = папка.toLowerCase(), с = String(строка).toLowerCase();
+  for (let i = с.indexOf(п); i >= 0; i = с.indexOf(п, i + 1)) {
+    const после = с[i + п.length];
+    if (после === undefined || после === '"' || после === '/' || после === String.fromCharCode(92) || после.trim() === '') return true;
+  }
+  return false;
+}
+export function убратьОстатки() {
+  if (process.platform !== 'win32') return [];
+  let имена;
+  try {
+    имена = readdirSync(ВРЕМЕННЫЕ, { withFileTypes: true })
+      .filter(d => d.isDirectory() && ОСТАТОК.test(d.name)).map(d => d.name);
+  } catch { return []; }
+  if (!имена.length) return [];
+  let живые;
+  try {
+    живые = JSON.parse(execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', СКРИПТ_ЖИВЫХ],
+      { encoding: 'utf8', timeout: ЖДАТЬ_ЧТЕНИЯ, stdio: ['ignore', 'pipe', 'ignore'] }));
+  } catch { return []; }
+  const узлы = new Set([].concat(живые.n || []).map(Number));
+  const строки = [].concat(живые.c || []).filter(Boolean);
+  const убраны = [];
+  for (const имя of имена) {
+    const папка = join(ВРЕМЕННЫЕ, имя);
+    if (узлы.has(Number(имя.match(ОСТАТОК)[1]))) continue;
+    if (строки.some(с => естьВСтроке(папка, с))) continue;
+    const код = попытка(папка);
+    if (код === null) убраны.push(имя);
+    else console.log('  (профиль прошлого прогона не удалён: ' + папка + ', код ' + код + ')');
+  }
+  if (убраны.length) console.log('  убраны профили прошлых прогонов: ' + убраны.join(', '));
+  return убраны;
 }
 
 // Конвейер PowerShell: процессы с именем имяПроцесса и ровно этим
@@ -215,7 +306,8 @@ export function запуститьChrome(порт, имя, { доп = [], лов
   // имя попадает в путь профиля, который потом удаляется: только буквы, цифры, «_» и «-»
   if (!/^[\p{L}\p{N}_-]+$/u.test(String(имя))) throw new Error('запуститьChrome: недопустимое имя профиля «' + имя + '»');
   const profile = join(ВРЕМЕННЫЕ, 'cdp-' + имя + '-' + process.pid);
-  if (!внутриВременной(profile) || !basename(profile).startsWith('cdp-')) throw new Error('запуститьChrome: профиль вне временной папки: ' + profile);
+  проверитьПрофиль(profile, 'запуститьChrome');
+  убратьОстатки();   // профили прошлых прогонов, чья проверка уже не жива
   const chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${порт}`, '--disable-gpu',
     '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
     // без отчётов о падениях: crashpad — ещё один процесс, который держит профиль
