@@ -4,6 +4,7 @@
 // про жильё. Проверяем, что в h1 есть «маршруты по Беларуси», цветом выделено
 // по-прежнему «без лишних вкладок», переключение вкладок не возвращает старый
 // текст, а на телефоне (375 px) заголовок не вылезает за край экрана.
+// И что фон шапки — новый снимок нужного размера, а не старый из кэша.
 //
 // Сервер должен быть запущен.
 //   node проверки/шапка.mjs
@@ -53,6 +54,18 @@ async function открыть(ширина) {
   await ждать(`document.readyState === 'complete' && !!document.querySelector('#cbBY')`);
   await sleep(800);
 }
+// Фон шапки: какой снимок стоит в ::before и какого он размера на самом деле.
+// Снимок шапки — костёл с двумя башнями (14.09): широкий 1500×700 — в пропорциях
+// самой полосы на 1200 px, узкий 900×860.
+const фон = () => js(`(async function(){
+  var s = getComputedStyle(document.querySelector('.wrap'), '::before').backgroundImage;
+  // без обратной косой черты: шаблонная строка её съела бы
+  var к = s.lastIndexOf('url('); if (к < 0) return JSON.stringify({ s: s });
+  var u = s.slice(к + 4, s.indexOf(')', к)).split('"').join('');
+  var i = new Image(); i.src = u;
+  await new Promise(function(r){ i.onload = r; i.onerror = r; });
+  return JSON.stringify({ u: decodeURIComponent(u), w: i.naturalWidth, h: i.naturalHeight });
+})()`).then(JSON.parse);
 async function снимок(ширина) {
   if (!process.env.SNIMKI) return;
   const r = JSON.parse(await js(`JSON.stringify((function(){ var b = document.querySelector('.hero-ink').getBoundingClientRect();
@@ -72,6 +85,8 @@ check('выделена цветом «без лишних вкладок»', h.
 check('на 1200 px h1 не шире экрана', await js(`(function(){ var e = document.querySelector('h1');
   return e.scrollWidth <= e.clientWidth + 1 && e.getBoundingClientRect().right <= innerWidth; })()`));
 check('на 1200 px «без» не висит одно в конце строки', await безНеОдно());
+const ф1200 = await фон();
+check('на 1200 px фон шапки — hero.jpg 1500×700', /\/фото-точек\/hero\.jpg$/.test(ф1200.u || '') && ф1200.w === 1500 && ф1200.h === 700, JSON.stringify(ф1200));
 await снимок(1200);
 
 for (const [кнопка, режим] of [['#cbRU', 'ru'], ['#cbPL', 'places'], ['#cbBY', 'by']]) {
@@ -97,6 +112,8 @@ check('на 375 px слова не рвутся посередине', await js(
     while ((m = re.exec(s))) { r.setStart(n, m.index); r.setEnd(n, m.index + m[0].length); if (r.getClientRects().length > 1) ok = false; } });
   return ok; })()`));
 check('на 375 px «без» не висит одно в конце строки', await безНеОдно());
+const ф375 = await фон();
+check('на 375 px фон шапки — hero-mob.jpg 900×860', /\/фото-точек\/hero-mob\.jpg$/.test(ф375.u || '') && ф375.w === 900 && ф375.h === 860, JSON.stringify(ф375));
 await снимок(375);
 
 check('в консоли нет ошибок', ошибки.length === 0, ошибки.slice(0, 2).join(' | '));

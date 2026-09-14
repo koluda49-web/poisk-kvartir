@@ -61,6 +61,26 @@ for (const [id, n] of [[910029, 2], [910027, 1], [910026, 2]]) {
   check(id + ': ' + n + ' своих снимка по номеру', pics.filter(u => u.startsWith('/фото-точек/' + id + ' ')).length === n, кратко(pics));
 }
 
+// ── костёл в Гольшанах: снимки владельца и поиск ────────────────────────
+console.log('\n=== 910034 (Гольшаны) ===');
+const p910034 = (await json('/api/place?id=910034')).pics || [];
+check('910034: в описании 2 своих снимка, обложка — общий вид (без номера), второй — «… 2»',
+      p910034.length === 2 && p910034.every(u => u.startsWith('/фото-точек/910034 '))
+      && /Гольшаны\.jpg$/.test(p910034[0]) && / 2\.jpg$/.test(p910034[1]), кратко(p910034));
+// «церковь Иоанна» — так место назвал владелец; в названии «Костёл», слово есть в alt
+for (const q of ['Гольшаны', 'Иоанна Крестителя', 'церковь Иоанна']) {
+  const r = await json('/api/places?q=' + encodeURIComponent(q));
+  const p = (r.items || []).find(x => x.id === 910034);
+  check('910034 находится по «' + q + '»', !!p && String(p.pic).startsWith('/фото-точек/910034 '),
+        (r.items || []).slice(0, 3).map(x => x.name + ' ' + x.pic).join('; '));
+}
+const стр910034 = await fetch(SITE + '/mesto/910034');
+const html910034 = await стр910034.text();
+check('/mesto/910034 — 200, название и 2 своих кадра', стр910034.status === 200
+      && html910034.includes('Костёл Святого Иоанна Крестителя (Гольшаны)')
+      && [...html910034.matchAll(/<img class="hero[^"]*"\s+(?:src|data-src)="([^"]+)"/g)].filter(m => m[1].startsWith('/фото-точек/910034 ')).length === 2,
+      String(стр910034.status));
+
 // ── страница места: слайдер ─────────────────────────────────────────────
 console.log('\n=== /mesto ===');
 const стр = await fetch(SITE + '/mesto/910030');
@@ -85,7 +105,7 @@ const все = await json('/api/places');
 const по = id => (все.items || []).find(x => String(x.id) === String(id));
 const lite = await json('/api/places?light=1');
 check('в облегчённом списке есть 5069 и новые места',
-      [5069, 910030, 910031, 910032, 910033].every(id => (lite.items || []).some(x => x.id === id)));
+      [5069, 910030, 910031, 910032, 910033, 910034].every(id => (lite.items || []).some(x => x.id === id)));
 const поиск5069 = await json('/api/places?q=' + encodeURIComponent('Липнишки'));
 const т5069 = (поиск5069.items || []).find(x => x.id === 5069) || по(5069);
 check('у 5069 обложка своя (pic)', !!т5069 && String(т5069.pic).startsWith('/фото-точек/5069 '), т5069 && т5069.pic);
