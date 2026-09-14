@@ -6067,13 +6067,19 @@ async function гидДанные(z){
   return { по: по, районы: список, места: места };
 }
 
+// Гиды и страницы спроса, которые при последней сборке оказались пустыми и
+// отдали 404. В sitemap их не кладём: поисковик иначе получает из карты сайта
+// битые адреса (вариантов в Уручье то пять, то четыре). Узнаём только при
+// сборке страницы — ради карты сайта в источники жилья не ходим.
+const ПУСТЫЕ_СТРАНИЦЫ = new Set();
 async function гидPage(slug){
   const z = ГИДЫ[slug];
   if(!z) return '';
   let d;
   try{ d = await гидДанные(z); }catch(e){ return ''; }
   const всего = ВИДЫ.reduce(function(n, в){ return n + d.по[в.код].всего; }, 0);
-  if(всего < 20) return '';
+  if(всего < 20){ ПУСТЫЕ_СТРАНИЦЫ.add(slug); return ''; }
+  ПУСТЫЕ_СТРАНИЦЫ.delete(slug);
 
   const кв = d.по.flat;
   const title = заголовокСтраницы('Где остановиться ' + z.где, [': цены на жильё посуточно', ': цены посуточно']);
@@ -6286,7 +6292,9 @@ async function спросPage(slug){
   if(!z) return '';
   let d = { items: [], total: 0 };
   try{ d = await спросДанные(z); }catch(e){}
-  if(d.total < СПРОС_МИНИМУМ) return '';   // нечем наполнить — страницы нет
+  // нечем наполнить — страницы нет (и в sitemap её не отдаём, пока снова не наполнится)
+  if(d.total < СПРОС_МИНИМУМ){ ПУСТЫЕ_СТРАНИЦЫ.add(slug); return ''; }
+  ПУСТЫЕ_СТРАНИЦЫ.delete(slug);
 
   const что = z.что || 'Квартиры на сутки';
   const items = (d.items || []).slice(0, 30);
@@ -10533,11 +10541,11 @@ http.createServer(async (req,res)=>{
     urls.push.apply(urls, ПОДБОРКИ.map(function(п){
       return '<url><loc>'+SITE_URL+'/podborka/'+п.slug+'</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>';
     }));
-    urls.push.apply(urls, Object.keys(ГИДЫ).map(function(k){
+    urls.push.apply(urls, Object.keys(ГИДЫ).filter(k => !ПУСТЫЕ_СТРАНИЦЫ.has(k)).map(function(k){
       return '<url><loc>'+SITE_URL+'/'+k+'</loc><changefreq>daily</changefreq><priority>0.7</priority></url>';
     }));
     // Страницы под живой спрос — в карту сайта наравне с городскими.
-    urls.push.apply(urls, Object.keys(СПРОС).map(function(k){
+    urls.push.apply(urls, Object.keys(СПРОС).filter(k => !ПУСТЫЕ_СТРАНИЦЫ.has(k)).map(function(k){
       return '<url><loc>'+SITE_URL+'/'+k+'</loc><changefreq>daily</changefreq><priority>0.7</priority></url>';
     }));
     // Места — самая большая часть карты сайта: их ищут по названию, а не

@@ -220,7 +220,10 @@ check('в адресе ' + (N - 1) + ' точек в порядке видео',
 const вХранилище = JSON.parse(х.route || '[]').map(p => String(p.id));
 check('в localStorage.route ' + (N - 1) + ' точек в порядке видео', JSON.stringify(вХранилище) === JSON.stringify(ждём), вХранилище.join(','));
 check('routeOrder = manual', х.order === 'manual', х.order);
-check('заголовок и вступление остались', await js(`document.querySelector('h1').textContent === ${JSON.stringify(м.title)} && document.querySelector('.intro').offsetParent !== null && document.title === ${JSON.stringify(м.title)}`));
+// Вкладка браузера — тот <title>, что отдал сервер: полное название длиннее 60 знаков
+// и во вкладке сокращено (SEO), на странице h1 остаётся полным.
+const titleСервера = ((await (await fetch(SITE + '/m/' + м.slug)).text()).match(/<title>([^<]*)<\/title>/) || [])[1] || '';
+check('заголовок и вступление остались', await js(`document.querySelector('h1').textContent === ${JSON.stringify(м.title)} && document.querySelector('.intro').offsetParent !== null && document.title === ${JSON.stringify(titleСервера)}`), titleСервера);
 await скрытьИПоказать();
 check('после правки и возврата на страницу — ' + (N - 1) + ' точек', (await строки()).length === N - 1);
 
