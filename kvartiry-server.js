@@ -3185,6 +3185,75 @@ function крошки(звенья){
     })
   }) + '</' + 'script>';
 }
+
+// ── SEO: одна «голова» на все индексируемые страницы ─────────────────────
+// Страниц около девятисот, собирают их десять функций, и раньше у каждой был
+// свой набор метатегов: где-то без og:image, где-то без og:url или
+// twitter:card, заголовки до 138 знаков и описания до 250. Поиск обрезает
+// заголовок после ~60 знаков, описание — после ~160, и обрезает посреди
+// слова. Поэтому всё собирается здесь, по одним правилам (их сторожит
+// проверки/seo.mjs).
+const СНИМОК_САЙТА = SITE_URL + encodeURI('/фото-точек/hero.jpg');   // Мирский замок из шапки главной
+const ЗАГОЛОВОК_МАКС = 60, ОПИСАНИЕ_МИН = 120, ОПИСАНИЕ_МАКС = 160;
+
+// Заголовок до 60 знаков: основа и первый из хвостов, который влезает.
+// Основа длиннее предела — режем по «: » или « — », иначе по слову с «…».
+function заголовокСтраницы(основа, хвосты){
+  let о = String(основа || '').replace(/\s+/g, ' ').trim();
+  if(о.length > ЗАГОЛОВОК_МАКС){
+    const части = о.split(/: | — /);
+    if(части[0].length >= 20 && части[0].length <= ЗАГОЛОВОК_МАКС) о = части[0];
+    else {
+      о = о.slice(0, ЗАГОЛОВОК_МАКС - 1);
+      о = о.slice(0, Math.max(о.lastIndexOf(' '), 20)).replace(/[\s,;:—–(-]+$/, '') + '…';
+    }
+  }
+  const хвост = (хвосты || []).find(х => (о + х).length <= ЗАГОЛОВОК_МАКС);
+  return о + (хвост || '');
+}
+
+// Описание 120–160 знаков только из целых фраз. Фразы идут по важности:
+// берём каждую, которая ещё влезает, и пропускаем не влезающие — так
+// описание не обрывается посреди слова, а короткие фразы в конце списка
+// добирают длину до 120. Длинный текст заранее ужимают короткоеОписание().
+// Элемент-массив — варианты одной мысли от длинного к короткому: берётся
+// первый влезающий, остальные нет (иначе имя места повторялось бы трижды).
+function описаниеСтраницы(фразы){
+  let итог = '';
+  for(const ф of фразы){
+    for(const вариант of [].concat(ф)){
+      const f = String(вариант || '').replace(/\s+/g, ' ').trim();
+      if(!f) continue;
+      const вместе = итог ? (итог + ' ' + f) : f;
+      if(вместе.length <= ОПИСАНИЕ_МАКС){ итог = вместе; break; }
+    }
+  }
+  return итог;
+}
+
+// Метатеги индексируемой страницы. путь — от корня сайта («/mesto/1-zamok»),
+// снимок — абсолютный адрес или путь к нашему файлу; без снимка — шапка главной.
+function метаСтраницы(о){
+  const адрес = SITE_URL + о.путь;
+  const снимок = о.снимок ? снимокДляСоцсетей(о.снимок) : СНИМОК_САЙТА;
+  return '<title>' + esc(о.title) + '</title>'
+    + '<meta name="description" content="' + esc(о.desc) + '">'
+    + '<meta name="robots" content="index,follow">'
+    + '<link rel="canonical" href="' + esc(адрес) + '">'
+    + '<meta property="og:type" content="' + (о.тип || 'website') + '">'
+    + '<meta property="og:site_name" content="Поиск жилья на сутки">'
+    + '<meta property="og:locale" content="ru_BY">'
+    + '<meta property="og:title" content="' + esc(о.ogTitle || о.title) + '">'
+    + '<meta property="og:description" content="' + esc(о.desc) + '">'
+    + '<meta property="og:url" content="' + esc(адрес) + '">'
+    + '<meta property="og:image" content="' + esc(снимок) + '">'
+    + '<meta name="twitter:card" content="summary_large_image">';
+}
+// JSON-LD в страницу: «<» в названиях не должен закрыть тег script
+function jsonLD(о){
+  return '<script type="application/ld+json">' + JSON.stringify(о).replace(/</g, '\\u003c') + '</' + 'script>';
+}
+
 const SRC_TITLE = { Kufar:'Kufar', Realt:'Realt', Flatbook:'Flatbook', H101:'101Hotels',
                     CheckIn:'Check-in', Kvartirka:'Kvartirka' };
 const srcTitle = v => SRC_TITLE[v] || v || 'источнике';
@@ -3253,6 +3322,88 @@ async function mestoPage(id){
   return html;
 }
 
+// Местность из адреса справочника без скобок. У 87 мест вместо адреса
+// записаны координаты — это не местность, для заголовка не годится.
+function местностьМеста(p){
+  const а = String(p && p.addr || '').replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').replace(/\s+,/g, ',').trim();
+  return /^-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?$/.test(а) ? '' : а;
+}
+// Название места для заголовка. «Костёлов» в справочнике тридцать один,
+// «Церквей» тридцать: без деревни их заголовки совпадают, поэтому к имени
+// добавляем местность (две первые части адреса, если влезают). Имя уже
+// содержит местность («Усадьба в Щорсах», адрес «Щорсы») — не повторяем.
+// Если и так совпало (две часовни в одной деревне, «Дот» без адреса) —
+// различаем координатами: это правда о месте, а не придуманное уточнение.
+function частиИмениМеста(p){
+  const имя = String(p.name || '').trim();
+  const части = местностьМеста(p).split(', ').filter(Boolean);
+  if(!части.length) return { имя: имя, где: [] };
+  const корень = части[0].replace(/^(возле|недалеко от|около|рядом с)\s+/i, '')
+    .replace(/^(г\.\s?п\.|аг\.|д\.|г\.|п\.|пос\.|с\.|х\.)\s*/i, '').toLowerCase().replace(/ё/g, 'е');
+  const стебель = корень.slice(0, Math.max(3, Math.min(5, корень.length - 1)));
+  const вИмени = стебель.length >= 3 && имя.toLowerCase().replace(/ё/g, 'е').indexOf(стебель) >= 0;
+  const где = вИмени ? части.slice(1) : части;
+  const два = имя + ', ' + где.slice(0, 2).join(', ');
+  return { имя: имя, где: (где.length > 1 && два.length <= 45) ? где.slice(0, 2) : где.slice(0, 1) };
+}
+function основаИмениМеста(p){
+  const ч = частиИмениМеста(p);
+  return ч.имя + (ч.где.length ? (', ' + ч.где.join(', ')) : '');
+}
+const ИМЕНА_МЕСТ = new WeakMap();   // список справочника → счёт одинаковых названий
+// предел — для заголовка: длинное имя («Мемориальная колонна в честь
+// Конституции Речи Посполитой» — таких две, в Леонполе и в Глубоком) режем
+// само, а местность оставляем, иначе заголовки опять совпадут. Если одинаковыми
+// стали уже обрезанные имена (редюиты Бобруйской крепости отличаются только
+// концом названия) — к ним тоже добавляем координаты.
+function собратьИмяМеста(p, предел, сКоорд){
+  const ч = частиИмениМеста(p);
+  let имя = ч.имя.charAt(0).toUpperCase() + ч.имя.slice(1), где = ч.где;
+  const коорд = сКоорд ? (' (' + (+p.lat).toFixed(4) + ', ' + (+p.lng).toFixed(4) + ')') : '';
+  const хвост = () => (где.length ? (', ' + где.join(', ')) : '') + коорд;
+  if(предел && (имя + хвост()).length > предел){
+    if(где.length > 1) где = где.slice(0, 1);
+    const место = предел - хвост().length - 1;
+    if((имя + хвост()).length > предел && место >= 15){
+      имя = имя.slice(0, место);
+      имя = имя.slice(0, Math.max(имя.lastIndexOf(' '), 10)).replace(/[\s,;:—–(-]+$/, '') + '…';
+    }
+  }
+  return имя + хвост();
+}
+function имяМестаСМестностью(p, list, предел){
+  const норм = s => s.toLowerCase().replace(/ё/g, 'е');
+  const счёт = function(имена){ const м = new Map(); имена.forEach(function(к){ м.set(к, (м.get(к) || 0) + 1); }); return м; };
+  let кэш = ИМЕНА_МЕСТ.get(list);
+  if(!кэш){ кэш = {}; ИМЕНА_МЕСТ.set(list, кэш); }
+  if(!кэш.основы) кэш.основы = счёт((list || []).map(x => норм(основаИмениМеста(x))));
+  const сКоорд = x => (кэш.основы.get(норм(основаИмениМеста(x))) || 0) > 1;
+  const к = 'до' + (предел || 0);
+  if(!кэш[к]) кэш[к] = счёт((list || []).map(x => норм(собратьИмяМеста(x, предел, сКоорд(x)))));
+  const имя = собратьИмяМеста(p, предел, сКоорд(p));
+  return ((кэш[к].get(норм(имя)) || 0) > 1 && !сКоорд(p)) ? собратьИмяМеста(p, предел, true) : имя;
+}
+// Начало описания места для meta description: целые фразы, пока влезают в
+// предел. Первая фраза бывает из одного года («1914—16 гг.») — тогда берём
+// и следующую. Обрывок без точки в конце («на православном кладбище»)
+// дополняем точкой и заглавной буквой.
+function началоТекста(текст, предел, хватит){
+  let остаток = String(текст || '').replace(/\s+/g, ' ').trim(), итог = '';
+  while(остаток && предел - итог.length > 20){
+    const место = предел - итог.length - (итог ? 1 : 0);
+    let ф = короткоеОписание(остаток, место);
+    if(!ф) break;
+    const целая = !/…$/.test(ф);
+    if(итог && !целая) break;          // вторую фразу не обрываем
+    остаток = целая ? остаток.slice(ф.length).trim() : '';
+    if(!/[.!?…»)]$/.test(ф)) ф += '.';
+    ф = ф.charAt(0).toUpperCase() + ф.slice(1);
+    итог = итог ? (итог + ' ' + ф) : ф;
+    if(итог.length >= (хватит || 60)) break;
+  }
+  return итог;
+}
+
 // Страница одного места. Отдаётся сервером целиком: поисковик не выполняет
 // наш скрипт, а раздел «Что посетить» без этого для него не существует.
 async function mestoPageBuild(id){
@@ -3290,16 +3441,43 @@ async function mestoPageBuild(id){
            + '</div>'));
 
   const где = [p.addr, p.cat].filter(Boolean).join(' · ');
-  const title = p.name + (p.addr ? (', ' + p.addr) : '') + ' — что посмотреть и где переночевать рядом';
-  const desc = (текст ? текст.slice(0, 150).replace(/\s+\S*$/, '') + '. ' : '')
-    + (жильё.length
-        ? ('Жильё рядом: ' + вариантов(рядом.items.length) + ' от ' + цены[0] + ' BYN за сутки, ближайшее в ' + жильё[0].km + ' км.')
-        : 'Координаты, маршрут в Яндекс.Картах и жильё поблизости.');
-  const адрес = SITE_URL + '/mesto/' + p.id + '-' + slugify(p.name);
+  const путь = '/mesto/' + p.id + '-' + slugify(p.name);
+  const адрес = SITE_URL + путь;
   const route = 'https://yandex.by/maps/?rtext=~' + p.lat + ',' + p.lng + '&rtt=auto';
+  const рядомМеста = list
+    .filter(x => x.id !== p.id && x.lat && x.lng && distKm(p.lat, p.lng, x.lat, x.lng) <= 25)
+    .map(x => Object.assign({}, x, { km: Math.round(distKm(p.lat, p.lng, x.lat, x.lng) * 10) / 10 }))
+    .sort((a, b) => a.km - b.km);
+  const маршрутыМеста = МАРШРУТЫ_С_МЕСТОМ[String(p.id)] || [];
+
+  const имя = имяМестаСМестностью(p, list);
+  const имяКоротко = имяМестаСМестностью(p, list, ЗАГОЛОВОК_МАКС);
+  // В хвосте заголовка — только то, что на странице правда есть
+  const есть = [кадры.length ? 'фото' : '', текст ? 'описание' : ''].filter(Boolean);
+  const title = заголовокСтраницы(имяКоротко, [
+    есть.length ? (' — ' + есть.join(', ') + (жильё.length ? ' и жильё рядом' : ' и координаты')) : (' — координаты' + (жильё.length ? ' и жильё рядом' : '')),
+    (есть.length && жильё.length) ? (' — ' + есть[0] + ' и жильё рядом') : ' — координаты',
+    ' — что посмотреть', '']);
+  const фразаЖилья = жильё.length
+    ? ('Жильё рядом: ' + вариантов(рядом.items.length) + ' от ' + цены[0] + ' BYN за сутки, ближайшее в ' + жильё[0].km + ' км.')
+    : '';
+  const desc = описаниеСтраницы([
+    началоТекста(текст, ОПИСАНИЕ_МАКС - (фразаЖилья ? фразаЖилья.length + 1 : 0)),
+    фразаЖилья,
+    маршрутыМеста.length ? ('Входит в маршрут «' + маршрутыМеста[0].title + '».') : '',
+    // имя в описании — чтобы у соседних мест с одинаковым текстом (доты одной
+    // линии обороны) описания не совпадали; варианты — от длинного к короткому
+    [имяКоротко + ': ' + (кадры.length ? 'фото, ' : '') + 'координаты и маршрут на машине.',
+     имяКоротко + ': ' + (кадры.length ? 'фото и ' : '') + 'координаты.',
+     'Место: ' + имяКоротко + '.'],
+    рядомМеста.length ? ('В 25 км ещё ' + рядомМеста.length + ' ' + скл(рядомМеста.length, 'место', 'места', 'мест') + ' из справочника.') : '',
+    p.cat ? ('Раздел справочника — «' + p.cat + '».') : '',
+    жильё.length ? '' : 'Сдаваемого жилья в 30 км сейчас нет, есть подбор по области.',
+    'Координаты и маршрут в Яндекс.Картах.',
+  ]);
 
   const карточки = жильё.map(function(x){
-    const img = (x.photos && x.photos[0]) ? ('<img src="' + esc(x.photos[0]) + '" alt="" loading="lazy">')
+    const img = (x.photos && x.photos[0]) ? ('<img src="' + esc(x.photos[0]) + '" alt="' + esc((x.title || 'Жильё рядом').slice(0, 70)) + '" loading="lazy">')
                                           : '<div class="noimg">без фото</div>';
     return '<a class="c" href="' + esc(x.link) + '" target="_blank" rel="noopener nofollow">' + img
       + '<div class="b"><div class="p">' + (x.от ? 'от ' : '') + x.price + ' BYN <small>/ сутки</small></div>'
@@ -3307,31 +3485,16 @@ async function mestoPageBuild(id){
       + '<h3>' + esc((x.title || '').slice(0, 70)) + '</h3></div></a>';
   }).join('');
 
-  const рядомМеста = list
-    .filter(x => x.id !== p.id && x.lat && x.lng && distKm(p.lat, p.lng, x.lat, x.lng) <= 25)
-    .map(x => Object.assign({}, x, { km: Math.round(distKm(p.lat, p.lng, x.lat, x.lng) * 10) / 10 }))
-    .sort((a, b) => a.km - b.km).slice(0, 8);
-
   return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-    + '<title>' + esc(title) + '</title>'
-    + '<meta name="description" content="' + esc(desc) + '">'
-    + '<meta name="robots" content="index,follow">'
+    + метаСтраницы({ title: title, desc: desc, путь: путь, снимок: кадры[0], тип: 'article', ogTitle: имя })
     + '<meta name="theme-color" content="#9a3412">'
-    + '<link rel="canonical" href="' + адрес + '">'
-    + '<meta property="og:type" content="article">'
-    + '<meta property="og:title" content="' + esc(p.name) + '">'
-    + '<meta property="og:description" content="' + esc(desc) + '">'
-    + '<meta property="og:url" content="' + адрес + '">'
-    + (p.pic ? ('<meta property="og:image" content="' + esc(p.pic.startsWith('/') ? (SITE_URL + p.pic) : p.pic) + '">') : '')
-    + '<script type="application/ld+json">'
-    + JSON.stringify({ '@context':'https://schema.org', '@type':'TouristAttraction',
-        name: p.name, description: текст.slice(0, 300) || undefined,
-        image: p.pic ? (p.pic.startsWith('/') ? (SITE_URL + p.pic) : p.pic) : undefined,
-        address: p.addr || undefined,
+    + jsonLD({ '@context':'https://schema.org', '@type':'TouristAttraction',
+        name: p.name, description: текст ? (текст.length <= 300 ? текст : (текст.slice(0, 299).replace(/\s+\S*$/, '') + '…')) : undefined,
+        image: кадры.length ? снимокДляСоцсетей(кадры[0]) : undefined,
+        address: местностьМеста(p) || undefined,
         geo: { '@type':'GeoCoordinates', latitude: p.lat, longitude: p.lng },
-        url: адрес }).replace(/</g,'\\u003c')
-    + '</' + 'script>'
+        url: адрес })
     + крошки([['Главная', '/'], ['Что посетить', '/?country=places'], [p.name]])
     + '<style>'
     + '*{box-sizing:border-box}'
@@ -3407,7 +3570,7 @@ async function mestoPageBuild(id){
            + 'до многих мест это час-полтора дороги.</p>'))
     + (рядомМеста.length
         ? ('<h2>Что ещё рядом</h2><div class="near">'
-           + рядомМеста.map(x => '<a href="/mesto/' + x.id + '-' + slugify(x.name) + '">'
+           + рядомМеста.slice(0, 8).map(x => '<a href="/mesto/' + x.id + '-' + slugify(x.name) + '">'
                + esc(x.name) + ' · ' + x.km + ' км</a>').join('')
            + '</div>')
         : '')
@@ -4404,11 +4567,13 @@ async function marshrutPage(ids, опции){
   // фото в «фото-точек», и они должны подхватиться сами.
   let голова;
   if(изВидео){
-    const адрес = SITE_URL + о.адрес;
     const сФото = ids.map(function(t){ return все.find(x => String(x.id) === t); })
       .filter(function(p){ return p && p.pic; })[0];
-    const снимок = сФото ? снимокДляСоцсетей(сФото.pic) : '';
-    const описание = String(о.описание || о.вступление || '');
+    const описание = описаниеСтраницы([
+      началоТекста(String(о.описание || о.вступление || ''), ОПИСАНИЕ_МАКС, ОПИСАНИЕ_МАКС),
+      [точки.length + ' ' + скл(точки.length, 'точка', 'точки', 'точек') + ' на карте, порядок объезда и переход в Яндекс.Карты.',
+       'Карта и порядок объезда.'],
+    ]);
     // Точки маршрута списком: у места справочника — его страница и короткое описание
     const списокТочек = { '@context':'https://schema.org', '@type':'ItemList', name: заголовок,
       numberOfItems: точки.length,
@@ -4420,18 +4585,16 @@ async function marshrutPage(ids, опции){
                          url: p.own ? undefined : (SITE_URL + '/mesto/' + p.id + '-' + и.slug),
                          geo: { '@type':'GeoCoordinates', latitude: p.lat, longitude: p.lng } } };
       }) };
-    голова = '<meta name="description" content="' + esc(описание) + '">'
-      + '<meta name="robots" content="index,follow">'
-      + '<link rel="canonical" href="' + esc(адрес) + '">'
-      + '<meta property="og:type" content="article">'
-      + '<meta property="og:title" content="' + esc(заголовок) + '">'
-      + '<meta property="og:description" content="' + esc(описание) + '">'
-      + '<meta property="og:url" content="' + esc(адрес) + '">'
-      + (снимок ? ('<meta property="og:image" content="' + esc(снимок) + '">'
-                   + '<meta name="twitter:card" content="summary_large_image">') : '')
-      + '<script type="application/ld+json">' + JSON.stringify(списокТочек).replace(/</g, '\\u003c') + '</' + 'script>';
+    // Заголовок из файла маршрутов бывает длиннее 60 знаков — во вкладке и в
+    // выдаче режем по двоеточию («Липнишки, …, Лида: день на машине из Минска»),
+    // на самой странице он остаётся полным.
+    голова = метаСтраницы({ title: заголовокСтраницы(заголовок, [' — маршрут на день', ' — маршрут', '']),
+                            desc: описание, путь: о.адрес, тип: 'article', ogTitle: заголовок,
+                            снимок: сФото ? сФото.pic : '' })
+      + jsonLD(списокТочек);
   } else {
-    голова = '<meta name="description" content="Маршрут на день по Беларуси'
+    голова = '<title>' + esc(заголовок) + '</title>'
+      + '<meta name="description" content="Маршрут на день по Беларуси'
       +   (точки.length ? (': ' + точки.length + ' точек, около ' + Math.round(сумма) + ' км между ними') : '')
       +   '. Карта, порядок объезда и переход в Яндекс.Карты.">'
       + '<meta name="robots" content="noindex,follow">';
@@ -4439,7 +4602,6 @@ async function marshrutPage(ids, опции){
 
   return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-    + '<title>' + esc(заголовок) + '</title>'
     + голова
     + '<meta name="theme-color" content="#9a3412">'
     + '<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%F0%9F%8F%A0%3C/text%3E%3C/svg%3E">'
@@ -5233,7 +5395,10 @@ const МАРШРУТЫ_С_МЕСТОМ = Object.create(null);
 // Короткое описание точки для строки маршрута и JSON-LD: первое предложение
 // текста места, не длиннее 160 знаков и без обрыва слова. Точка после «г»,
 // «в», «д» и прочих сокращений предложение не заканчивает.
-function короткоеОписание(текст){
+// предел — сколько знаков можно занять: 160 для строки маршрута, меньше —
+// когда фраза идёт в meta description вместе с другими.
+function короткоеОписание(текст, предел){
+  const максимум = предел || 160;
   const т = String(текст || '').replace(/\s+/g, ' ').trim();
   if(!т) return '';
   let конец = т.length;
@@ -5242,14 +5407,15 @@ function короткоеОписание(текст){
   while((m = re.exec(т))){
     const слово = (т.slice(0, m.index).match(/(\S+)$/) || ['', ''])[1];
     if(m[0] === '.' && /^[а-яё]{1,3}$/.test(слово)) continue;   // г. в. вв. д. ул.
+    if(m[0] === '.' && /^[А-ЯЁA-Z]$/.test(слово)) continue;     // инициалы: «Яном Я. Шадурским»
     конец = m.index + 1; break;
   }
   let пред = т.slice(0, конец).trim();
-  if(пред.length > 160){
-    пред = пред.slice(0, 159);
+  if(пред.length > максимум){
+    пред = пред.slice(0, максимум - 1);
     const пробел = пред.lastIndexOf(' ');
-    if(пробел > 60) пред = пред.slice(0, пробел);
-    пред = пред.replace(/[\s,;:—–-]+$/, '') + '…';
+    if(пробел > максимум * 0.4) пред = пред.slice(0, пробел);
+    пред = пред.replace(/[\s,;:—–(-]+$/, '') + '…';
   }
   return пред;
 }
@@ -5311,13 +5477,14 @@ function точкиМаршрута(м, все){
 async function видеоСписокPage(){
   let все = [];
   try{ все = await placesRaw(); }catch(e){}
-  const адрес = SITE_URL + '/m';
   const desc = 'Рекомендуемые маршруты по Беларуси на машине — на день и на два дня: точки на карте, '
     + 'порядок объезда, километраж по дорогам и переход в Яндекс.Карты.';
+  let обложка = '';
   const карточки = ВИДЕО_МАРШРУТЫ.map(function(м, i){
     const т = точкиМаршрута(м, все);
     const точек = все.length ? т.length : точкиВидео(м).length;
     const сФото = т.filter(function(p){ return p.pic; })[0];
+    if(сФото && !обложка) обложка = сФото.pic;
     // Километры: по дорогам — если маршрут уже считали (лежит в кэше),
     // иначе по прямой с запасом ×1,3, как в плане дня. Ради карточки в OSRM не ходим.
     let км = '';
@@ -5331,7 +5498,7 @@ async function видеоСписокPage(){
       }
     }
     return '<a class="c" href="/m/' + м.slug + '">'
-      + (сФото ? ('<img src="' + esc(сФото.pic) + '" alt=""' + (i ? ' loading="lazy"' : '') + '>')
+      + (сФото ? ('<img src="' + esc(сФото.pic) + '" alt="' + esc(сФото.name) + '"' + (i ? ' loading="lazy"' : '') + '>')
                : '<div class="noimg"></div>')
       + '<div class="b"><h2>' + esc(м.title) + '</h2>'
       + (м.note ? ('<p class="note">' + esc(м.note) + '</p>') : '')
@@ -5342,15 +5509,14 @@ async function видеоСписокPage(){
   }).join('');
   return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-    + '<title>Рекомендуемые маршруты по Беларуси на машине</title>'
-    + '<meta name="description" content="' + esc(desc) + '">'
-    + '<meta name="robots" content="index,follow">'
+    + метаСтраницы({ title: 'Рекомендуемые маршруты по Беларуси на машине', desc: desc, путь: '/m',
+                     ogTitle: 'Рекомендуемые маршруты по Беларуси', снимок: обложка })
     + '<meta name="theme-color" content="#9a3412">'
-    + '<link rel="canonical" href="' + адрес + '">'
-    + '<meta property="og:type" content="website">'
-    + '<meta property="og:title" content="Рекомендуемые маршруты по Беларуси">'
-    + '<meta property="og:description" content="' + esc(desc) + '">'
-    + '<meta property="og:url" content="' + адрес + '">'
+    + jsonLD({ '@context':'https://schema.org', '@type':'ItemList', name: 'Рекомендуемые маршруты по Беларуси',
+               numberOfItems: ВИДЕО_МАРШРУТЫ.length,
+               itemListElement: ВИДЕО_МАРШРУТЫ.map(function(м, i){
+                 return { '@type':'ListItem', position: i + 1, name: м.title, url: SITE_URL + '/m/' + м.slug };
+               }) })
     + крошки([['Главная', '/'], ['Что посетить', '/?country=places'], ['Рекомендуемые маршруты']])
     + '<style>'
     + '*{box-sizing:border-box}'
@@ -5520,8 +5686,15 @@ async function подборкаPage(slug){
     .filter(function(p){ return p && Number.isFinite(+p.lat) && Number.isFinite(+p.lng); });
   const адрес = SITE_URL + '/podborka/' + п.slug;
   const сФото = места.filter(function(p){ return p.pic; })[0];
-  const снимок = сФото ? снимокДляСоцсетей(сФото.pic) : '';
   const desc = String(п.intro || '');
+  // Вступление пишет владелец, и длина у него любая (113–161 знак), а
+  // поиску нужно 120–160: целые фразы вступления и число мест в подборке.
+  const описание = описаниеСтраницы([
+    началоТекста(desc, ОПИСАНИЕ_МАКС, ОПИСАНИЕ_МАКС),
+    [места.length + ' ' + скл(места.length, 'место', 'места', 'мест') + ' на карте с фото, адресами и жильём рядом.',
+     места.length + ' ' + скл(места.length, 'место', 'места', 'мест') + ' с фото и адресами.',
+     'Места на карте.'],
+  ]);
   const маршрут = '/marshrut?p=' + компактнаяГруппа(места, 8).map(function(p){ return p.id; }).join(',');
 
   const карточки = места.map(function(p, i){
@@ -5529,7 +5702,7 @@ async function подборкаPage(slug){
     const адр = адресДляКарточки(p.addr);
     return '<div class="c">'
       + '<a class="ph" href="' + ссылка + '" tabindex="-1" aria-hidden="true">'
-      +   (p.pic ? ('<img src="' + esc(p.pic) + '" alt=""' + (i > 3 ? ' loading="lazy"' : '') + '>')
+      +   (p.pic ? ('<img src="' + esc(p.pic) + '" alt="' + esc(p.name) + '"' + (i > 3 ? ' loading="lazy"' : '') + '>')
                  : '<div class="noimg"></div>') + '</a>'
       + '<div class="b">'
       +   (p.cat ? ('<span class="cat">' + esc(p.cat) + '</span>') : '')
@@ -5549,17 +5722,18 @@ async function подборкаPage(slug){
 
   return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-    + '<title>' + esc(п.title) + ': места по Беларуси</title>'
-    + '<meta name="description" content="' + esc(desc) + '">'
-    + '<meta name="robots" content="index,follow">'
+    + метаСтраницы({ title: заголовокСтраницы(п.title, [': места по Беларуси', '']), desc: описание,
+                     путь: '/podborka/' + п.slug, тип: 'article', ogTitle: п.title, снимок: сФото ? сФото.pic : '' })
     + '<meta name="theme-color" content="#9a3412">'
-    + '<link rel="canonical" href="' + адрес + '">'
-    + '<meta property="og:type" content="article">'
-    + '<meta property="og:title" content="' + esc(п.title) + '">'
-    + '<meta property="og:description" content="' + esc(desc) + '">'
-    + '<meta property="og:url" content="' + адрес + '">'
-    + (снимок ? ('<meta property="og:image" content="' + esc(снимок) + '">'
-                 + '<meta name="twitter:card" content="summary_large_image">') : '')
+    + jsonLD({ '@context':'https://schema.org', '@type':'ItemList', name: п.title, url: адрес,
+               numberOfItems: места.length,
+               itemListElement: места.map(function(p, i){
+                 return { '@type':'ListItem', position: i + 1,
+                          item: { '@type':'TouristAttraction', name: p.name,
+                                  url: SITE_URL + '/mesto/' + p.id + '-' + slugify(p.name),
+                                  address: местностьМеста(p) || undefined,
+                                  geo: { '@type':'GeoCoordinates', latitude: +p.lat, longitude: +p.lng } } };
+               }) })
     + крошки([['Главная', '/'], ['Что посетить', '/?country=places'], [п.title]])
     + '<style>'
     + '*{box-sizing:border-box}'
@@ -5705,10 +5879,20 @@ async function маршрутСобрать(slug){
   }
 
   const название = м.заголовок.replace(/^Маршрут\s*/, '');
-  const title = 'Маршрут ' + название + ': что посмотреть по дороге';
+  // «на машине» — первое, чем жертвуем ради длины: без него ясно, о чём речь
+  const коротко = название.replace(/\s+на машине$/, '');
+  const полный = 'Маршрут ' + название + ': что посмотреть по дороге';
+  const title = полный.length <= ЗАГОЛОВОК_МАКС ? полный
+    : заголовокСтраницы('Маршрут ' + коротко, [': что посмотреть по дороге', ': что посмотреть', '']);
   const первый = (м.факты[0] || {}).знач || '';
-  const desc = 'Маршрут ' + название + ' — ' + м.точки.length + ' точек с описаниями и координатами'
-    + (первый ? (', ' + первый) : '') + '. Замки, дворцы и усадьбы по дороге, карта и жильё на ночь рядом.';
+  const desc = описаниеСтраницы([
+    'Маршрут ' + название + ': ' + м.точки.length + ' ' + скл(м.точки.length, 'точка', 'точки', 'точек')
+      + ' с описаниями и координатами' + (первый ? (', ' + первый) : '') + '.',
+    ['Замки, дворцы и усадьбы по дороге, карта и жильё на ночь рядом.',
+     'Карта и жильё на ночь рядом.'],
+    'Файлы для навигатора.',
+  ]);
+  const сФото = точки.filter(function(т){ return т.место && т.место.pic; })[0];
 
   const факты = м.факты.map(function(ф){
     return '<div class="fact"><b>' + esc(ф.знач) + '</b><span>' + esc(ф.подпись) + '</span></div>';
@@ -5755,22 +5939,22 @@ async function маршрутСобрать(slug){
   const ld = {
     '@context':'https://schema.org', '@type':'ItemList', name: title,
     numberOfItems: точки.length,
-    itemListElement: точки.slice(0, 20).map(function(т, i){
-      return { '@type':'ListItem', position: i + 1, name: т.имя };
+    // Все точки, а не первые двадцать: список короткий, а у совпавших со
+    // справочником есть своя страница и координаты — поисковику это связи.
+    itemListElement: точки.map(function(т, i){
+      return { '@type':'ListItem', position: i + 1,
+               item: { '@type': т.место ? 'TouristAttraction' : 'Place', name: т.имя,
+                       url: т.место ? (SITE_URL + '/mesto/' + т.место.id + '-' + slugify(т.место.name)) : undefined,
+                       geo: т.lat ? { '@type':'GeoCoordinates', latitude: т.lat, longitude: т.lng } : undefined } };
     })
   };
 
   return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-    + '<title>' + esc(title) + '</title>'
-    + '<meta name="description" content="' + esc(desc) + '">'
-    + '<meta name="robots" content="index,follow">'
+    + метаСтраницы({ title: title, desc: desc, путь: '/' + slug, тип: 'article',
+                     ogTitle: м.заголовок, снимок: сФото ? сФото.место.pic : '' })
     + '<meta name="theme-color" content="#9a3412">'
-    + '<link rel="canonical" href="' + SITE_URL + '/' + slug + '">'
-    + '<meta property="og:type" content="article">'
-    + '<meta property="og:title" content="' + esc(title) + '">'
-    + '<meta property="og:description" content="' + esc(desc) + '">'
-    + '<script type="application/ld+json">' + JSON.stringify(ld) + '</script>'
+    + jsonLD(ld)
     + крошки([['Главная', '/'], ['Маршруты', '/?country=places'], [м.заголовок]])
     + '<style>' + СТИЛЬ_СПИСКА
     +   'h2{font-size:22px;margin:32px 0 10px;letter-spacing:-.01em}'
@@ -5892,10 +6076,14 @@ async function гидPage(slug){
   if(всего < 20) return '';
 
   const кв = d.по.flat;
-  const title = 'Где остановиться ' + z.где + ': цены на жильё посуточно';
-  const desc = 'Где остановиться ' + z.где + ' — ' + вариантов(всего) + ' посуточно: квартиры от '
-    + (кв.от || '—') + ' BYN, обычная цена ' + (кв.обычно || '—') + ' BYN за сутки. Районы, цены '
-    + 'и что посмотреть рядом. Kufar, Realt, Flatbook, Check-in и Kvartirka в одном списке.';
+  const title = заголовокСтраницы('Где остановиться ' + z.где, [': цены на жильё посуточно', ': цены посуточно']);
+  const desc = описаниеСтраницы([
+    'Где остановиться ' + z.где + ': ' + вариантов(всего) + ' посуточно'
+      + (кв.от ? (', квартиры от ' + кв.от + ' BYN') : '') + (кв.обычно ? (', обычно ' + кв.обычно + ' BYN за сутки') : '') + '.',
+    'Районы, цены и что посмотреть рядом.',
+    ['Kufar, Realt, Flatbook, Check-in и Kvartirka в одном списке.',
+     'Объявления пяти площадок в одном списке.'],
+  ]);
 
   const строкиВидов = ВИДЫ.filter(function(в){ return d.по[в.код].всего > 0; }).map(function(в){
     const т = d.по[в.код];
@@ -5957,17 +6145,10 @@ async function гидPage(slug){
 
   return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-    + '<title>' + esc(title) + '</title>'
-    + '<meta name="description" content="' + esc(desc) + '">'
-    + '<meta name="robots" content="index,follow">'
+    + метаСтраницы({ title: title, desc: desc, путь: '/' + slug, тип: 'article' })
     + '<meta name="theme-color" content="#9a3412">'
-    + '<link rel="canonical" href="' + SITE_URL + '/' + slug + '">'
     + '<link rel="manifest" href="/manifest.webmanifest">'
-    + '<meta property="og:type" content="article">'
-    + '<meta property="og:title" content="' + esc(title) + '">'
-    + '<meta property="og:description" content="' + esc(desc) + '">'
-    + '<meta property="og:url" content="' + SITE_URL + '/' + slug + '">'
-    + '<script type="application/ld+json">' + JSON.stringify(ld) + '</script>'
+    + jsonLD(ld)
     + крошки([['Главная', '/'], ['Города', '/minsk'], ['Где остановиться ' + z.где]])
     + '<style>' + СТИЛЬ_СПИСКА
     +   '.t{width:100%;border-collapse:collapse;margin:0 0 22px;font-size:15px;background:#fff;'
@@ -6113,10 +6294,14 @@ async function спросPage(slug){
   const мин = цены.length ? цены[0] : 0;
   const сред = цены.length ? цены[Math.floor(цены.length / 2)] : 0;
 
-  const title = что + ' ' + z.где + ' — снять посуточно';
-  const desc = что + ' ' + z.где + ': ' + вариантов(d.total)
-    + ' с Kufar, Realt, Flatbook, Check-in и Kvartirka в одном списке'
-    + (мин ? (', цены от ' + мин + ' BYN за сутки') : '') + '. Фото, цены и телефоны хозяев.';
+  const title = заголовокСтраницы(что + ' ' + z.где, [' — снять посуточно', ' посуточно']);
+  const desc = описаниеСтраницы([
+    что + ' ' + z.где + ': ' + вариантов(d.total) + (мин ? (', цены от ' + мин + ' BYN за сутки') : '') + '.',
+    'Объявления Kufar, Realt, Flatbook, Check-in и Kvartirka в одном списке.',
+    z.точка ? ('Всё в радиусе ' + (z.радиус || 25) + ' км.') : '',
+    ['Фото, телефоны хозяев и карта.', 'Фото и карта.'],
+    сред ? ('Обычная цена — около ' + сред + ' BYN.') : '',
+  ]);
 
   const карточки = items.map(function(x){
     const img = (x.photos && x.photos[0])
@@ -6151,17 +6336,10 @@ async function спросPage(slug){
 
   return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-    + '<title>' + esc(title) + '</title>'
-    + '<meta name="description" content="' + esc(desc) + '">'
-    + '<meta name="robots" content="index,follow">'
+    + метаСтраницы({ title: title, desc: desc, путь: '/' + slug })
     + '<meta name="theme-color" content="#9a3412">'
-    + '<link rel="canonical" href="' + SITE_URL + '/' + slug + '">'
     + '<link rel="manifest" href="/manifest.webmanifest">'
-    + '<meta property="og:type" content="website">'
-    + '<meta property="og:title" content="' + esc(title) + '">'
-    + '<meta property="og:description" content="' + esc(desc) + '">'
-    + '<meta property="og:url" content="' + SITE_URL + '/' + slug + '">'
-    + '<script type="application/ld+json">' + JSON.stringify(ld) + '</script>'
+    + jsonLD(ld)
     + крошки([['Главная', '/'], ['Жильё на сутки', '/minsk'], [что + ' ' + z.где]])
     + '<style>' + СТИЛЬ_СПИСКА + '</style></head><body><div class="w">'
     + '<h1>' + esc(что) + ' ' + esc(z.где) + '</h1>'
@@ -6237,9 +6415,15 @@ async function cityPage(slug, kind){
   const minP = prices.length ? prices[0] : 0;
   const midP = prices.length ? prices[Math.floor(prices.length/2)] : 0;
 
-  const title = k.what + ' ' + c.where + k.extra + ' — снять посуточно';
-  const desc  = k.what + ' ' + c.where + k.extra + ': ' + вариантов(data.total || 0) + ' от частников с Kufar, Realt, Flatbook, Check-in и Kvartirka в одном списке'
-    + (minP ? (', цены от ' + minP + ' BYN за сутки') : '') + '. Фото, цены, телефоны хозяев и карта.';
+  const путь = '/' + slug + (kind ? ('-' + kind) : '');
+  const title = заголовокСтраницы(k.what + ' ' + c.where + k.extra, [' — снять посуточно', ' посуточно']);
+  const desc  = описаниеСтраницы([
+    k.what + ' ' + c.where + k.extra + (data.total ? (': ' + вариантов(data.total)) : ' от частников')
+      + (minP ? (', цены от ' + minP + ' BYN за сутки') : '') + '.',
+    'Объявления Kufar, Realt, Flatbook, Check-in и Kvartirka в одном списке.',
+    ['Фото, телефоны хозяев и карта.', 'Фото и карта.'],
+    midP ? ('Обычная цена — около ' + midP + ' BYN.') : '',
+  ]);
 
   const cards = items.map(function(x){
     const img = (x.photos && x.photos[0])
@@ -6270,17 +6454,10 @@ async function cityPage(slug, kind){
 
   return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-    + '<title>' + esc(title) + '</title>'
-    + '<meta name="description" content="' + esc(desc) + '">'
-    + '<meta name="robots" content="index,follow">'
+    + метаСтраницы({ title: title, desc: desc, путь: путь })
     + '<meta name="theme-color" content="#9a3412">'
-    + '<link rel="canonical" href="' + SITE_URL + '/' + slug + (kind ? ('-' + kind) : '') + '">'
     + '<link rel="manifest" href="/manifest.webmanifest">'
-    + '<meta property="og:type" content="website">'
-    + '<meta property="og:title" content="' + esc(title) + '">'
-    + '<meta property="og:description" content="' + esc(desc) + '">'
-    + '<meta property="og:url" content="' + SITE_URL + '/' + slug + (kind ? ('-' + kind) : '') + '">'
-    + '<script type="application/ld+json">' + JSON.stringify(ld) + '</script>'
+    + jsonLD(ld)
     + крошки([['Главная', '/'], [k.what + ' ' + c.where]])
     + '<style>' + СТИЛЬ_СПИСКА
     + '</style></head><body><div class="w">'
@@ -6306,24 +6483,31 @@ const ICON_512 = 'iVBORw0KGgoAAAANSUhEUgAAAgAAAAIACAIAAAB7GkOtAAA76ElEQVR42u2deZ
 
 const META_DESC = 'Поиск жилья на сутки: Беларусь (Kufar, Realt, Flatbook) и отели России (101Hotels) в одном месте. Плюс раздел «Что посетить» — почти 800 достопримечательностей Беларуси на карте с фото, описанием и координатами, и подбор жилья рядом с каждой.';
 
+// Вкладки главной — один и тот же HTML, но «Что посетить» и «Россию» ищут
+// другими словами. Поэтому /?country=places и /?country=ru отдаются со своими
+// title, description и canonical (и лежат в sitemap), а скрипт страницы меняет
+// заголовок вкладки браузера при переключении.
+const ВКЛАДКИ_ГЛАВНОЙ = {
+  by: { путь: '/', title: 'Жильё на сутки в Беларуси и России + что посмотреть рядом',
+        ogTitle: 'Жильё на сутки в Беларуси и России + что посмотреть рядом',
+        desc: 'Квартиры, коттеджи и усадьбы на сутки с Kufar, Realt, Flatbook, Check-in и Kvartirka в одном списке, '
+            + 'отели России с 101Hotels и места, что посмотреть рядом.' },
+  ru: { путь: '/?country=ru', title: 'Отели и жильё в России на сутки: цены 101Hotels на карте',
+        desc: 'Отели, апартаменты, гостевые дома и хостелы в сорока городах и курортах России: Москва, Петербург, '
+            + 'Сочи, Крым. Цены 101hotels.com на карте.' },
+  places: { путь: '/?country=places', title: 'Что посмотреть в Беларуси: замки, усадьбы и доты на карте',
+        desc: 'Замки, костёлы, усадьбы, доты и мельницы Беларуси на карте: фото, описание и координаты, '
+            + 'маршрут на день и жильё рядом с каждым местом.' },
+};
+const ГОЛОВА_ГЛАВНОЙ = {};
+Object.keys(ВКЛАДКИ_ГЛАВНОЙ).forEach(function(к){ ГОЛОВА_ГЛАВНОЙ[к] = метаСтраницы(ВКЛАДКИ_ГЛАВНОЙ[к]); });
+
 const PAGE = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Жильё на сутки в Беларуси и России + что посмотреть рядом — Kufar, Realt, Flatbook, 101Hotels</title>
-<meta name="description" content="${META_DESC}">
+${ГОЛОВА_ГЛАВНОЙ.by}
 <meta name="keywords" content="снять квартиру на сутки, жильё на сутки Беларусь, квартира посуточно Минск, коттедж на сутки, усадьба на выходные, аренда посуточно Брест Гомель Гродно Витебск Могилёв, отели России посуточно, kufar, realt, flatbook, 101hotels, что посмотреть в Беларуси, достопримечательности Беларуси, замки Беларуси, куда съездить на выходные, карта достопримечательностей">
-<meta name="robots" content="index,follow">
 <meta name="author" content="poisk-kvartir">
 <meta name="theme-color" content="#9a3412">
-<link rel="canonical" href="${SITE_URL}/">
-<meta property="og:type" content="website">
-<meta property="og:site_name" content="Поиск жилья на сутки">
-<meta property="og:title" content="Жильё на сутки в Беларуси и России + что посмотреть рядом">
-<meta property="og:description" content="${META_DESC}">
-<meta property="og:url" content="${SITE_URL}/">
-<meta property="og:locale" content="ru_BY">
-<meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="Жильё на сутки — Kufar, Realt, Flatbook (Беларусь) и 101Hotels (Россия)">
-<meta name="twitter:description" content="${META_DESC}">
 <link rel="preload" as="image" href="/%D1%84%D0%BE%D1%82%D0%BE-%D1%82%D0%BE%D1%87%D0%B5%D0%BA/hero.jpg" media="(min-width:701px)">
 <link rel="preload" as="image" href="/%D1%84%D0%BE%D1%82%D0%BE-%D1%82%D0%BE%D1%87%D0%B5%D0%BA/hero-mob.jpg" media="(max-width:700px)">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8F%A0%3C/text%3E%3C/svg%3E">
@@ -7603,6 +7787,7 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
 /*ПРЕДЗАГРУЗКА*/
 const $=s=>document.querySelector(s);
 const CITIES = ${JSON.stringify(CITIES_MAP)};
+const ЗАГОЛОВКИ_ВКЛАДОК = ${JSON.stringify({ by: ВКЛАДКИ_ГЛАВНОЙ.by.title, ru: ВКЛАДКИ_ГЛАВНОЙ.ru.title, places: ВКЛАДКИ_ГЛАВНОЙ.places.title })};
 const PAGE_SIZE = 24;
 window.__page = 1;
 window.__view = 'list';
@@ -7675,6 +7860,7 @@ function setCountry(c, quiet){
     if(!window.__seoBY) window.__seoBY = описание.innerHTML;
     описание.innerHTML = pl ? SEO_PL : (ru ? SEO_RU : window.__seoBY);
   }
+  document.title = ЗАГОЛОВКИ_ВКЛАДОК[window.__mode] || document.title;
   window.__page = 1;
   if(!quiet) run();
 }
@@ -7875,7 +8061,7 @@ function renderCards(){
         const nav = ph.length>1
           ? '<button class="nav prev" onclick="slide('+idx+',-1)"></button><button class="nav next" onclick="slide('+idx+',1)"></button><div class="cnt" id="cnt'+idx+'">1/'+ph.length+'</div>'
           : '';
-        slider='<div class="slider">'+tag+'<img class="im" id="im'+idx+'" src="'+ph[0]+'" loading="lazy" alt="">'+nav+'</div>';
+        slider='<div class="slider">'+tag+'<img class="im" id="im'+idx+'" src="'+ph[0]+'" loading="lazy" alt="'+esc2(x.title||'')+'">'+nav+'</div>';
       } else {
         slider='<div class="slider">'+tag+'</div>';
       }
@@ -8649,7 +8835,7 @@ function показатьПопулярное(){
   if(!list.children.length){
     list.innerHTML = items.map(function(p, i){
       return '<div class="pop-c">'
-        + (p.pic ? ('<img src="' + esc2(p.pic) + '" loading="lazy" alt="">') : '<div class="pop-ni"></div>')
+        + (p.pic ? ('<img src="' + esc2(p.pic) + '" loading="lazy" alt="' + esc2(p.name) + '">') : '<div class="pop-ni"></div>')
         + '<a class="pop-n" href="/mesto/' + p.id + '-' + esc2(slugRu(p.name)) + '" title="' + esc2(p.name) + '">' + esc2(p.name) + '</a>'
         + '<div class="pop-a">' + esc2(p.addr || '') + '</div>'
         + '<button class="pop-b" type="button" data-i="' + i + '">+ в маршрут</button></div>';
@@ -8719,7 +8905,7 @@ async function stayNear(i){
     }
     const N = nights();
     const cards = (d.items || []).slice(0, 6).map(function(x){
-      const img = (x.photos && x.photos[0]) ? '<img src="' + x.photos[0] + '" loading="lazy" alt="">' : '';
+      const img = (x.photos && x.photos[0]) ? '<img src="' + x.photos[0] + '" loading="lazy" alt="' + esc2(x.title || '') + '">' : '';
       return '<a href="' + x.link + '" target="_blank" rel="noopener">' + img
         + '<div class="p">' + (x.от ? 'от ' : '') + x.price + ' BYN' + (N ? ('<small> · ' + (x.price*N) + ' за ' + N + ' ноч.</small>') : '') + '</div><div class="s">'
         // У Realt точной точки нет — метка стоит у центра города. Показывать
@@ -8767,7 +8953,7 @@ async function plotPlaces(){
     mk.bindTooltip(p.name, { direction:'top', offset:[0,-14] });
     mk.bindPopup('<div class="mp mp-pl">'
       + '<div class="mp-pic-box" data-fit="240" id="mpic' + i + '">'
-      + (p.pic ? ('<img class="mp-pic" src="' + esc2(p.pic) + '" alt="">') : '') + '</div>'
+      + (p.pic ? ('<img class="mp-pic" src="' + esc2(p.pic) + '" alt="' + esc2(p.name) + '">') : '') + '</div>'
       + '<div class="mp-meta">' + esc2(p.cat) + '</div>'
       + '<div class="mp-price" style="font-size:16px">' + esc2(p.name) + '</div>'
       + '<div class="mp-meta">' + esc2(p.addr) + '</div>'
@@ -9530,7 +9716,7 @@ function лентаМаршрутов(все){
         const n = (все && все.length) ? т.length : точкиВидео(м).length;
         const сФото = т.filter(function(p){ return p.pic; })[0];
         return '<a class="rec-c" href="/m/' + м.slug + '">'
-          + (сФото ? ('<img data-src="' + esc(сФото.pic) + '" alt="">') : '<div class="rec-ni"></div>')
+          + (сФото ? ('<img data-src="' + esc(сФото.pic) + '" alt="' + esc(сФото.name) + '">') : '<div class="rec-ni"></div>')
           + '<span class="rec-b"><span class="rec-t">' + esc(м.title) + '</span>'
           + (м.note ? ('<span class="rec-n">' + esc(м.note) + '</span>') : '')
           + '<span class="rec-k">' + (м.days === 2 ? '2 дня · ' : '') + n + ' ' + скл(n, 'место', 'места', 'мест') + '</span></span></a>';
@@ -9909,7 +10095,7 @@ http.createServer(async (req,res)=>{
   // в поиске ей делать нечего.
   if(u.pathname === '/reis'){
     if(u.searchParams.get('key') !== STATS_KEY){
-      res.writeHead(403, {'Content-Type':'text/plain; charset=utf-8'});
+      res.writeHead(403, {'Content-Type':'text/plain; charset=utf-8', 'X-Robots-Tag':'noindex'});
       res.end('Нужен ключ: /reis?key=…'); return;
     }
     const номер = (u.searchParams.get('n') || РЕЙС).trim().slice(0, 10);
@@ -9917,7 +10103,7 @@ http.createServer(async (req,res)=>{
     try{ свод = await рейсСводка(номер); }
     catch(e){ свод = { номер, вылет:{error:'нет связи'}, прилёт:{error:'нет связи'},
                        авиакомпания:{error:'нет связи'}, вВоздухе:false, сел:false }; }
-    res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+    res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','X-Robots-Tag':'noindex'});
     res.end(рейсPage(свод)); return;
   }
   // Выключатель источника: /istochnik?key=…&realt=off
@@ -9925,7 +10111,7 @@ http.createServer(async (req,res)=>{
   // настройкой REALT=off в Render.
   if(u.pathname === '/istochnik'){
     if(u.searchParams.get('key') !== STATS_KEY){
-      res.writeHead(403, {'Content-Type':'text/plain; charset=utf-8'});
+      res.writeHead(403, {'Content-Type':'text/plain; charset=utf-8', 'X-Robots-Tag':'noindex'});
       res.end('Нужен ключ: /istochnik?key=…'); return;
     }
     const менялось = [];
@@ -9940,7 +10126,7 @@ http.createServer(async (req,res)=>{
     // источник ещё продолжал бы показываться.
     // Только выдачи жилья: отели России от переключения площадок не зависят.
     if(менялось.length){ сброситьВыдачуЖилья(); warmUp(); }
-    res.writeHead(200, {'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'});
+    res.writeHead(200, {'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store','X-Robots-Tag':'noindex'});
     // Две доски живут не как остальные: их каталог собирается в фоне.
     // Если сбор сломается, источник исчезнет молча — поэтому пишем прямо тут,
     // сколько объявлений набралось, когда и чем кончилась последняя попытка.
@@ -9990,7 +10176,7 @@ http.createServer(async (req,res)=>{
   }
   if(u.pathname === '/stats'){
     if(u.searchParams.get('key') !== STATS_KEY){
-      res.writeHead(403, {'Content-Type':'text/plain; charset=utf-8'});
+      res.writeHead(403, {'Content-Type':'text/plain; charset=utf-8', 'X-Robots-Tag':'noindex'});
       res.end('Нужен ключ: /stats?key=…'); return;
     }
     // Популярное — с названиями из справочника; справочник не ответил —
@@ -10002,7 +10188,7 @@ http.createServer(async (req,res)=>{
       популярное = Object.keys(счёт).sort(function(a, b){ return счёт[b] - счёт[a]; }).slice(0, 30)
         .map(function(к){ return { id: к, name: 'место №' + к, count: счёт[к] }; });
     }
-    res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+    res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','X-Robots-Tag':'noindex'});
     res.end(statsPage(популярное)); return;
   }
   // страницы под поиск: /minsk, /brest, /minsk-nedorogo, /brest-usadby …
@@ -10254,7 +10440,8 @@ http.createServer(async (req,res)=>{
     // o=1 — порядок точек расставлен руками, пересортировывать нельзя
     try{ html = await marshrutPage(ids, u.searchParams.get('o') === '1'); }catch(e){ html = ''; }
     if(!html){ res.writeHead(500); res.end('Не получилось собрать маршрут'); return; }
-    res.writeHead(200, {'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'no-cache'});
+    // Самодельный маршрут по ссылке — страница на один раз, в поиске ей не место
+    res.writeHead(200, {'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'no-cache', 'X-Robots-Tag':'noindex'});
     res.end(html); return;
   }
   // Маршруты из видео: /m — все, /m/<slug> — один
@@ -10315,7 +10502,9 @@ http.createServer(async (req,res)=>{
   }
   if(u.pathname === '/sitemap.xml'){
     res.writeHead(200, {'Content-Type':'application/xml; charset=utf-8'});
-    const urls = ['<url><loc>'+SITE_URL+'/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>']
+    const urls = ['<url><loc>'+SITE_URL+'/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>',
+                  '<url><loc>'+SITE_URL+'/?country=places</loc><changefreq>weekly</changefreq><priority>0.9</priority></url>',
+                  '<url><loc>'+SITE_URL+'/?country=ru</loc><changefreq>daily</changefreq><priority>0.6</priority></url>']
       .concat(Object.keys(CITY_PAGES).map(function(k){
         return '<url><loc>'+SITE_URL+'/'+k+'</loc><changefreq>daily</changefreq><priority>0.8</priority></url>';
       }))
@@ -10369,6 +10558,9 @@ http.createServer(async (req,res)=>{
   // Вкладываем только первую страницу выдачи — этого хватает на первый экран.
   обновитьЛентуМаршрутов();
   let page = ГЛАВНАЯ.replace('<!--МАРШРУТЫ-->', () => ЛЕНТА_МАРШРУТОВ);
+  // Вкладки «Россия» и «Что посетить» — со своими заголовком, описанием и canonical
+  const вкладка = u.searchParams.get('country');
+  if(вкладка === 'ru' || вкладка === 'places') page = page.replace(ГОЛОВА_ГЛАВНОЙ.by, () => ГОЛОВА_ГЛАВНОЙ[вкладка]);
   if(u.pathname === '/' && ![...u.searchParams.keys()].length){
     try{
       const pu = new URL('/api/search?region=minsk&city=&type=flat&rooms=&guests=&max=&source=both', 'http://localhost');
