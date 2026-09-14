@@ -11,7 +11,6 @@
 // Сервер должен быть запущен.
 //   node проверки/порядок-маршрута.mjs
 //   node проверки/порядок-маршрута.mjs https://poisk-kvartir.onrender.com
-import { spawn } from 'node:child_process';
 import { запуститьChrome } from './_браузер.mjs';
 
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';

@@ -3437,8 +3437,9 @@ async function различительМеста(p, list){
 }
 
 // Название места для страницы: полное (предел не задан) или для <title>.
-async function имяМестаСМестностью(p, list, предел){
-  const различитель = await различительМеста(p, list);
+// различитель — из различительМеста(): он ходит за описаниями соседей, поэтому
+// считается один раз на страницу, а имён из него собирается два.
+function имяМестаСМестностью(p, list, предел, различитель){
   const имя = собратьИмяМеста(p, предел, различитель);
   if(!предел) return имя;
   // обрезанное совпало с чужим обрезанным — режем середину, конец оставляем
@@ -3514,7 +3515,9 @@ async function mestoPageBuild(id){
     .sort((a, b) => a.km - b.km);
   const маршрутыМеста = МАРШРУТЫ_С_МЕСТОМ[String(p.id)] || [];
 
-  const [имя, имяКоротко] = await Promise.all([имяМестаСМестностью(p, list), имяМестаСМестностью(p, list, ЗАГОЛОВОК_МАКС)]);
+  const различитель = await различительМеста(p, list);
+  const имя = имяМестаСМестностью(p, list, 0, различитель);
+  const имяКоротко = имяМестаСМестностью(p, list, ЗАГОЛОВОК_МАКС, различитель);
   // В хвосте заголовка — только то, что на странице правда есть
   const есть = [кадры.length ? 'фото' : '', текст ? 'описание' : ''].filter(Boolean);
   const title = заголовокСтраницы(имяКоротко, [
@@ -3554,7 +3557,8 @@ async function mestoPageBuild(id){
     + '<meta name="theme-color" content="#9a3412">'
     + jsonLD({ '@context':'https://schema.org', '@type':'TouristAttraction',
         name: p.name, description: текст ? (текст.length <= 300 ? текст : (текст.slice(0, 299).replace(/\s+\S*$/, '') + '…')) : undefined,
-        image: кадры.length ? снимокДляСоцсетей(кадры[0]) : undefined,
+        // та же картинка, что в og:image: только наш снимок или с kudin.by
+        image: кадры.find(годенДляПревью) ? снимокДляСоцсетей(кадры.find(годенДляПревью)) : undefined,
         address: местностьМеста(p) || undefined,
         geo: { '@type':'GeoCoordinates', latitude: p.lat, longitude: p.lng },
         url: адрес })

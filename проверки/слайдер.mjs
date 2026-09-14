@@ -1,6 +1,5 @@
 // Слайдер на странице места должен быть ленивым: при открытии в сети только
 // первый снимок, остальные подтягиваются, когда до них долистали.
-import { spawn } from 'node:child_process';
 import { запуститьChrome } from './_браузер.mjs';
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 const PORT = 9451, sleep = ms => new Promise(r => setTimeout(r, ms));

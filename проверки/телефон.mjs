@@ -12,7 +12,6 @@
 // Сервер должен быть уже запущен: npm start, а в другом окне
 //   node проверки/телефон.mjs
 //   node проверки/телефон.mjs https://poisk-kvartir.onrender.com
-import { spawn } from 'node:child_process';
 import { запуститьChrome } from './_браузер.mjs';
 
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
