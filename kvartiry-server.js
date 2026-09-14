@@ -3206,7 +3206,7 @@ function крошки(звенья){
 // заголовок после ~60 знаков, описание — после ~160, и обрезает посреди
 // слова. Поэтому всё собирается здесь, по одним правилам (их сторожит
 // проверки/seo.mjs).
-const СНИМОК_САЙТА = SITE_URL + encodeURI('/фото-точек/hero.jpg');   // снимок из шапки главной: краснокирпичный костёл с двумя башнями
+const СНИМОК_САЙТА = SITE_URL + encodeURI('/фото-точек/hero-2.jpg');   // снимок из шапки главной: краснокирпичный костёл с двумя башнями
 const ЗАГОЛОВОК_МАКС = 60, ОПИСАНИЕ_МИН = 120, ОПИСАНИЕ_МАКС = 160;
 
 // Заголовок до 60 знаков: основа и первый из хвостов, который влезает.
@@ -6632,8 +6632,8 @@ ${ГОЛОВА_ГЛАВНОЙ.by}
 <meta name="keywords" content="снять квартиру на сутки, жильё на сутки Беларусь, квартира посуточно Минск, коттедж на сутки, усадьба на выходные, аренда посуточно Брест Гомель Гродно Витебск Могилёв, отели России посуточно, kufar, realt, flatbook, 101hotels, что посмотреть в Беларуси, достопримечательности Беларуси, замки Беларуси, куда съездить на выходные, карта достопримечательностей">
 <meta name="author" content="poisk-kvartir">
 <meta name="theme-color" content="#9a3412">
-<link rel="preload" as="image" href="/%D1%84%D0%BE%D1%82%D0%BE-%D1%82%D0%BE%D1%87%D0%B5%D0%BA/hero.jpg" media="(min-width:701px)">
-<link rel="preload" as="image" href="/%D1%84%D0%BE%D1%82%D0%BE-%D1%82%D0%BE%D1%87%D0%B5%D0%BA/hero-mob.jpg" media="(max-width:700px)">
+<link rel="preload" as="image" href="/%D1%84%D0%BE%D1%82%D0%BE-%D1%82%D0%BE%D1%87%D0%B5%D0%BA/hero-2.jpg" media="(min-width:701px)">
+<link rel="preload" as="image" href="/%D1%84%D0%BE%D1%82%D0%BE-%D1%82%D0%BE%D1%87%D0%B5%D0%BA/hero-mob-2.jpg" media="(max-width:700px)">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8F%A0%3C/text%3E%3C/svg%3E">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icon-192.png">
@@ -6777,14 +6777,18 @@ h1 .accent{ color:var(--accent); }
    если снимок не загрузится, полоса всё равно тёмная и текст на ней читается.
    На снимке две башни костёла правее середины кадра; снимок 1500×700 — как сама
    полоса на широком экране (1200×560), поэтому по вертикали он не режется,
-   а на более узких экранах обрезаются края — сдвиг 62% держит башни в кадре. */
+   а на более узких экранах обрезаются края — сдвиг 62% держит башни в кадре.
+   Новый снимок — всегда новое имя файла (hero-2, hero-3…): /фото-точек/ отдаётся
+   с кэшем на неделю без проверки свежести, и под старым именем вернувшийся
+   посетитель неделю видел бы прежний снимок с новым сдвигом. Имя меняется
+   в трёх местах: здесь, в preload в <head> и в СНИМОК_САЙТА. */
 .wrap{position:relative}
 .wrap::before{
   content:"";position:absolute;left:0;right:0;top:0;z-index:-1;
   height:clamp(430px,52vw,560px);
   background-color:#2a201a;
   background-image:linear-gradient(180deg,rgba(28,22,18,.66) 0,rgba(28,22,18,.72) 45%,var(--bg-grad-1) 97%),
-                   url("/фото-точек/hero.jpg");
+                   url("/фото-точек/hero-2.jpg");
   background-size:auto, cover;
   background-position:center, 62% 38%;
   background-repeat:no-repeat, no-repeat;
@@ -6796,7 +6800,7 @@ h1 .accent{ color:var(--accent); }
   .wrap::before{
     height:clamp(380px,96vw,460px);
     background-image:linear-gradient(180deg,rgba(28,22,18,.62) 0,rgba(28,22,18,.72) 50%,var(--bg-grad-1) 97%),
-                     url("/фото-точек/hero-mob.jpg");
+                     url("/фото-точек/hero-mob-2.jpg");
     background-position:center, center 15%;
   }
 }

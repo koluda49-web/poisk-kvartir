@@ -4,7 +4,10 @@
 // про жильё. Проверяем, что в h1 есть «маршруты по Беларуси», цветом выделено
 // по-прежнему «без лишних вкладок», переключение вкладок не возвращает старый
 // текст, а на телефоне (375 px) заголовок не вылезает за край экрана.
-// И что фон шапки — новый снимок нужного размера, а не старый из кэша.
+// И что фон шапки — новый снимок (hero-2.jpg / hero-mob-2.jpg) нужного размера,
+// а preload в <head> указывает на те же файлы. Кэш браузера эта проверка не
+// ловит (Chrome у неё с чистым профилем): от недельного кэша /фото-точек/
+// защищает только новое имя файла при каждой замене снимка.
 //
 // Сервер должен быть запущен.
 //   node проверки/шапка.mjs
@@ -54,7 +57,8 @@ async function открыть(ширина) {
   await ждать(`document.readyState === 'complete' && !!document.querySelector('#cbBY')`);
   await sleep(800);
 }
-// Фон шапки: какой снимок стоит в ::before и какого он размера на самом деле.
+// Фон шапки: какой снимок стоит в ::before, какого он размера на самом деле
+// и что preload с подходящим media зовёт тот же файл (иначе снимок качается дважды).
 // Снимок шапки — костёл с двумя башнями (14.09): широкий 1500×700 — в пропорциях
 // самой полосы на 1200 px, узкий 900×860.
 const фон = () => js(`(async function(){
@@ -64,7 +68,10 @@ const фон = () => js(`(async function(){
   var u = s.slice(к + 4, s.indexOf(')', к)).split('"').join('');
   var i = new Image(); i.src = u;
   await new Promise(function(r){ i.onload = r; i.onerror = r; });
-  return JSON.stringify({ u: decodeURIComponent(u), w: i.naturalWidth, h: i.naturalHeight });
+  var п = [].slice.call(document.querySelectorAll('link[rel=preload][as=image]'))
+    .filter(function(l){ return matchMedia(l.media || 'all').matches; })
+    .map(function(l){ return decodeURIComponent(new URL(l.href).pathname); });
+  return JSON.stringify({ u: decodeURIComponent(u), w: i.naturalWidth, h: i.naturalHeight, preload: п });
 })()`).then(JSON.parse);
 async function снимок(ширина) {
   if (!process.env.SNIMKI) return;
@@ -86,7 +93,8 @@ check('на 1200 px h1 не шире экрана', await js(`(function(){ var e
   return e.scrollWidth <= e.clientWidth + 1 && e.getBoundingClientRect().right <= innerWidth; })()`));
 check('на 1200 px «без» не висит одно в конце строки', await безНеОдно());
 const ф1200 = await фон();
-check('на 1200 px фон шапки — hero.jpg 1500×700', /\/фото-точек\/hero\.jpg$/.test(ф1200.u || '') && ф1200.w === 1500 && ф1200.h === 700, JSON.stringify(ф1200));
+check('на 1200 px фон шапки — hero-2.jpg 1500×700', String(ф1200.u).endsWith('/фото-точек/hero-2.jpg') && ф1200.w === 1500 && ф1200.h === 700, JSON.stringify(ф1200));
+check('на 1200 px preload — тот же hero-2.jpg', ф1200.preload.length === 1 && ф1200.preload[0] === '/фото-точек/hero-2.jpg', JSON.stringify(ф1200.preload));
 await снимок(1200);
 
 for (const [кнопка, режим] of [['#cbRU', 'ru'], ['#cbPL', 'places'], ['#cbBY', 'by']]) {
@@ -113,7 +121,8 @@ check('на 375 px слова не рвутся посередине', await js(
   return ok; })()`));
 check('на 375 px «без» не висит одно в конце строки', await безНеОдно());
 const ф375 = await фон();
-check('на 375 px фон шапки — hero-mob.jpg 900×860', /\/фото-точек\/hero-mob\.jpg$/.test(ф375.u || '') && ф375.w === 900 && ф375.h === 860, JSON.stringify(ф375));
+check('на 375 px фон шапки — hero-mob-2.jpg 900×860', String(ф375.u).endsWith('/фото-точек/hero-mob-2.jpg') && ф375.w === 900 && ф375.h === 860, JSON.stringify(ф375));
+check('на 375 px preload — тот же hero-mob-2.jpg', ф375.preload.length === 1 && ф375.preload[0] === '/фото-точек/hero-mob-2.jpg', JSON.stringify(ф375.preload));
 await снимок(375);
 
 check('в консоли нет ошибок', ошибки.length === 0, ошибки.slice(0, 2).join(' | '));
