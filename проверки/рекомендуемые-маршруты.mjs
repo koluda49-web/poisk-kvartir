@@ -169,7 +169,7 @@ check('/api/places: служебного alt в ответе нет', (поис�
 }
 
 // ── в браузере ───────────────────────────────────────────────────────────
-const { chrome, закрыть } = запуститьChrome(PORT, 'rec', { ловитьОшибки: false });
+const { закрыть } = запуститьChrome(PORT, 'rec', { ловитьОшибки: false });
 // что бы ни случилось — свой Chrome не оставляем висеть
 const гасить = async (e) => { console.error(e); await закрыть(); process.exit(1); };
 process.on('unhandledRejection', гасить);

@@ -183,7 +183,7 @@ const поСправочнику = (места, a, b, skip) => места.filter
 }
 
 // ── страница ─────────────────────────────────────────────────────────────
-const { chrome, закрыть } = запуститьChrome(PORT, 'near');
+const { закрыть } = запуститьChrome(PORT, 'near');
 let ws, id = 0; const pend = new Map(); const ошибки = [];
 const send = (m, p = {}) => new Promise((res, rej) => { const n = ++id; pend.set(n, { res, rej }); ws.send(JSON.stringify({ id: n, method: m, params: p })); });
 let url;

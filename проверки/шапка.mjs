@@ -18,7 +18,7 @@ const PORT = 9609, sleep = ms => new Promise(r => setTimeout(r, ms));
 let failed = 0, passed = 0;
 const check = (n, ok, d) => ok ? (passed++, console.log('  OK   ' + n)) : (failed++, console.log('  ПАДАЕТ ' + n + (d ? '  — ' + d : '')));
 
-const { chrome, закрыть } = запуститьChrome(PORT, 'hero', { ловитьОшибки: false });
+const { закрыть } = запуститьChrome(PORT, 'hero', { ловитьОшибки: false });
 // Упала проверка — Chrome не должен остаться висеть
 process.on('unhandledRejection', async e => { console.log('Ошибка: ' + (e && e.message || e)); await закрыть(); process.exit(1); });
 

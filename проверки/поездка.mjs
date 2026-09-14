@@ -12,7 +12,6 @@
 //   npm run проверка-поездки
 //   npm run проверка-поездки https://poisk-kvartir.onrender.com
 
-import { spawn } from 'node:child_process';
 import { запуститьChrome } from './_браузер.mjs';
 
 // Порт отладки и профиль — свои на каждый прогон: иначе вторая проверка

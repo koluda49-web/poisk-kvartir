@@ -14,15 +14,23 @@
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve, relative, basename, isAbsolute } from 'node:path';
 
 export const CHROME = process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const ВРЕМЕННЫЕ = process.env.TEMP || tmpdir();
+const ВРЕМЕННЫЕ = tmpdir();   // на Windows это и есть %TEMP%
+
+// Удаляем рекурсивно — поэтому только то, что точно наше: папка прямо
+// или глубже во временной папке системы. Ошибка в имени или пустая
+// переменная окружения не должны превратиться в удаление чего-то большего.
+function внутриВременной(папка) {
+  const отн = relative(resolve(ВРЕМЕННЫЕ), resolve(папка));
+  return !!отн && !отн.startsWith('..') && !isAbsolute(отн);
+}
 
 // Удалить папку с повторами: rmSync с maxRetries повторяет синхронно,
 // поэтому годится и в обработчике process.on('exit').
 export function удалитьПапку(папка) {
-  if (!папка) return;
+  if (!папка || !внутриВременной(папка)) { if (папка) console.log('  (не удаляю ' + папка + ': не во временной папке)'); return; }
   try { rmSync(папка, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); } catch {}
 }
 
@@ -40,7 +48,11 @@ export function временнаяПапка(префикс) {
 // сообщить, закрыть Chrome с уборкой профиля и выйти с кодом 1. Проверки со
 // своими обработчиками передают false и сами зовут закрыть().
 export function запуститьChrome(порт, имя, { доп = [], ловитьОшибки = true } = {}) {
+  // имя попадает в путь профиля, который потом удаляется: только буквы, цифры, «_» и «-»
+  if (!/^[\p{L}\p{N}_-]+$/u.test(String(имя))) throw new Error('запуститьChrome: недопустимое имя профиля «' + имя + '»');
   const profile = join(ВРЕМЕННЫЕ, 'cdp-' + имя + '-' + process.pid);
+  if (!внутриВременной(profile) || !basename(profile).startsWith('cdp-')) throw new Error('запуститьChrome: профиль вне временной папки: ' + profile);
+  const удалитьПрофиль = () => { if (basename(profile).startsWith('cdp-')) удалитьПапку(profile); };
   const chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${порт}`, '--disable-gpu',
     '--hide-scrollbars', '--no-first-run', '--no-default-browser-check', ...доп,
     '--user-data-dir=' + profile, 'about:blank'], { stdio: 'ignore' });
@@ -53,13 +65,13 @@ export function запуститьChrome(порт, имя, { доп = [], лов
   const закрыть = () => закрытие || (закрытие = (async () => {
     try { if (chrome.exitCode === null) chrome.kill(); } catch {}
     await Promise.race([вышел, new Promise(r => setTimeout(r, 5000))]);
-    удалитьПапку(profile);
+    удалитьПрофиль();
   })());
   // Страховка на выход через process.exit без закрыть(): синхронно гасим
   // и удаляем с повторами (дождаться выхода процесса здесь уже нельзя).
   process.on('exit', () => {
     try { if (chrome.exitCode === null) chrome.kill(); } catch {}
-    удалитьПапку(profile);
+    удалитьПрофиль();
   });
   if (ловитьОшибки) {
     const упали = async e => {

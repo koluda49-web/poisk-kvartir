@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 const КОРЕНЬ = join(dirname(fileURLToPath(import.meta.url)), '..');
-const ВРЕМЕННЫЕ = process.env.TEMP || tmpdir();
+const ВРЕМЕННЫЕ = tmpdir();   // та же папка, что у _браузер.mjs
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 let failed = 0, passed = 0;
@@ -43,7 +43,7 @@ async function прогнать(сайт) {
 
 console.log('\n=== проверка прошла: профиль удалён ===');
 const удачно = await прогнать(SITE);
-check('слайдер.mjs отработал (код ' + удачно.код + ')', удачно.код === 0 || удачно.код === 1, удачно.вывод.slice(-300));
+check('слайдер.mjs прошёл (код 0)', удачно.код === 0, 'код ' + удачно.код + ': ' + удачно.вывод.slice(-300));
 check('пока шла проверка, профиль ' + удачно.профиль + ' существовал', удачно.был);
 check('после проверки профиля нет', !удачно.остался);
 

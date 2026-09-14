@@ -28,7 +28,7 @@ const молчун = http.createServer((req, res) => { висящие.push(res);
 await new Promise(r => молчун.listen(0, '127.0.0.1', r));
 const МОЛЧУН = 'http://127.0.0.1:' + молчун.address().port + '/{z}/{x}/{y}.png';
 
-const { chrome, закрыть } = запуститьChrome(PORT, 'share');
+const { закрыть } = запуститьChrome(PORT, 'share');
 let ws, id = 0; const pend = new Map(); const ошибки = [];
 const send = (m, p = {}) => new Promise((res, rej) => { const n = ++id; pend.set(n, { res, rej }); ws.send(JSON.stringify({ id: n, method: m, params: p })); });
 let url;

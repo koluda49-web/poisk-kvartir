@@ -143,7 +143,7 @@ check('все подборки в sitemap.xml', ПОДБОРКИ.every(п => к�
 }
 
 // ── в браузере ───────────────────────────────────────────────────────────
-const { chrome, закрыть } = запуститьChrome(PORT, 'podborki', { ловитьОшибки: false });
+const { закрыть } = запуститьChrome(PORT, 'podborki', { ловитьОшибки: false });
 // упала проверка — Chrome за собой не оставляем
 process.on('unhandledRejection', async e => { console.log('ОШИБКА ПРОВЕРКИ: ' + (e && e.message || e)); await закрыть(); process.exit(1); });
 let ws, id = 0; const pend = new Map(); const ошибки = [];

@@ -13,7 +13,7 @@ import { запуститьChrome } from './_браузер.mjs';
 
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 const PORT = 9561, sleep = ms => new Promise(r => setTimeout(r, ms));
-const { chrome, закрыть } = запуститьChrome(PORT, 'rtm');
+const { закрыть } = запуститьChrome(PORT, 'rtm');
 let ws, id = 0; const pend = new Map(); const ошибки = [];
 const send = (m, p = {}) => new Promise((res, rej) => { const n = ++id; pend.set(n, { res, rej }); ws.send(JSON.stringify({ id: n, method: m, params: p })); });
 let url;

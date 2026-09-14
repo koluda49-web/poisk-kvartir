@@ -76,7 +76,7 @@ check('в sitemap.xml есть /m', карта.includes('<loc>https://poisk-kvar
 check('в sitemap.xml есть /m/lida-voronovo', карта.includes('<loc>https://poisk-kvartir.onrender.com/m/lida-voronovo</loc>'));
 
 // ── в браузере ───────────────────────────────────────────────────────────
-const { chrome, закрыть } = запуститьChrome(PORT, 'video');
+const { закрыть } = запуститьChrome(PORT, 'video');
 let ws, id = 0; const pend = new Map(); const ошибки = [];
 const send = (m, p = {}) => new Promise((res, rej) => { const n = ++id; pend.set(n, { res, rej }); ws.send(JSON.stringify({ id: n, method: m, params: p })); });
 let url;
