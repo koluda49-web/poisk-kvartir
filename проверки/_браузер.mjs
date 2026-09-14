@@ -24,10 +24,12 @@
 //    Главный Chrome гасим только chrome.kill() и только пока он жив
 //    (exitCode и signalCode — null): тогда Node держит открытый дескриптор
 //    процесса, и номер занят именно им;
-//  - дочерние гасим в одном конвейере PowerShell: выборка по точному
-//    совпадению --user-data-dir и Terminate на тех же объектах CIM, без
-//    промежутка «нашли номер — потом убили»; без /T — каждый наш процесс
-//    сам несёт наш путь;
+//  - дочерние гасим по одному через открытый дескриптор процесса: сначала
+//    дескриптор (номер больше не может достаться другому), затем сверка,
+//    что это тот самый процесс из выборки (время запуска и точный
+//    --user-data-dir в командной строке), и только потом Kill() через этот
+//    дескриптор — см. командаДобивания. Без дерева: каждый наш процесс сам
+//    несёт наш путь;
 //  - совпадение пути — с границей после него: cdp-x-1 не совпадает с cdp-x-12.
 import { spawn, execFile, execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync } from 'node:fs';
@@ -88,18 +90,49 @@ export async function удалитьПапкуЖдя(папка, { ждать = 
 
 // Конвейер PowerShell: процессы с именем имяПроцесса и ровно этим
 // --user-data-dir в командной строке (путь экранирован, после него — кавычка,
-// пробел или конец строки) → Terminate на тех же объектах. Печатает номера
-// погашенных — для журнала и проверки. Двойных кавычек в аргументе нет:
-// их пришлось бы экранировать для командной строки Windows.
+// пробел или конец строки). Каждый гасится только так:
+//  1. открываем настоящий дескриптор процесса (Get-Process по номеру +
+//     .Handle). Пока дескриптор открыт, Windows не отдаст этот номер другому
+//     процессу;
+//  2. сверяем, что за дескриптором тот же процесс, что попал в выборку:
+//     время запуска по дескриптору совпадает с CreationDate из снимка CIM
+//     (с точностью до 1 мс — у CIM микросекунды). Не прочиталось или другое —
+//     пропускаем: номер уже у другого процесса;
+//  3. при открытом дескрипторе заново читаем командную строку по этому номеру
+//     и снова проверяем точный путь профиля и время запуска;
+//  4. только тогда Kill() через этот дескриптор (один процесс, без дерева)
+//     и закрываем дескриптор.
+// Промежуток «выборка → открыли дескриптор» остаётся, но его закрывает
+// сверка времени запуска: процесс, получивший освободившийся номер, запущен
+// позже нашего. Печатает номера погашенных — для журнала и проверки.
+// Двойных кавычек в аргументе нет (их пришлось бы экранировать для
+// командной строки Windows): кавычка собирается из [char]34.
 // имяПроцесса меняется только в проверке (подставной node.exe вместо chrome.exe).
+const СКРИПТ_ДОБИВАНИЯ = String.raw`
+$p = [regex]::Escape('__ПУТЬ__'); $q = [string][char]34;
+$re = '--user-data-dir=' + $q + '?' + $p + '(' + $q + '|\s|$)';
+$same = { param($a, $b) [math]::Abs(($a.ToUniversalTime() - $b.ToUniversalTime()).TotalMilliseconds) -lt 1 };
+Get-CimInstance Win32_Process -Filter ('Name=''' + '__ИМЯ__' + '''') |
+  Where-Object { $_.CommandLine -and $_.CommandLine -match $re } |
+  ForEach-Object {
+    $c = $_; $h = $null;
+    try {
+      $h = Get-Process -Id $c.ProcessId -ErrorAction Stop;
+      $null = $h.Handle;
+      if (-not (& $same $h.StartTime $c.CreationDate)) { return };
+      $c2 = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $c.ProcessId);
+      if (-not $c2 -or -not $c2.CommandLine -or -not ($c2.CommandLine -match $re)) { return };
+      if (-not (& $same $h.StartTime $c2.CreationDate)) { return };
+      $h.Kill();
+      $c.ProcessId;
+    } catch { } finally { if ($h) { $h.Dispose() } }
+  }
+`;
 export function командаДобивания(профиль, имяПроцесса = 'chrome.exe') {
-  const в1 = s => String(s).replace(/'/g, "''");
   if (!/^[\w.-]+$/.test(имяПроцесса)) throw new Error('командаДобивания: недопустимое имя процесса ' + имяПроцесса);
-  return ['-NoProfile', '-NonInteractive', '-Command',
-    "$p = [regex]::Escape('" + в1(профиль) + "'); $q = [string][char]34; "
-    + "Get-CimInstance Win32_Process -Filter ('Name=''' + '" + имяПроцесса + "' + '''') "
-    + "| Where-Object { $_.CommandLine -and $_.CommandLine -match ('--user-data-dir=' + $q + '?' + $p + '(' + $q + '|\\s|$)') } "
-    + "| ForEach-Object { $_.ProcessId; Invoke-CimMethod -InputObject $_ -MethodName Terminate | Out-Null }"];
+  const скрипт = СКРИПТ_ДОБИВАНИЯ.replace('__ПУТЬ__', () => String(профиль).replace(/'/g, "''"))
+    .replace('__ИМЯ__', () => имяПроцесса).replace(/\r?\n\s*/g, ' ');
+  return ['-NoProfile', '-NonInteractive', '-Command', скрипт];
 }
 const номера = вывод => String(вывод || '').split(/\s+/).map(Number).filter(n => n > 0);
 export function добитьСинхронно(профиль, имяПроцесса) {
