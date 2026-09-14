@@ -9,16 +9,26 @@
 // ошибка.
 //
 // Почему это непросто. Chrome — не один процесс: главный запускает рендереры,
-// GPU и служебные, и они держат файлы профиля. chrome.kill() гасил только
-// главный, остальные доживали своё, а rmSync на занятом файле на этой машине
-// бросает EPERM сразу, не выполняя своих maxRetries. Ошибка глоталась, и папка
-// оставалась. Теперь: гасим дерево своего процесса (taskkill /PID … /T — по
-// номеру, не по имени), добиваем по номеру всё, у кого в командной строке
-// именно наш --user-data-dir, и удаляем в цикле с настоящими паузами, пока
-// папка не исчезнет. Не вышло — печатаем «профиль не удалён: <путь>».
+// GPU и служебные (13–15 штук), и они держат файлы профиля. chrome.kill()
+// гасит только главный, а rmSync на занятом файле на этой машине бросает
+// EPERM сразу, не выполняя своих maxRetries. Поэтому: гасим главный, затем
+// все процессы chrome.exe, у которых в командной строке ровно наш
+// --user-data-dir (он есть у каждого дочернего), и удаляем папку в цикле
+// с настоящими паузами. Не вышло — печатаем «профиль не удалён: <путь>».
 //
-// Убиваем только свои процессы — по номеру, никогда по имени: у владельца
-// открыт свой Chrome, и его профиль в командной строке другой.
+// Безопасность — у владельца открыт свой Chrome, и он постоянно запускает
+// процессы. Поэтому:
+//  - по номеру процесса не убиваем НИКОГДА. Номер умершего процесса Windows
+//    быстро отдаёт другому, и «taskkill /PID <номер нашего Chrome> /T»
+//    через несколько секунд после его смерти мог прийтись в Chrome владельца.
+//    Главный Chrome гасим только chrome.kill() и только пока он жив
+//    (exitCode и signalCode — null): тогда Node держит открытый дескриптор
+//    процесса, и номер занят именно им;
+//  - дочерние гасим в одном конвейере PowerShell: выборка по точному
+//    совпадению --user-data-dir и Terminate на тех же объектах CIM, без
+//    промежутка «нашли номер — потом убили»; без /T — каждый наш процесс
+//    сам несёт наш путь;
+//  - совпадение пути — с границей после него: cdp-x-1 не совпадает с cdp-x-12.
 import { spawn, execFile, execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -76,28 +86,63 @@ export async function удалитьПапкуЖдя(папка, { ждать = 
   return false;
 }
 
-// Номера процессов chrome.exe, у которых в командной строке наш профиль.
-// Имя процесса здесь только для выборки — гасим потом по номеру и только те,
-// что запущены с нашим уникальным --user-data-dir (в нём pid проверки).
-const запросПроцессов = профиль => ['-NoProfile', '-NonInteractive', '-Command',
-  "$p = [regex]::Escape('" + профиль.replace(/'/g, "''") + "'); "
-  + "$q = [string][char]34; Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'chrome.exe' -and $_.CommandLine -match ('--user-data-dir=' + $q + '?' + $p + '(' + $q + '|\\s|$)') } | ForEach-Object { $_.ProcessId }"];
+// Конвейер PowerShell: процессы с именем имяПроцесса и ровно этим
+// --user-data-dir в командной строке (путь экранирован, после него — кавычка,
+// пробел или конец строки) → Terminate на тех же объектах. Печатает номера
+// погашенных — для журнала и проверки. Двойных кавычек в аргументе нет:
+// их пришлось бы экранировать для командной строки Windows.
+// имяПроцесса меняется только в проверке (подставной node.exe вместо chrome.exe).
+export function командаДобивания(профиль, имяПроцесса = 'chrome.exe') {
+  const в1 = s => String(s).replace(/'/g, "''");
+  if (!/^[\w.-]+$/.test(имяПроцесса)) throw new Error('командаДобивания: недопустимое имя процесса ' + имяПроцесса);
+  return ['-NoProfile', '-NonInteractive', '-Command',
+    "$p = [regex]::Escape('" + в1(профиль) + "'); $q = [string][char]34; "
+    + "Get-CimInstance Win32_Process -Filter ('Name=''' + '" + имяПроцесса + "' + '''') "
+    + "| Where-Object { $_.CommandLine -and $_.CommandLine -match ('--user-data-dir=' + $q + '?' + $p + '(' + $q + '|\\s|$)') } "
+    + "| ForEach-Object { $_.ProcessId; Invoke-CimMethod -InputObject $_ -MethodName Terminate | Out-Null }"];
+}
 const номера = вывод => String(вывод || '').split(/\s+/).map(Number).filter(n => n > 0);
-function погаситьПоНомеру(pid, sync) {
-  const арг = ['/PID', String(pid), '/T', '/F'];
-  if (sync) { try { execFileSync('taskkill', арг, { stdio: 'ignore', timeout: 5000 }); } catch {} return Promise.resolve(); }
-  return new Promise(r => execFile('taskkill', арг, { timeout: 5000 }, () => r()));
+export function добитьСинхронно(профиль, имяПроцесса) {
+  if (process.platform !== 'win32') return [];
+  try {
+    return номера(execFileSync('powershell', командаДобивания(профиль, имяПроцесса),
+      { encoding: 'utf8', timeout: 15000, stdio: ['ignore', 'pipe', 'ignore'] }));
+  } catch { return []; }
 }
-function добитьСинхронно(профиль) {
-  if (process.platform !== 'win32') return;
-  let вывод = '';
-  try { вывод = execFileSync('powershell', запросПроцессов(профиль), { encoding: 'utf8', timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'] }); } catch {}
-  номера(вывод).forEach(pid => погаситьПоНомеру(pid, true));
+export async function добить(профиль, имяПроцесса) {
+  if (process.platform !== 'win32') return [];
+  return new Promise(r => execFile('powershell', командаДобивания(профиль, имяПроцесса),
+    { encoding: 'utf8', timeout: 15000 }, (e, out) => r(номера(out))));
 }
-async function добить(профиль) {
-  if (process.platform !== 'win32') return;
-  const вывод = await new Promise(r => execFile('powershell', запросПроцессов(профиль), { encoding: 'utf8', timeout: 8000 }, (e, out) => r(out)));
-  await Promise.all(номера(вывод).map(pid => погаситьПоНомеру(pid, false)));
+
+// Гасим главный процесс только пока он жив и Node держит его дескриптор.
+// Умер сам — его номер уже может принадлежать чужому процессу, не трогаем.
+export function живой(процесс) {
+  return !!процесс && процесс.exitCode === null && процесс.signalCode === null;
+}
+function погаситьГлавный(процесс) {
+  if (!живой(процесс)) return false;
+  try { процесс.kill(); } catch {}
+  return true;
+}
+
+// Уборка после Chrome — отдельно от запуска, чтобы её можно было проверить
+// на подставном «chrome» (профили-chrome.mjs). chrome — объект ChildProcess
+// (или похожий: pid, exitCode, signalCode, kill, once).
+export async function закрытьChrome(chrome, profile, { имяПроцесса } = {}) {
+  const вышел = new Promise(r => {
+    if (!живой(chrome)) return r();
+    chrome.once('exit', r); chrome.once('error', r);
+  });
+  погаситьГлавный(chrome);
+  await Promise.race([вышел, спать(5000)]);
+  await добить(profile, имяПроцесса);   // дочерние с нашим профилем
+  return удалитьПапкуЖдя(profile, { ждать: 15000, послеНеудачи: () => добить(profile, имяПроцесса), что: 'профиль не удалён' });
+}
+export function закрытьChromeСинхронно(chrome, profile, { имяПроцесса } = {}) {
+  погаситьГлавный(chrome);
+  добитьСинхронно(profile, имяПроцесса);
+  return удалитьПапку(profile, { ждать: 6000, послеНеудачи: () => добитьСинхронно(profile, имяПроцесса), что: 'профиль не удалён' });
 }
 
 // Временная папка (DATA_DIR, STATS_FILE второго экземпляра сервера), которая
@@ -123,29 +168,14 @@ export function запуститьChrome(порт, имя, { доп = [], лов
     // без отчётов о падениях: crashpad — ещё один процесс, который держит профиль
     '--disable-breakpad', '--disable-crash-reporter', '--no-crash-upload', ...доп,
     '--user-data-dir=' + profile, 'about:blank'], { stdio: 'ignore' });
-  const вышел = new Promise(r => {
-    if (chrome.exitCode !== null) return r();
-    chrome.once('exit', r); chrome.once('error', r);
-  });
-  let закрытие = null;
+  let закрытие = null, закрыто = false;
   // Можно звать сколько угодно раз — закроет и уберёт один раз.
-  let закрыто = false;
-  const закрыть = () => закрытие || (закрытие = (async () => {
-    // дерево своего процесса — главный Chrome и все его дочерние, по номеру
-    if (chrome.pid) await погаситьПоНомеру(chrome.pid, false);
-    try { if (chrome.exitCode === null) chrome.kill(); } catch {}
-    await Promise.race([вышел, спать(5000)]);
-    await добить(profile);   // осиротевшие дочерние с нашим профилем
-    await удалитьПапкуЖдя(profile, { ждать: 15000, послеНеудачи: () => добить(profile), что: 'профиль не удалён' });
-    закрыто = true;
-  })());
+  const закрыть = () => закрытие || (закрытие = закрытьChrome(chrome, profile).then(() => { закрыто = true; }));
   // Страховка на выход через process.exit без закрыть() (или до его конца):
-  // синхронно гасим дерево и удаляем с паузами — ждать обещаний здесь нельзя.
+  // то же синхронно — ждать обещаний здесь нельзя.
   process.on('exit', () => {
     if (закрыто && !existsSync(profile)) return;
-    if (chrome.pid) погаситьПоНомеру(chrome.pid, true);
-    добитьСинхронно(profile);
-    удалитьПапку(profile, { ждать: 6000, послеНеудачи: () => добитьСинхронно(profile), что: 'профиль не удалён' });
+    закрытьChromeСинхронно(chrome, profile);
   });
   if (ловитьОшибки) {
     const упали = async e => {
