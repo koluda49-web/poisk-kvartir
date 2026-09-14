@@ -241,20 +241,26 @@ export function командаДобивания(профиль, имяПроц�
     .replace('__ИМЯ__', () => имяПроцесса).replace(/\r?\n\s*/g, ' ');
   return ['-NoProfile', '-NonInteractive', '-Command', скрипт];
 }
+// Сколько ждать PowerShell добивания. Было 15 с, но на этой машине под нагрузкой
+// один его запуск занимает 5–20 с: команду обрывало по таймауту, дочерние
+// chrome.exe оставались жить и держать профиль — «профиль не удалён», а в журнале
+// «держат: chrome.exe:…». Что и как гасится, от ожидания не меняется: каждый
+// процесс по-прежнему сверяется через открытый дескриптор перед Kill().
+const ЖДАТЬ_ДОБИВАНИЯ = 60000;
 const номера = вывод => String(вывод || '').split(/\s+/).map(Number).filter(n => n > 0);
 export function добитьСинхронно(профиль, имяПроцесса) {
   проверитьПрофиль(профиль, 'добитьСинхронно');
   if (process.platform !== 'win32') return [];
   try {
     return номера(execFileSync('powershell', командаДобивания(профиль, имяПроцесса),
-      { encoding: 'utf8', timeout: 15000, stdio: ['ignore', 'pipe', 'ignore'] }));
+      { encoding: 'utf8', timeout: ЖДАТЬ_ДОБИВАНИЯ, stdio: ['ignore', 'pipe', 'ignore'] }));
   } catch { return []; }
 }
 export async function добить(профиль, имяПроцесса) {
   проверитьПрофиль(профиль, 'добить');
   if (process.platform !== 'win32') return [];
   return new Promise(r => execFile('powershell', командаДобивания(профиль, имяПроцесса),
-    { encoding: 'utf8', timeout: 15000 }, (e, out) => r(номера(out))));
+    { encoding: 'utf8', timeout: ЖДАТЬ_ДОБИВАНИЯ }, (e, out) => r(номера(out))));
 }
 
 // Гасим главный процесс только пока он жив и Node держит его дескриптор.
