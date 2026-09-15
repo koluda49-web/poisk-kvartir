@@ -11,10 +11,12 @@
 // Почему это непросто. Chrome — не один процесс: главный запускает рендереры,
 // GPU и служебные (13–15 штук), и они держат файлы профиля. chrome.kill()
 // гасит только главный, а rmSync на занятом файле на этой машине бросает
-// EPERM сразу, не выполняя своих maxRetries. Поэтому: гасим главный, затем
-// все процессы chrome.exe, у которых в командной строке ровно наш
-// --user-data-dir (он есть у каждого дочернего), и удаляем папку в цикле
-// с настоящими паузами. Не вышло — печатаем «профиль не удалён: <путь>».
+// EPERM сразу, не выполняя своих maxRetries. Поэтому: сначала просим Chrome
+// закрыться самого (CDP Browser.close — он гасит своих дочерних), затем гасим
+// главный, затем все процессы chrome.exe, у которых в командной строке ровно
+// наш --user-data-dir (он есть у каждого дочернего), удаляем папку в цикле
+// с настоящими паузами и добиваем, пока процессы с профилем не кончатся.
+// Не вышло — печатаем «профиль не удалён: <путь>» и причину.
 //
 // Безопасность — у владельца открыт свой Chrome, и он постоянно запускает
 // процессы. Поэтому:
@@ -34,13 +36,20 @@
 //  - пустой, относительный или не «cdp-…» во временной папке путь профиля —
 //    ошибка до того, как что-либо запущено или погашено (проверитьПрофиль);
 //  - профили прошлых прогонов, чья проверка уже не жива, подбираются перед
-//    запуском Chrome (убратьОстатки) — только удаление папок, ничего не гасится.
+//    запуском Chrome (убратьОстатки) — только удаление папок, ничего не гасится;
+//    не узнали надёжно, какие процессы живы, — не удаляется ничего;
+//  - Browser.close шлём, только если браузер на порту — наш процесс (номер
+//    из SystemInfo.getProcessInfo совпадает с живым chrome.pid);
+//  - имена процессов — по файлам CHROME и process.execPath, не наизусть.
 import { spawn, execFile, execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, relative, basename, isAbsolute } from 'node:path';
 
 export const CHROME = process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+// Имена процессов — по настоящим файлам, а не «chrome.exe»/«node.exe» наизусть:
+// другой Chrome (CHROME=…) или node под другим именем иначе выпали бы из защиты.
+const ИМЯ_CHROME = basename(CHROME), ИМЯ_NODE = basename(process.execPath);
 const ВРЕМЕННЫЕ = tmpdir();   // на Windows это и есть %TEMP%
 
 // Удаляем рекурсивно — поэтому только то, что точно наше: папка прямо
@@ -87,16 +96,17 @@ function ктоДержит(папка) {
 }
 // Почему папка осталась — чтобы следующую утечку профилей было чем разобрать,
 // а не гадать (однажды их набралось на двадцать гигабайт).
-function почемуОсталась(папка, код) {
+function почемуОсталась(папка, код, кто) {
   let файлы;
   try { const все = readdirSync(папка, { recursive: true }); файлы = все.slice(0, 5).join(', ') + (все.length > 5 ? ' … (всего ' + все.length + ')' : ''); }
   catch (e) { файлы = '(не прочитать: ' + ((e && e.code) || e) + ')'; }
-  return '  код ' + код + '; осталось: ' + (файлы || '—') + '; держат: ' + ктоДержит(папка);
+  return '  код ' + код + '; осталось: ' + (файлы || '—') + '; держат: ' + (кто ? ктоДержит(папка) : 'не проверялось (выход)');
 }
 
 // Удалить папку синхронно, с настоящими паузами между попытками (годится
 // и в обработчике process.on('exit'), где ждать обещаний уже нельзя).
-export function удалитьПапку(папка, { ждать = 5000, послеНеудачи, что = 'папка не удалена' } = {}) {
+// Поэтому по умолчанию без поиска «кто держит»: он ждёт PowerShell до минуты.
+export function удалитьПапку(папка, { ждать = 5000, послеНеудачи, что = 'папка не удалена', кто = false } = {}) {
   if (!разрешено(папка)) return true;
   const до = Date.now() + ждать;
   let код;
@@ -107,11 +117,12 @@ export function удалитьПапку(папка, { ждать = 5000, пос
     спатьСинхронно(200);
   }
   console.log(что + ': ' + папка);
-  console.log(почемуОсталась(папка, код));
+  console.log(почемуОсталась(папка, код, кто));
   return false;
 }
 // То же без блокировки — для обычного завершения проверки.
-export async function удалитьПапкуЖдя(папка, { ждать = 15000, послеНеудачи, что = 'папка не удалена' } = {}) {
+// молча — не печатать неудачу (вызывающий попробует ещё и скажет сам).
+export async function удалитьПапкуЖдя(папка, { ждать = 15000, послеНеудачи, что = 'папка не удалена', молча = false } = {}) {
   if (!разрешено(папка)) return true;
   const до = Date.now() + ждать;
   let код;
@@ -121,8 +132,9 @@ export async function удалитьПапкуЖдя(папка, { ждать = 
     if (послеНеудачи && i % 10 === 9) await послеНеудачи();
     await спать(200);
   }
+  if (молча) return false;
   console.log(что + ': ' + папка);
-  console.log(почемуОсталась(папка, код));
+  console.log(почемуОсталась(папка, код, true));
   return false;
 }
 
@@ -137,9 +149,15 @@ export async function удалитьПапкуЖдя(папка, { ждать = 
 //    (Chrome пережил свою проверку и ещё держит профиль);
 //  - не узнали, какие процессы живы, — не трогаем ничего.
 // Процессы здесь не гасятся никогда — только читаем список и удаляем папки.
+// Ошибка внутри запроса (Get-CimInstance не ответил) без Stop не прерывает
+// скрипт: массивы остаются пустыми, JSON печатается, код выхода 0 — и живой
+// профиль соседней проверки выглядел бы брошенным. Со Stop запрос падает
+// целиком; а если список node всё же пришёл без нас самих — он неполный,
+// и тогда тоже ничего не удаляем. Имена процессов — через окружение.
 const СКРИПТ_ЖИВЫХ = String.raw`
-$n = @(Get-CimInstance Win32_Process -Filter 'Name=''node.exe''' | ForEach-Object { $_.ProcessId });
-$c = @(Get-CimInstance Win32_Process -Filter 'Name=''chrome.exe''' | Where-Object { $_.CommandLine } | ForEach-Object { $_.CommandLine });
+$ErrorActionPreference = 'Stop';
+$n = @(Get-CimInstance Win32_Process -Filter ('Name=''' + $env:CDP_NODE + '''') | ForEach-Object { $_.ProcessId });
+$c = @(Get-CimInstance Win32_Process -Filter ('Name=''' + $env:CDP_CHROME + '''') | Where-Object { $_.CommandLine } | ForEach-Object { $_.CommandLine });
 ConvertTo-Json -Compress -InputObject @{ n = $n; c = $c }
 `.replace(/\r?\n\s*/g, ' ');
 const ОСТАТОК = /^cdp-.+-(\d+)$/;
@@ -153,7 +171,9 @@ function естьВСтроке(папка, строка) {
   }
   return false;
 }
-export function убратьОстатки() {
+// имяNode / имяChrome — имена настоящих файлов процессов; переопределяются
+// только в проверке (сломанный или пустой запрос).
+export function убратьОстатки({ имяNode = ИМЯ_NODE, имяChrome = ИМЯ_CHROME } = {}) {
   if (process.platform !== 'win32') return [];
   let имена;
   try {
@@ -164,9 +184,18 @@ export function убратьОстатки() {
   let живые;
   try {
     живые = JSON.parse(execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', СКРИПТ_ЖИВЫХ],
-      { encoding: 'utf8', timeout: ЖДАТЬ_ЧТЕНИЯ, stdio: ['ignore', 'pipe', 'ignore'] }));
-  } catch { return []; }
-  const узлы = new Set([].concat(живые.n || []).map(Number));
+      { encoding: 'utf8', timeout: ЖДАТЬ_ЧТЕНИЯ, stdio: ['ignore', 'pipe', 'ignore'],
+        env: { ...process.env, CDP_NODE: имяNode, CDP_CHROME: имяChrome } }));
+  } catch {
+    console.log('  (не удалось узнать живые процессы — профили прошлых прогонов не трогаю)');
+    return [];
+  }
+  const узлы = new Set([].concat((живые && живые.n) || []).map(Number));
+  // Мы сами — точно живой node: нет нас в списке — снимок неполный
+  if (!узлы.has(process.pid)) {
+    console.log('  (список процессов неполный — профили прошлых прогонов не трогаю)');
+    return [];
+  }
   const строки = [].concat(живые.c || []).filter(Boolean);
   const убраны = [];
   for (const имя of имена) {
@@ -231,7 +260,7 @@ function проверитьПрофиль(профиль, кто) {
   if (!п.trim() || !isAbsolute(п) || !внутриВременной(п) || !basename(п).startsWith('cdp-'))
     throw new Error(кто + ': недопустимый путь профиля «' + профиль + '» (нужен абсолютный путь cdp-… во временной папке)');
 }
-export function командаДобивания(профиль, имяПроцесса = 'chrome.exe') {
+export function командаДобивания(профиль, имяПроцесса = ИМЯ_CHROME) {
   проверитьПрофиль(профиль, 'командаДобивания');
   if (!/^[\w.-]+$/.test(имяПроцесса)) throw new Error('командаДобивания: недопустимое имя процесса ' + имяПроцесса);
   // В строке PowerShell в одинарных кавычках одинарной кавычкой считаются и
@@ -263,6 +292,69 @@ export async function добить(профиль, имяПроцесса) {
     { encoding: 'utf8', timeout: ЖДАТЬ_ДОБИВАНИЯ }, (e, out) => r(номера(out))));
 }
 
+// Только чтение: номера процессов имяПроцесса с ровно этим --user-data-dir
+// (то же совпадение, что у добивания). null — узнать не удалось.
+const СКРИПТ_СПИСКА = String.raw`
+$ErrorActionPreference = 'Stop';
+$p = [regex]::Escape($env:CDP_PAPKA); $q = [string][char]34;
+$re = '--user-data-dir=' + $q + '?' + $p + '(' + $q + '|\s|$)';
+Get-CimInstance Win32_Process -Filter ('Name=''' + $env:CDP_IMYA + '''') |
+  Where-Object { $_.CommandLine -and $_.CommandLine -match $re } |
+  ForEach-Object { $_.ProcessId }
+`.replace(/\r?\n\s*/g, ' ');
+export async function процессыСПрофилем(профиль, имяПроцесса = ИМЯ_CHROME) {
+  проверитьПрофиль(профиль, 'процессыСПрофилем');
+  if (process.platform !== 'win32') return [];
+  return new Promise(r => execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', СКРИПТ_СПИСКА],
+    { encoding: 'utf8', timeout: ЖДАТЬ_ЧТЕНИЯ, env: { ...process.env, CDP_PAPKA: профиль, CDP_IMYA: имяПроцесса } },
+    (e, out) => r(e ? null : номера(out))));
+}
+
+// Мягкое закрытие: CDP Browser.close через порт отладки — Chrome сам гасит
+// рендереры, GPU и служебные процессы и дописывает профиль. Убийство главного
+// оставляло дочерних сиротами, и кто-то из них переживал добивание.
+// Команду шлём, только если браузер на этом порту — именно наш процесс:
+// SystemInfo.getProcessInfo называет номер процесса браузера, и он должен
+// совпасть с chrome.pid, пока наш процесс жив (номер занят нашим дескриптором).
+// Иначе порт мог бы оказаться у чужого браузера — его не трогаем.
+async function закрытьМягко(chrome, порт) {
+  if (!порт || !живой(chrome) || typeof WebSocket !== 'function') return false;
+  try {
+    const в = await (await fetch('http://127.0.0.1:' + порт + '/json/version', { signal: AbortSignal.timeout(3000) })).json();
+    if (!в || !в.webSocketDebuggerUrl) return false;
+    return await new Promise(готово => {
+      const ws = new WebSocket(в.webSocketDebuggerUrl);
+      const конец = итог => { clearTimeout(таймер); try { ws.close(); } catch {} готово(итог); };
+      const таймер = setTimeout(() => конец(false), 5000);
+      ws.addEventListener('open', () => ws.send(JSON.stringify({ id: 1, method: 'SystemInfo.getProcessInfo' })));
+      ws.addEventListener('message', e => {
+        let m; try { m = JSON.parse(e.data); } catch { return; }
+        if (m.id === 1) {
+          const б = ((m.result && m.result.processInfo) || []).find(x => x.type === 'browser');
+          if (!б || б.id !== chrome.pid || !живой(chrome)) return конец(false);
+          ws.send(JSON.stringify({ id: 2, method: 'Browser.close' }));
+        } else if (m.id === 2) конец(true);
+      });
+      ws.addEventListener('error', () => конец(false));
+      ws.addEventListener('close', () => конец(false));
+    });
+  } catch { return false; }
+}
+
+// После уборки папки: пока в системе есть имяПроцесса с нашим профилем —
+// добиваем (тем же сверенным способом) и смотрим снова. Не дольше ждать мс.
+// Возвращает оставшиеся номера (пусто — никого).
+async function дождатьсяБезПроцессов(профиль, имяПроцесса, ждать = 60000) {
+  const до = Date.now() + ждать;
+  for (;;) {
+    const есть = await процессыСПрофилем(профиль, имяПроцесса);
+    if (есть && !есть.length) return [];
+    if (Date.now() >= до) return есть || ['?'];
+    await добить(профиль, имяПроцесса);
+    await спать(500);
+  }
+}
+
 // Гасим главный процесс только пока он жив и Node держит его дескриптор.
 // Умер сам — его номер уже может принадлежать чужому процессу, не трогаем.
 export function живой(процесс) {
@@ -277,17 +369,29 @@ function погаситьГлавный(процесс) {
 // Уборка после Chrome — отдельно от запуска, чтобы её можно было проверить
 // на подставном «chrome» (профили-chrome.mjs). chrome — объект ChildProcess
 // (или похожий: pid, exitCode, signalCode, kill, once).
-export async function закрытьChrome(chrome, profile, { имяПроцесса } = {}) {
+// порт — порт отладки: если задан, сначала мягкое закрытие (Browser.close).
+// Порядок: мягко → убить главный (если ещё жив) → добить дочерних → удалить
+// папку → пока остаются процессы с профилем, добивать и проверять (до 60 с) →
+// если папка ещё была занята, удалить её снова. «профиль не удалён» печатается
+// только по окончательному итогу.
+export async function закрытьChrome(chrome, profile, { имяПроцесса, порт } = {}) {
   проверитьПрофиль(profile, 'закрытьChrome');   // до того, как что-то погашено
   const вышел = new Promise(r => {
     if (!живой(chrome)) return r();
     chrome.once('exit', r); chrome.once('error', r);
   });
+  if (await закрытьМягко(chrome, порт)) await Promise.race([вышел, спать(5000)]);
   погаситьГлавный(chrome);
   await Promise.race([вышел, спать(5000)]);
   await добить(profile, имяПроцесса);   // дочерние с нашим профилем
-  return удалитьПапкуЖдя(profile, { ждать: 15000, послеНеудачи: () => добить(profile, имяПроцесса), что: 'профиль не удалён' });
+  let удалена = await удалитьПапкуЖдя(profile, { ждать: 15000, послеНеудачи: () => добить(profile, имяПроцесса), молча: true });
+  const остались = await дождатьсяБезПроцессов(profile, имяПроцесса, 60000);
+  if (!удалена) удалена = await удалитьПапкуЖдя(profile, { ждать: 15000, послеНеудачи: () => добить(profile, имяПроцесса), что: 'профиль не удалён' });
+  if (остались.length) console.log('остались процессы с профилем ' + profile + ': ' + остались.join(', '));
+  return удалена && !остались.length;
 }
+// Синхронно — для обработчика exit: без поиска «кто держит» (он может ждать
+// PowerShell до минуты, а выход должен быть быстрым).
 export function закрытьChromeСинхронно(chrome, profile, { имяПроцесса } = {}) {
   проверитьПрофиль(profile, 'закрытьChromeСинхронно');
   погаситьГлавный(chrome);
@@ -321,7 +425,7 @@ export function запуститьChrome(порт, имя, { доп = [], лов
     '--user-data-dir=' + profile, 'about:blank'], { stdio: 'ignore' });
   let закрытие = null, закрыто = false;
   // Можно звать сколько угодно раз — закроет и уберёт один раз.
-  const закрыть = () => закрытие || (закрытие = закрытьChrome(chrome, profile).then(() => { закрыто = true; }));
+  const закрыть = () => закрытие || (закрытие = закрытьChrome(chrome, profile, { порт }).then(() => { закрыто = true; }));
   // Страховка на выход через process.exit без закрыть() (или до его конца):
   // то же синхронно — ждать обещаний здесь нельзя.
   process.on('exit', () => {

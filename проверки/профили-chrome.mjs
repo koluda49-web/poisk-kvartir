@@ -24,18 +24,21 @@
 //  - не удалилась папка — в журнале код ошибки, оставшиеся файлы и процессы,
 //    у которых она в командной строке;
 //  - профили прошлых прогонов (cdp-…-<номер умершего процесса>) подбирает
-//    следующая проверка; папку живого node и занятую живым chrome.exe — нет.
+//    следующая проверка; папку живого node и занятую живым chrome.exe — нет;
+//    если список процессов не получен или в нём нет нас самих — не удаляет ничего;
+//  - закрытие Chrome мягкое (Browser.close, код выхода 0), но только своему
+//    браузеру: подставной «Chrome» с чужим номером браузер на порту не закрывает.
 //
 // Сервер должен быть запущен.
 //   node проверки/профили-chrome.mjs
 //   node проверки/профили-chrome.mjs http://127.0.0.1:8095
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { закрытьChrome, закрытьChromeСинхронно, добить, добитьСинхронно, командаДобивания,
-         удалитьПапку, удалитьПапкуЖдя, CHROME } from './_браузер.mjs';
+         удалитьПапку, удалитьПапкуЖдя, убратьОстатки, CHROME } from './_браузер.mjs';
 
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 const КОРЕНЬ = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -151,12 +154,14 @@ console.log('\n=== папка не удалилась: в журнале код,
   check('освободили — папка удаляется', await удалитьПапкуЖдя(папка, { ждать: 10000 }) && !existsSync(папка));
 }
 
-// Живые chrome.exe с этим профилем — только чтение, ничего не гасим
+// Живые chrome.exe с этим профилем — только чтение, ничего не гасим. Свой
+// запрос, а не процессыСПрофилем из помощника: проверка не должна верить
+// проверяемому коду на слово.
 function процессыСПрофилем(профиль) {
   try {
     return execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
       "$p = [regex]::Escape('" + профиль.replace(/'/g, "''") + "'); $q = [string][char]34; "
-      + "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'chrome.exe' -and $_.CommandLine -match ('--user-data-dir=' + $q + '?' + $p + '(' + $q + '|\\s|$)') } | ForEach-Object { $_.ProcessId }"],
+      + "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq '" + basename(CHROME) + "' -and $_.CommandLine -match ('--user-data-dir=' + $q + '?' + $p + '(' + $q + '|\\s|$)') } | ForEach-Object { $_.ProcessId }"],
       // PowerShell на этой машине бывает запускается и по 20 с — ждём с запасом
       { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   } catch { return '?'; }
@@ -177,6 +182,50 @@ async function прогнать(файл, имя, сайт) {
   return { код, был, остался: existsSync(профиль), процессы: процессыСПрофилем(профиль), профиль, вывод };
 }
 
+// Номер процесса, которого точно нет: кратный 4, как у Windows, и process.kill(n, 0) — ESRCH
+const свободныйНомер = от => { for (let n = от; ; n += 4) { try { process.kill(n, 0); } catch (e) { if (e.code === 'ESRCH') return n; } } };
+
+console.log('\n=== подбор остатков: ненадёжный список процессов — ничего не удаляем ===');
+{
+  const остаток = профильДляПроверки('cdp-test-' + свободныйНомер(4100004));
+  // Сломанный запрос: кавычка в имени ломает фильтр WQL — Get-CimInstance падает
+  check('запрос процессов упал (сломанный фильтр node) — ничего не удалено',
+        убратьОстатки({ имяNode: "x'y" }).length === 0 && existsSync(остаток));
+  check('запрос процессов упал (сломанный фильтр chrome) — ничего не удалено',
+        убратьОстатки({ имяChrome: "x'y" }).length === 0 && existsSync(остаток));
+  // Запрос «успешно» вернул пустой список node — нас самих в нём нет, значит, снимок неполный
+  check('список node без нас самих — ничего не удалено',
+        убратьОстатки({ имяNode: 'нет-такого-процесса.exe' }).length === 0 && existsSync(остаток));
+  const убраны = убратьОстатки();
+  check('контроль: обычный запрос этот остаток удаляет', убраны.includes(basename(остаток)) && !existsSync(остаток), JSON.stringify(убраны));
+  удалитьПапку(остаток);
+}
+
+console.log('\n=== мягкое закрытие: Browser.close только своему браузеру ===');
+{
+  const порт = 9675, профиль = join(ВРЕМЕННЫЕ, 'cdp-soft-' + process.pid);
+  const свой = spawn(CHROME, ['--headless=new', '--remote-debugging-port=' + порт, '--disable-gpu', '--no-first-run',
+    '--no-default-browser-check', '--disable-breakpad', '--disable-crash-reporter', '--user-data-dir=' + профиль, 'about:blank'], { stdio: 'ignore' });
+  process.on('exit', () => { if (existsSync(профиль)) закрытьChromeСинхронно(свой, профиль); });
+  let готов = false;
+  for (let i = 0; i < 60 && !готов; i++) { try { готов = !!(await (await fetch('http://127.0.0.1:' + порт + '/json/version')).json()).webSocketDebuggerUrl; } catch { await sleep(500); } }
+  check('Chrome на порту ' + порт + ' запустился', готов);
+  // Подставной «наш Chrome» с другим номером и тем же портом: браузер на порту не его —
+  // Browser.close слать нельзя. Его kill() только записывает вызов.
+  let убит = 0;
+  const подставной = { pid: process.pid, exitCode: null, signalCode: null, kill() { убит++; }, once() {} };
+  const другойПрофиль = профильДляПроверки('cdp-soft-' + process.pid + '-b');
+  await закрытьChrome(подставной, другойПрофиль, { порт });
+  let отвечает = false;
+  try { отвечает = !!(await (await fetch('http://127.0.0.1:' + порт + '/json/version')).json()).webSocketDebuggerUrl; } catch {}
+  check('чужому браузеру на порту Browser.close не послан: Chrome жив и отвечает', жив(свой) && отвечает);
+  check('подставной получил обычный kill(), папка его профиля удалена', убит === 1 && !existsSync(другойПрофиль), 'kill ' + убит);
+  // Свой браузер закрывается мягко: код выхода 0, без сигнала
+  const закрыт = await закрытьChrome(свой, профиль, { порт });
+  check('свой Chrome закрыт мягко (код выхода 0, не сигналом)', свой.exitCode === 0 && свой.signalCode === null, свой.exitCode + ' ' + свой.signalCode);
+  check('после мягкого закрытия папки нет и процессов с профилем нет', закрыт && !existsSync(профиль) && процессыСПрофилем(профиль) === '', процессыСПрофилем(профиль));
+}
+
 console.log('\n=== проверка прошла: профиль удалён ===');
 function итог(р, что) {
   check(что + ': пока шла проверка, профиль ' + р.профиль + ' существовал', р.был);
@@ -187,8 +236,6 @@ function итог(р, что) {
 // Остатки «прошлых прогонов» — их должна подобрать следующая проверка (слайдер
 // ниже) перед запуском своего Chrome: папку с номером умершего процесса удалить,
 // с номером живого node (наш process.pid) и занятую живым chrome.exe — оставить.
-// Номер, которого нет: кратный 4, как у Windows, и process.kill(n, 0) — ESRCH.
-const свободныйНомер = от => { for (let n = от; ; n += 4) { try { process.kill(n, 0); } catch (e) { if (e.code === 'ESRCH') return n; } } };
 const номерМёртвый = свободныйНомер(4000004), номерСChrome = свободныйНомер(номерМёртвый + 4);
 const остатокМёртвый = профильДляПроверки('cdp-test-' + номерМёртвый);
 const остатокЖивой = профильДляПроверки('cdp-test-' + process.pid);
