@@ -91,6 +91,8 @@ check('kvartirka.by в памяти (' + kv.length + ')', kv.length > 100);
 console.log('\n=== «Жильё рядом» у Замковой горы ===');
 const ЗАМКОВАЯ = [55.6346, 27.0459];
 const рядом = await json('/api/places/stay?lat=' + ЗАМКОВАЯ[0] + '&lng=' + ЗАМКОВАЯ[1] + '&r=30');
+// Пустой ответ прошёл бы следующую проверку даром — сначала убеждаемся, что жильё есть.
+check('«Жильё рядом» у горы не пустое (' + (рядом.items || []).length + ')', (рядом.items || []).length > 0);
 const изГлубокого = (рядом.items || []).filter(x => /глубок/i.test((x.title || '') + ' ' + (x.area || '')));
 check('в «Жильё рядом» нет объявлений из Глубокого', !изГлубокого.length,
   изГлубокого.map(x => x.src + ' «' + x.title + '» ' + x.km + ' км').join('; '));
@@ -124,7 +126,7 @@ function повторВНачале(t) {
 }
 let realtВсего = 0;
 const повторы = [];
-for (const region of ['vitebsk', 'brest', 'minsk', 'grodno', 'gomel', 'mogilev']) {
+for (const region of ['vitebsk', 'brest', 'minsk', 'minsk-obl', 'grodno', 'gomel', 'mogilev']) {
   const it = (await поиск({ region, source: 'both' })).items || [];
   realtВсего += it.filter(x => x.src === 'Realt').length;
   it.filter(x => повторВНачале(x.title)).forEach(x => повторы.push(region + ' ' + x.src + ' «' + x.title + '»'));
@@ -159,6 +161,10 @@ for (const x of ci.concat(kv)) {
 console.log('  городов из адреса сверено: ' + сверено + ' из ' + (ci.length + kv.length));
 console.log('  поправлено сервером (объяснимые случаи): ' + поправлено.length);
 поправлено.forEach(s => console.log('       ' + s));
+const перенесённые = ci.concat(kv).filter(x => /^в центр/.test(x.сверено || '') && x.lat);
+const точки = new Set(перенесённые.map(x => x.lat + ',' + x.lng));
+check('перенесённые в центр не слиплись в одну точку (' + перенесённые.length + ')',
+  точки.size === перенесённые.length, 'разных точек ' + точки.size);
 check('расхождений город/точка нет', !расхождения.length, расхождения.length + '');
 расхождения.forEach(s => console.log('       ' + s));
 
