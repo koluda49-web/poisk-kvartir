@@ -81,6 +81,29 @@ check('/mesto/910034 — 200, название и 2 своих кадра', ст
       && [...html910034.matchAll(/<img class="hero[^"]*"\s+(?:src|data-src)="([^"]+)"/g)].filter(m => m[1].startsWith('/фото-точек/910034 ')).length === 2,
       String(стр910034.status));
 
+// ── Жиличи, Понемунь (снимки с Commons с подписью) и Ишкольдь ─────────────
+console.log('\n=== 910035, 910036, 4851 ===');
+for (const [id, имя, запросы, лиц] of [
+  [910035, 'Жиличский исторический комплекс-музей (дворец Булгаков)', ['Жиличи', 'дворец Булгаков', 'Добосна'], 'CC BY 2.0'],
+  [910036, 'Усадьба Понемунь (Гродно)', ['Понемунь', 'Панямонь', 'усадьба Ляхницких'], 'CC BY-SA 3.0'],
+]) {
+  const д = await json('/api/place?id=' + id);
+  check(id + ': описание и снимок с Commons', (д.pics || []).some(u => u.startsWith('https://thumb.wikimedia.org/'))
+        && String(д.text || '').length > 100 && д.cred && д.cred.lic === лиц && String(д.more || '').startsWith('https://commons.wikimedia.org/wiki/File:'), JSON.stringify(д).slice(0, 200));
+  for (const q of запросы) {
+    const r = await json('/api/places?q=' + encodeURIComponent(q));
+    check(id + ' находится по «' + q + '»', (r.items || []).some(x => x.id === id && x.name === имя && x.alt === undefined));
+  }
+  const с = await fetch(SITE + '/mesto/' + id); const h = await с.text();
+  check('/mesto/' + id + ' — 200, название и лицензия снимка', с.status === 200 && h.includes(имя) && h.includes(лиц), String(с.status));
+}
+const r4851 = await json('/api/places?q=' + encodeURIComponent('Ишкольд'));
+check('4851 называется «Костёл Святой Троицы (Ишкольдь)» и находится по «Ишкольд»',
+      (r4851.items || []).some(x => x.id === 4851 && x.name === 'Костёл Святой Троицы (Ишкольдь)'),
+      (r4851.items || []).slice(0, 3).map(x => x.id + ' ' + x.name).join('; '));
+const д4851 = await json('/api/place?id=4851');
+check('4851: своё описание про 1449 год, снимки kudin остались', /1449/.test(д4851.text || '') && (д4851.pics || []).length > 0, (д4851.text || '').slice(0, 80));
+
 // ── страница места: слайдер ─────────────────────────────────────────────
 console.log('\n=== /mesto ===');
 const стр = await fetch(SITE + '/mesto/910030');

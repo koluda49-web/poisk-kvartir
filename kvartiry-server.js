@@ -2001,6 +2001,36 @@ const EXTRA_PLACES = [
   "pic": "",
   "text": "Барочный костёл францисканского монастыря, основанного в 1618 году; во второй половине XVIII века храм перестраивали. Главный фасад без башен, с фигурным фронтоном с волютами; внутри сохранилась роспись XVIII века. До Гольшанского замка — меньше километра.",
   "author": "фото автора маршрута"
+ },
+ {
+  "id": 910035,
+  "name": "Жиличский исторический комплекс-музей (дворец Булгаков)",
+  "lat": 53.15578,
+  "lng": 29.68922,
+  "addr": "аг. Жиличи, Кировский р-н",
+  "alt": "Жиличи, Жиличский дворец, усадьба Булгаков, Добосна, дворцово-парковый ансамбль",
+  "cat": "музей",
+  "group": "Из маршрутов",
+  "pic": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5c/%D0%96%D0%B8%D0%BB%D0%B8%D1%87%D0%B8._%D0%94%D0%B2%D0%BE%D1%80%D0%B5%D1%86_%D0%91%D1%83%D0%BB%D0%B3%D0%B0%D0%BA%D0%BE%D0%B2%2C_%D0%B2%D0%B8%D0%B4_%D1%81_%D0%B2%D0%BE%D0%B7%D0%B4%D1%83%D1%85%D0%B0_DJI_0520-HDR_%2851396543014%29.jpg/960px-%D0%96%D0%B8%D0%BB%D0%B8%D1%87%D0%B8._%D0%94%D0%B2%D0%BE%D1%80%D0%B5%D1%86_%D0%91%D1%83%D0%BB%D0%B3%D0%B0%D0%BA%D0%BE%D0%B2%2C_%D0%B2%D0%B8%D0%B4_%D1%81_%D0%B2%D0%BE%D0%B7%D0%B4%D1%83%D1%85%D0%B0_DJI_0520-HDR_%2851396543014%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+  "text": "Дворцово-парковый ансамбль Булгаков на реке Добосна — памятник позднего классицизма. Дворец построили в 1830-е годы для бобруйского уездного маршалка Игната Булгака, а в 1864–1876 годах пристроили длинное двухэтажное крыло с дворцовой церковью. Сохранились дворец, флигель, ледник и парк. После реставрации во дворце — Жиличский исторический комплекс-музей.",
+  "author": "Andrey Kukharenko",
+  "lic": "CC BY 2.0",
+  "src": "https://commons.wikimedia.org/wiki/File:%D0%96%D0%B8%D0%BB%D0%B8%D1%87%D0%B8._%D0%94%D0%B2%D0%BE%D1%80%D0%B5%D1%86_%D0%91%D1%83%D0%BB%D0%B3%D0%B0%D0%BA%D0%BE%D0%B2,_%D0%B2%D0%B8%D0%B4_%D1%81_%D0%B2%D0%BE%D0%B7%D0%B4%D1%83%D1%85%D0%B0_DJI_0520-HDR_(51396543014).jpg"
+ },
+ {
+  "id": 910036,
+  "name": "Усадьба Понемунь (Гродно)",
+  "lat": 53.65753,
+  "lng": 23.87176,
+  "addr": "г. Гродно, берег Немана",
+  "alt": "Панямонь, усадьба Ляхницких, дворцово-парковый комплекс Ляхницких, Друцкие-Любецкие",
+  "cat": "усадьба",
+  "group": "Из маршрутов",
+  "pic": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9c/%D0%93%D1%80%D0%BE%D0%B4%D0%BD%D0%BE._%D0%A3%D1%81%D0%B0%D0%B4%D1%8C%D0%B1%D0%B0_%D0%9F%D0%BE%D0%BD%D0%B5%D0%BC%D1%83%D0%BD%D1%8C_%281%29.jpg/960px-%D0%93%D1%80%D0%BE%D0%B4%D0%BD%D0%BE._%D0%A3%D1%81%D0%B0%D0%B4%D1%8C%D0%B1%D0%B0_%D0%9F%D0%BE%D0%BD%D0%B5%D0%BC%D1%83%D0%BD%D1%8C_%281%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+  "text": "Частично сохранившаяся усадьба 1770-х годов на берегу Немана — загородная резиденция короля Станислава Августа Понятовского. Дворец строили, предположительно по проекту Джузеппе де Сакко, в духе позднего барокко с китайскими мотивами (шинуазри) — редкость для этих земель. В XIX веке усадьбу перестроили; среди её хозяев были Ляхницкие, Немцевичи и князья Друцкие-Любецкие.",
+  "author": "Сергей Ярохович",
+  "lic": "CC BY-SA 3.0",
+  "src": "https://commons.wikimedia.org/wiki/File:%D0%93%D1%80%D0%BE%D0%B4%D0%BD%D0%BE._%D0%A3%D1%81%D0%B0%D0%B4%D1%8C%D0%B1%D0%B0_%D0%9F%D0%BE%D0%BD%D0%B5%D0%BC%D1%83%D0%BD%D1%8C_(1).jpg"
  }
 ];
 
@@ -2014,6 +2044,14 @@ const ПРАВКИ_ТОЧЕК = {
         + 'Толстые стены, четыре круглые башни по углам и бойницы: церковь строили так, '
         + 'чтобы в ней можно было пересидеть осаду. Её ещё называют Маломожейковской — '
         + 'по соседнему Малому Можейкову.'
+  },
+  4851: {
+    name: 'Костёл Святой Троицы (Ишкольдь)',
+    text: 'Готический храм XV века — самый старый из неперестроенных костёлов на территории '
+        + 'Беларуси. Его заложил в 1449 году Николай Немирович, освятили между 1468 и 1471 годами. '
+        + 'Во второй половине XVI века здесь был кальвинистский собор, после 1868 года — православная '
+        + 'церковь, в 1969-м храм закрыли; после реставрации 1980-х он снова католический. '
+        + 'До Барановичей — 36 км.'
   }
 };
 
@@ -2996,7 +3034,9 @@ async function placeDetail(id){
   const own = своиМеста().find(p => String(p.id) === String(id));
   if(own) return { id: own.id, name: own.name, years: '', addr: own.addr,
                    text: own.text, full: false, pics: своиПервыми(своиСнимки(id), own.pic ? [own.pic] : []),
-                   more: own.src || '' };
+                   more: own.src || '',
+                   // снимок с Викисклада: лицензия требует подписать автора
+                   cred: (own.lic && own.pic) ? { author: own.author || '', lic: own.lic, src: own.src || '' } : undefined };
   const правка = ПРАВКИ_ТОЧЕК[id];
   const d = await cached('raw|place|' + id, async ()=>{
     const j = await (await fetch(KUDIN_DETAIL + '/api/v1/detail/?id=' + encodeURIComponent(id),
@@ -3765,6 +3805,7 @@ async function mestoPageBuild(id){
     + '.ph-l{left:10px}.ph-r{right:10px}'
     + '.ph-n{position:absolute;right:12px;bottom:12px;background:rgba(28,25,23,.6);color:#fff;'
     +   'font-size:12.5px;padding:3px 9px;border-radius:999px}'
+    + '.cred{margin:-8px 0 16px;font-size:12.5px;color:#9c948c}.cred a{color:inherit}'
     + '.near{display:flex;flex-wrap:wrap;gap:9px;margin-top:6px}'
     + '.near a{background:#fff;border:1px solid #e9e2d8;border-radius:999px;padding:7px 14px;'
     +   'font-size:14px;text-decoration:none;color:#1c1917}'
@@ -3777,6 +3818,8 @@ async function mestoPageBuild(id){
     + '<h1>' + esc(p.name) + '</h1>'
     + (где ? ('<p class="where">' + esc(где) + '</p>') : '')
     + снимки
+    + ((своё && своё.lic && своё.pic) ? ('<p class="cred">Фото с Викисклада: ' + esc(своё.author || '') + ', ' + esc(своё.lic)
+        + (своё.src ? (' · <a href="' + esc(своё.src) + '" target="_blank" rel="noopener nofollow">источник</a>') : '') + '</p>') : '')
     + (текст ? '' : '')
     + (текст ? ('<div class="txt"><p>' + esc(текст) + '</p></div>') : '')
     + (МАРШРУТЫ_С_МЕСТОМ[String(p.id)] || []).map(function(м){
@@ -4032,6 +4075,8 @@ function карточкаТочки(){
     return '<div class="pc" data-id="' + esc(id) + '">'
       + (d ? снимки(d.pics, p.name) : (ждём ? '<div class="pc-ph pc-wait">Загружаю снимки…</div>' : ''))
       + (мета ? ('<p class="pc-m">' + esc(мета) + '</p>') : '')
+      + ((d && d.cred) ? ('<p class="pc-m">Фото с Викисклада: ' + esc(d.cred.author) + ', ' + esc(d.cred.lic)
+          + (d.cred.src ? (' · <a href="' + esc(d.cred.src) + '" target="_blank" rel="noopener nofollow">источник</a>') : '') + '</p>') : '')
       + (текст ? ('<p class="pc-t">' + esc(текст) + '</p>') : (ждём ? '<p class="pc-t pc-wait">Загружаю описание…</p>' : ''))
       + '<div class="pc-b"><a class="pc-more" href="' + esc(адресМеста(p)) + '">Подробнее →</a>'
       +   '<button class="pc-stay" type="button" aria-expanded="false">Жильё рядом</button>'
