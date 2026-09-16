@@ -305,6 +305,7 @@ console.log('\n=== страницы под спрос ===');
     ['polotsk', 20], ['orsha', 20], ['soligorsk', 15], ['mozyr', 15],
     ['minsk-mir', 25], ['minsk-centr', 40], ['minsk-vokzal', 5],
     ['dom-s-banej', 5], ['braslav', 8], ['minskoe-more', 10], ['svityaz', 5],
+    ['novogrudok', 5], ['nesvizh', 5],
   ];
   let живых = 0;
   for (const [адрес, минимум] of АДРЕСА) {

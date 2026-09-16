@@ -6604,6 +6604,11 @@ const СПРОС = {
   'molodechno':  { обл:'minsk-obl', город:'Молодечно',  где:'в Молодечно' },
   'slutsk':      { обл:'minsk-obl', город:'Слуцк',      где:'в Слуцке' },
   'zhodino':     { обл:'minsk-obl', город:'Жодино',     где:'в Жодино' },
+  // города с замками: жильё ищут вместе с «что посмотреть» (добавлены 16.09;
+  // на живом сайте 18 и 34 объявления). У Несвижа нет своих координат
+  // в TOWN_CENTERS — центр для блока мест задаём здесь.
+  'novogrudok':  { обл:'grodno',    город:'Новогрудок', где:'в Новогрудке' },
+  'nesvizh':     { обл:'minsk-obl', город:'Несвиж',     где:'в Несвиже', центр:[53.2226, 26.6739] },
 
   // уточнения внутри Минска — самый заметный кластер после самих городов
   'minsk-mir':      { обл:'minsk', город:'Минск', слово:'минск.?мир',
@@ -6684,10 +6689,14 @@ async function спросPage(slug){
   const мин = цены.length ? цены[0] : 0;
   const сред = цены.length ? цены[Math.floor(цены.length / 2)] : 0;
 
-  const title = заголовокСтраницы(что + ' ' + z.где, [' — снять посуточно', ' посуточно']);
+  const { места, маршрут } = await местаСтраницы(центрСтраницы(z));
+  const сМестами = места.length >= 3;
+  const title = заголовокСтраницы(что + ' ' + z.где,
+    сМестами ? [' и что посмотреть рядом', ' — снять посуточно', ' посуточно'] : [' — снять посуточно', ' посуточно']);
   const desc = описаниеСтраницы([
     что + ' ' + z.где + ': ' + вариантов(d.total) + (мин ? (', цены от ' + мин + ' BYN за сутки') : '') + '.',
-    'Объявления Kufar, Realt, Flatbook, Check-in и Kvartirka в одном списке.',
+    фразаОМестах(места, маршрут),
+    ['Объявления Kufar, Realt, Flatbook, Check-in и Kvartirka в одном списке.', сМестами ? 'Объявления пяти площадок в одном списке.' : ''],
     z.точка ? ('Всё в радиусе ' + (z.радиус || 25) + ' км.') : '',
     ['Фото, телефоны хозяев и карта.', 'Фото и карта.'],
     сред ? ('Обычная цена — около ' + сред + ' BYN.') : '',
@@ -6741,6 +6750,7 @@ async function спросPage(slug){
     +   'у Check-in и Kvartirka — с обновлением несколько раз в сутки.</p>'
     + '<a class="cta" href="' + куда + '">Открыть поиск с фильтрами и картой →</a>'
     + '<div class="grid">' + карточки + '</div>'
+    + блокМестРядом(места, маршрут)
     + '<div class="others">' + рядом + '</div>'
     + '<footer><p>Мы не сдаём жильё сами и не берём комиссию: показываем объявления с Kufar, Realt '
     +   'и Flatbook и отправляем напрямую к хозяину. Перед оплатой проверяйте условия и не переводите '
@@ -6773,10 +6783,95 @@ const СТИЛЬ_СПИСКА = ':root{color-scheme:light dark}'
   + '.others a{background:#fff;border:1px solid #e2e5ea;border-radius:999px;padding:8px 16px;text-decoration:none;color:#141821;font-size:14px}'
   + 'footer{margin-top:34px;color:#8b93a3;font-size:13.5px;max-width:75ch}'
   + 'footer a{color:#9a3412}'
+  + 'h2{font-size:22px;margin:34px 0 10px;letter-spacing:-.01em}'
+  + '.places{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin:0 0 14px}'
+  + '.pc{display:flex;flex-direction:column;gap:3px;background:#fff;border:1px solid #e2e5ea;border-radius:14px;'
+  +   'overflow:hidden;text-decoration:none;color:#141821;padding-bottom:10px}'
+  + '.pc img,.pc .noimg{width:100%;height:120px;object-fit:cover;display:flex;align-items:center;justify-content:center;'
+  +   'background:#eef0f4;color:#8b93a3;font-size:12.5px;margin-bottom:6px}'
+  + '.pc b,.pc .pcat,.pc .pk{padding:0 12px}'
+  + '.pc b{font-size:14.5px;line-height:1.3}'
+  + '.pc .pcat,.pc .pk{font-size:12.5px;color:#8b93a3}'
+  + '.pr-route{display:inline-block;color:#9a3412;font-weight:700;text-decoration:none;margin:4px 0 8px}'
+  + '@media (max-width:600px){.places{display:flex;overflow-x:auto;scroll-snap-type:x mandatory}'
+  +   '.pc{flex:0 0 160px;scroll-snap-align:start}}'
   + '@media (prefers-color-scheme:dark){body{background:#14110e;color:#f6f2ed}.lead{color:#c2b7ab}'
   + '.c{background:#1d1916;border-color:#332c25}.c h3{color:#f6f2ed}.noimg{background:#2b251f}'
   + '.c .m span{background:#241f1a;border-color:#332c25;color:#c2b7ab}'
+  + '.pc{background:#1d1916;border-color:#332c25;color:#f6f2ed}.pc .noimg{background:#2b251f}'
   + '.others a{background:#1d1916;border-color:#332c25;color:#f6f2ed}}';
+
+// ── Что посмотреть рядом на городских страницах ──────────────────────────
+// Человек выбирает, где ночевать, и заодно — куда съездить. Места берём из
+// своего справочника, расстояния считаем от центра города; ничего, кроме
+// названий, категорий и километров, в блок не пишем.
+function центрСтраницы(z){
+  return z.центр || z.точка || TOWN_CENTERS[z.город || z.city] || null;
+}
+function местаДляСтраницы(все, центр){
+  const out = [];
+  // отбор по радиусу — тот же, что у строки «Рядом» в карточках жилья;
+  // порядок свой: на странице города важнее рейтинг, чем сотня метров
+  местаВокруг(все, центр[0], центр[1], 30)
+    .sort((a, b) => разряд(a.p) - разряд(b.p) || (b.p.rating || 0) - (a.p.rating || 0) || a.км - b.км)
+    .forEach(x => {
+      if(out.length >= 8) return;
+      // часовня во дворе уже взятого замка — то же место
+      if(out.some(y => distKm(y.lat, y.lng, x.p.lat, x.p.lng) < 0.5)) return;
+      out.push({ id:x.p.id, name:x.p.name, cat:x.p.cat || '', pic:x.p.pic || '', lat:x.p.lat, lng:x.p.lng,
+                 км: Math.round(x.км * 10) / 10 });
+    });
+  return out;
+}
+function маршрутДляСтраницы(все, центр, места){
+  const поНомеру = new Map(все.map(p => [String(p.id), p]));
+  const готовый = ВИДЕО_МАРШРУТЫ.find(м => точкиВидео(м).filter(t => {
+    const p = /^[0-9]+$/.test(t) && поНомеру.get(t);
+    return p && distKm(центр[0], центр[1], p.lat, p.lng) <= 40;
+  }).length >= 2);
+  if(готовый) return { href: '/m/' + готовый.slug, текст: 'Готовый маршрут: ' + готовый.title + ' →' };
+  if(места.length >= 2) return { href: '/marshrut?p=' + места.slice(0, 5).map(p => p.id).join(','),
+                                 текст: 'Собрать маршрут из этих мест →' };
+  return null;
+}
+// Фразу не собираем из «где»: «в Гродно» → «от Гродно» ещё выходит, а
+// «на Браславских озёрах» уже нет. Поэтому — «от центра», без названия.
+function блокМестРядом(места, маршрут){
+  if(места.length < 3) return '';
+  return '<h2>Что посмотреть рядом</h2>'
+    + '<p class="lead">' + места.length + ' ' + скл(места.length, 'место', 'места', 'мест')
+    +   ' в тридцати километрах от центра — из нашего справочника '
+    +   '<a href="/?country=places">«Что посетить»</a>.</p>'
+    + '<div class="places">' + места.map(function(p){
+        const img = p.pic
+          ? '<img src="' + esc(p.pic) + '" loading="lazy" alt="' + esc(p.name) + '">'
+          : '<span class="noimg">без фото</span>';
+        return '<a class="pc" href="/mesto/' + p.id + '-' + slugify(p.name) + '">' + img
+          + '<b>' + esc(p.name) + '</b>'
+          + (p.cat ? '<span class="pcat">' + esc(p.cat) + '</span>' : '')
+          + '<span class="pk">' + String(p.км).replace('.', ',') + ' км от центра</span></a>';
+      }).join('') + '</div>'
+    + (маршрут ? '<a class="pr-route" href="' + esc(маршрут.href) + '"'
+        + (маршрут.href.indexOf('/marshrut') === 0 ? ' rel="nofollow"' : '') + '>' + esc(маршрут.текст) + '</a>' : '');
+}
+// Места и маршрут для страницы; справочник не ответил — страница без блока.
+async function местаСтраницы(центр){
+  if(!центр) return { места: [], маршрут: null };
+  try{
+    const все = await placesRaw();
+    const места = местаДляСтраницы(все, центр);
+    return { места: места, маршрут: маршрутДляСтраницы(все, центр, места) };
+  }catch(e){ return { места: [], маршрут: null }; }
+}
+// Фраза для description. Стоит сразу за числом объявлений: после длинного
+// перечня площадок в 160 знаков она уже не влезала, и описание выходило
+// без мест. Площадки тогда идут коротким вариантом. Маршрут без «на день»:
+// готовый маршрут бывает и на два дня (Браславщина).
+function фразаОМестах(места, маршрут){
+  if(места.length < 3) return '';
+  return 'Что посмотреть рядом: ' + места.length + ' ' + скл(места.length, 'место', 'места', 'мест')
+    + (маршрут ? ' и маршрут.' : '.');
+}
 
 async function cityPage(slug, kind){
   const c = CITY_PAGES[slug];
@@ -6806,11 +6901,16 @@ async function cityPage(slug, kind){
   const midP = prices.length ? prices[Math.floor(prices.length/2)] : 0;
 
   const путь = '/' + slug + (kind ? ('-' + kind) : '');
-  const title = заголовокСтраницы(k.what + ' ' + c.where + k.extra, [' — снять посуточно', ' посуточно']);
+  // блок мест — только на основной странице города: уточняющие остаются про цену и тип
+  const { места, маршрут } = await местаСтраницы(!kind ? центрСтраницы(c) : null);
+  const сМестами = места.length >= 3;
+  const title = заголовокСтраницы(k.what + ' ' + c.where + k.extra,
+    сМестами ? [' и что посмотреть рядом', ' — снять посуточно', ' посуточно'] : [' — снять посуточно', ' посуточно']);
   const desc  = описаниеСтраницы([
     k.what + ' ' + c.where + k.extra + (data.total ? (': ' + вариантов(data.total)) : ' от частников')
       + (minP ? (', цены от ' + minP + ' BYN за сутки') : '') + '.',
-    'Объявления Kufar, Realt, Flatbook, Check-in и Kvartirka в одном списке.',
+    фразаОМестах(места, маршрут),
+    ['Объявления Kufar, Realt, Flatbook, Check-in и Kvartirka в одном списке.', сМестами ? 'Объявления пяти площадок в одном списке.' : ''],
     ['Фото, телефоны хозяев и карта.', 'Фото и карта.'],
     midP ? ('Обычная цена — около ' + midP + ' BYN.') : '',
   ]);
@@ -6860,6 +6960,7 @@ async function cityPage(slug, kind){
     +   'у Check-in и Kvartirka — с обновлением несколько раз в сутки.</p>'
     + '<a class="cta" href="/?region=' + slug + '&type=' + k.type + (k.max ? ('&max=' + k.max) : '') + '">Открыть поиск с фильтрами и картой →</a>'
     + (cards ? ('<div class="grid">' + cards + '</div>') : '<p>Сейчас вариантов нет — загляните позже.</p>')
+    + блокМестРядом(места, маршрут)
     + '<div class="others">' + others + '</div>'
     + '<footer><p>Мы не сдаём жильё сами и не берём комиссию: показываем объявления с Kufar, Realt, Flatbook, Check-in и Kvartirka '
     +   'и отправляем напрямую к хозяину. Перед оплатой проверяйте условия и не переводите предоплату незнакомым людям.</p>'
