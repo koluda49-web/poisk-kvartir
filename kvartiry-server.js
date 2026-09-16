@@ -1137,10 +1137,20 @@ async function flatbookRaw(regKey, center, type, rooms, amenFb){
         // Часть объявлений отдаётся со ссылкой на тестовый сайт flatbook.
         // Те же страницы есть на основном домене, поэтому просто убираем
         // приставку: человека нельзя отправлять на тестовый стенд.
-        link: String(f.url || (host+'/'+f.alias+'/')).replace('//test.', '//') };
+        // Бывает и ссылка на голый IP (https://178.172.255.46/…): сертификат там
+        // на flatbook.by, и браузер встречает человека предупреждением. Такую
+        // ссылку собираем заново на поддомене, с которого объявление и пришло.
+        link: ссылкаFlatbook(String(f.url || (host+'/'+f.alias+'/')).replace('//test.', '//'), host) };
     }).filter(x=> x.price>0 && x.lat>50 && x.lng>22);
   }catch(e){ console.error('Flatbook '+host+':', e.message); return []; }
  });
+}
+function ссылкаFlatbook(ссылка, host){
+  try{
+    const u = new URL(ссылка);
+    if(u.hostname === 'flatbook.by' || u.hostname.endsWith('.flatbook.by')) return ссылка;
+    return host + u.pathname + u.search + u.hash;
+  }catch(e){ return ссылка; }
 }
 async function fromFlatbook(regKey, city, type, maxP, rooms, amenFb, minP){
   const keys = regKey==='any'
@@ -2546,6 +2556,10 @@ const ЦЕНА_ЗА_ЧЕЛОВЕКА = /(?:за|с)\s*(?:1|одного|одну
 // дальше — дешевле и дороже, в самом конце — похожее на койко-место.
 // Стоит выбрать «Дешёвые сверху» — порядок строго по цене, как раньше.
 // Функции идут и в скрипт главной (.toString()) — без стрелок.
+// Порядок строится только по тому, что приходит с сервера сразу (цена,
+// заголовок, приметы, ссылка). Число снимков сюда не брать: галереи Flatbook
+// догружаются через секунду, выдача пересортировывалась, и карточки прыгали
+// под пальцем у человека.
 function похожеНаМесто(x){
   var т = String((x && x.title) || '') + ' ' + ((x && x.chips) || []).join(' ');
   return /хостел|hostel|койк|мест[оа] в (номере|комнате|хостеле)|спальн(ое|ые) мест|кровать в|за человека|с человека|за чел(\.|овек|$| )|\/ ?чел/i.test(т);
@@ -2566,10 +2580,9 @@ function рекомендуемыйПорядок(список, медиана){
     return 2;
   }
   return (список || []).map(function(x){
-    return { x: x, п: полоса(x), д: (м && x.price > 0) ? Math.abs(Math.log(x.price / м)) : x.price || 0,
-             ф: (x.photos || []).length };
+    return { x: x, п: полоса(x), д: (м && x.price > 0) ? Math.abs(Math.log(x.price / м)) : x.price || 0 };
   }).sort(function(a, b){
-    return a.п - b.п || a.д - b.д || b.ф - a.ф || (a.x.link < b.x.link ? -1 : a.x.link > b.x.link ? 1 : 0);
+    return a.п - b.п || a.д - b.д || (a.x.link < b.x.link ? -1 : a.x.link > b.x.link ? 1 : 0);
   }).map(function(o){ return o.x; });
 }
 
@@ -6983,6 +6996,10 @@ const СТИЛЬ_СПИСКА = ':root{color-scheme:light dark}'
 // своего справочника, расстояния считаем от центра города; ничего, кроме
 // названий, категорий и километров, в блок не пишем.
 function центрСтраницы(z){
+  // Районы внутри города (minsk-mir, minsk-centr…) своего центра не имеют:
+  // от центра Минска у них выходил тот же блок и тот же хвост заголовка,
+  // что у /minsk, — семь почти одинаковых страниц. Блок оставляем городу.
+  if(z.слово && !z.центр && !z.точка) return null;
   return z.центр || z.точка || TOWN_CENTERS[z.город || z.city] || null;
 }
 function местаДляСтраницы(все, центр){
@@ -8899,7 +8916,11 @@ function plotMap(fit){
     window.__map.attributionControl.setPrefix('');
     // снимки в окошке — целиком: рамка берёт высоту по кадру, окошко после этого пересчитывает место
     window.__map.on('popupopen', function(e){ window.__окошко = e.popup; подогнатьСнимки(e.popup.getElement()); });
-    window.__map.on('popupclose', function(e){ if(window.__окошко === e.popup) window.__окошко = null; });
+    window.__map.on('popupclose', function(e){
+      if(window.__окошко === e.popup) window.__окошко = null;
+      // Точные адреса Realt пришли, пока окошко было открыто, — перерисовываем метки теперь.
+      if(window.__перерисоватьПосле && !window.__окошко){ window.__перерисоватьПосле = false; if(window.__view==='map') plotMap(false); }
+    });
     // Карту без нужды не двигаем: окошко уже подвинуло её при открытии, а поздний
     // сдвиг (кадр догрузился) сбивал человека, который в этот момент листает или
     // жмёт кнопку. Но если выросшее окошко вылезло за край карты — а на телефоне
@@ -8930,6 +8951,7 @@ function plotMap(fit){
       : L.layerGroup();
     window.__map.addLayer(window.__mlayer);
   }
+  window.__перерисоватьПосле = false;   // перерисовываем сейчас — отложенная больше не нужна
   window.__mlayer.clearLayers();
   if(window.__routePins) window.__routePins.clearLayers();   // маршрут — только на карте мест
   кнопкаСвоейТочки();
@@ -8969,7 +8991,12 @@ async function enrichRealt(){
         const res=r.results||{};
         chunk.forEach(x=>{ const c=res[x.link]; if(c && c.length===2){ x.lat=c[0]; x.lng=c[1]; x.approx=false; moved++; } });
       }catch(e){}
-      if(moved && window.__view==='map') plotMap(false);   // перерисовать без сброса масштаба
+      // Перерисовка стирает все метки, а с ними и открытое окошко объявления:
+      // человек его читал, а оно закрывалось само. Пока окошко открыто — ждём закрытия.
+      if(moved && window.__view==='map'){
+        if(window.__окошко && window.__map && window.__map.hasLayer(window.__окошко)) window.__перерисоватьПосле = true;
+        else plotMap(false);   // перерисовать без сброса масштаба
+      }
     }
   } finally {
     window.__enriching=false;
@@ -9218,14 +9245,20 @@ async function поделитьсяПодборкой(){
   const россия = FAVS.filter(function(x){ return x.src === 'H101'; }).length;
   if(!коды.length){ toast('В подборке нет объявлений из Беларуси'); return; }
   const ссылка = location.origin + '/izbrannoe?s=' + коды.slice(0, 40).join('~');
-  const текст = 'Подборка жилья на сутки: ' + коды.length + ' ' + скл(коды.length, 'вариант', 'варианта', 'вариантов');
+  const n = Math.min(коды.length, 40);   // в ссылку идут первые 40 — столько и называем
+  const текст = 'Подборка жилья на сутки: ' + n + ' ' + скл(n, 'вариант', 'варианта', 'вариантов');
   try{
     if(navigator.share){ await navigator.share({ title: 'Подборка жилья', text: текст, url: ссылка }); }
     else if(navigator.clipboard){ await navigator.clipboard.writeText(ссылка); toast('Ссылка на подборку скопирована'); }
     else { window.prompt('Ссылка на подборку', ссылка); }
     if(россия) $('#favNote').textContent = 'Отели России в ссылку не попадают.';
     if(window.__T) window.__T('fav_share', { n: коды.length });
-  }catch(e){}
+  }catch(e){
+    // Человек закрыл окно «Поделиться» — это не ошибка. А если буфер обмена
+    // отказал (старый Android), показываем ссылку, чтобы её можно было скопировать руками.
+    if(e && e.name === 'AbortError') return;
+    try{ window.prompt('Ссылка на подборку', ссылка); }catch(e2){}
+  }
 }
 document.addEventListener('click', function(ev){
   const b = ev.target && ev.target.closest ? ev.target.closest('#favShare') : null;
@@ -11248,9 +11281,6 @@ http.createServer(async (req,res)=>{
                                                const o = Object.assign({}, p); delete o.alt; return o; });
     res.end(JSON.stringify({ total: list.length, groups, items })); return;
   }
-  // «Чаще всего добавляют в маршрут»: до 12 мест, которые добавили хотя бы
-  // двое. Меньше четырёх таких — пусто: лента из двух карточек выглядит
-  // случайной, а не «популярным».
   // «Рядом» для карточек жилья: пачка координат видимой страницы
   if(u.pathname === '/api/places/ryadom'){
     const сырые = String(u.searchParams.get('p') || '').split(';').filter(Boolean);
@@ -11266,6 +11296,9 @@ http.createServer(async (req,res)=>{
                         'Cache-Control': ответ.ok ? 'public, max-age=600' : 'no-store'});
     res.end(JSON.stringify(ответ)); return;
   }
+  // «Чаще всего добавляют в маршрут»: до 12 мест, которые добавили хотя бы
+  // двое. Меньше четырёх таких — пусто: лента из двух карточек выглядит
+  // случайной, а не «популярным».
   if(u.pathname === '/api/places/popular'){
     let d = { items: [] };
     try{

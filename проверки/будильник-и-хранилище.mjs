@@ -91,7 +91,7 @@ const записатьМестное = (имя, об) => fs.writeFileSync(path.j
 const лог = [];
 const сервер = spawn(process.execPath, ['kvartiry-server.js'], {
   cwd: КОРЕНЬ,
-  env: { ...process.env, PORT: '8097', RENDER_EXTERNAL_URL: САЙТ, SELF_PING_MS: '1500',
+  env: { ...process.env, METRIKA_OFF: '1', PORT: '8097', RENDER_EXTERNAL_URL: САЙТ, SELF_PING_MS: '1500',
          DATA_DIR: папка, GH_TOKEN: 'test', GH_API: 'http://127.0.0.1:' + МОК_ПОРТ, GH_SYNC_MS: '500',
          DATA_TEST: '1', DATA_TEST_NAMES: 'из-github,нет-в-github,сбой', STATS_FILE: path.join(папка, 'stats.json'),
          KUFAR: 'off', REALT: 'off', FLATBOOK: 'off', CHECKIN: 'off', KVARTIRKA: 'off' },
@@ -293,7 +293,7 @@ try {
   fs.writeFileSync(предзагрузка, "process.on('message', m => { if (m === 'SIGTERM') process.emit('SIGTERM', 'SIGTERM'); });\n");
   const сервер2 = spawn(process.execPath, ['-r', предзагрузка, 'kvartiry-server.js'], {
     cwd: КОРЕНЬ,
-    env: { ...process.env, PORT: '8097', DATA_DIR: папка, GH_TOKEN: 'test', GH_API: 'http://127.0.0.1:' + МОК_ПОРТ,
+    env: { ...process.env, METRIKA_OFF: '1', PORT: '8097', DATA_DIR: папка, GH_TOKEN: 'test', GH_API: 'http://127.0.0.1:' + МОК_ПОРТ,
            GH_SYNC_MS: '600000', DATA_TEST: '1', STATS_FILE: path.join(папка, 'stats.json'),
            RENDER_EXTERNAL_URL: '', KUFAR: 'off', REALT: 'off', FLATBOOK: 'off', CHECKIN: 'off', KVARTIRKA: 'off' },
     stdio: ['ignore', 'ignore', 'ignore', 'ipc'],

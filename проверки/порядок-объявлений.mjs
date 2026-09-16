@@ -54,6 +54,33 @@ if (первые.есть) check('похожие на место — в само
   return п >= 0 && i.slice(п).every(похожеНаМесто); })()`));
 check('в адресе нет sort', await js(`!/sort=/.test(location.search)`));
 
+// ── порядок не прыгает, когда догружаются галереи ──
+// Flatbook приходит с одним снимком, через секунду loadGalleries кладёт 5–15
+// и перерисовывает ленту. Порядок не должен зависеть от числа снимков.
+check('синтетика: число снимков не меняет порядок', await js(`(function(){
+  var a = {price:100, title:'Квартира', link:'k1', photos:['1']}, b = {price:100, title:'Квартира', link:'k2', photos:[]},
+      c = {price:100, title:'Квартира', link:'k0', photos:['1']};
+  var до = рекомендуемыйПорядок([a, b, c], 100).map(function(x){ return x.link; }).join(',');
+  a.photos = ['1','2','3','4','5','6','7','8','9','10','11','12']; b.photos = ['1','2','3'];
+  var после = рекомендуемыйПорядок([c, b, a], 100).map(function(x){ return x.link; }).join(',');
+  return до === после && до === 'k0,k1,k2';
+})()`));
+await ждать(`!window.__galBusy`, 80);
+await sleep(1500);
+const экран = async () => js(`JSON.stringify({ ссылки: (window.__items || []).slice(0, 24).map(function(x){ return x.link; }),
+  карточек: document.querySelectorAll('#grid .card').length })`).then(JSON.parse);
+const доГалерей = await экран();
+// Как loadGalleries: выросли галереи у объявлений первой страницы — и перерисовка.
+await js(`(function(){ (window.__items || []).slice(0, 24).forEach(function(x, i){
+  if(i % 2 === 0) x.photos = (x.photos || []).concat(['a1','a2','a3','a4','a5','a6','a7','a8','a9','a10','a11']); });
+  renderCards(); return 1; })()`);
+await sleep(500);
+const послеГалерей = await экран();
+check('первый экран: порядок карточек тот же после догрузки галерей',
+  доГалерей.ссылки.length > 0 && доГалерей.ссылки.join('|') === послеГалерей.ссылки.join('|') && доГалерей.карточек === послеГалерей.карточек,
+  доГалерей.ссылки.findIndex((l, i) => l !== послеГалерей.ссылки[i]) + '-я карточка сменилась');
+check('в /api/search нет служебного поля числа снимков', !(await (await fetch(SITE + '/api/search?region=minsk&city=&type=flat&rooms=&guests=&max=&source=both')).text()).includes('"__ф"'));
+
 // ── выбор человека ──
 await js(`$('#sort').value = 'price_asc'; $('#sort').dispatchEvent(new Event('change', {bubbles:true})); 1`);
 await sleep(500);

@@ -126,7 +126,7 @@ const поСправочнику = (места, a, b, skip) => места.filter
   });
   await new Promise(r => osrm.listen(портOSRM, '127.0.0.1', r));
   const сервер = spawn(process.execPath, ['kvartiry-server.js'], { cwd: корень, stdio: 'ignore', env: Object.assign({}, process.env, {
-    PORT: String(порт), OSRM_URL: 'http://127.0.0.1:' + портOSRM, DATA_TEST: '1', DATA_TEST_NAMES: '',
+    METRIKA_OFF: '1', PORT: String(порт), OSRM_URL: 'http://127.0.0.1:' + портOSRM, DATA_TEST: '1', DATA_TEST_NAMES: '',
     DATA_DIR: папка, STATS_FILE: join(папка, 'stats.json'),
     KUFAR: 'off', REALT: 'off', FLATBOOK: 'off', CHECKIN: 'off', KVARTIRKA: 'off', GH_TOKEN: '', RENDER_EXTERNAL_URL: '' }) });
   const второй = 'http://127.0.0.1:' + порт;

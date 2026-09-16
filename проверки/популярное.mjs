@@ -63,7 +63,7 @@ let браузер = null;   // { chrome, закрыть } из _браузер.
 function запустить(папка) {
   const п = spawn(process.execPath, ['kvartiry-server.js'], {
     cwd: КОРЕНЬ,
-    env: { ...process.env, PORT: '8098', DATA_DIR: папка, STATS_FILE: path.join(папка, 'stats.json'),
+    env: { ...process.env, METRIKA_OFF: '1', PORT: '8098', DATA_DIR: папка, STATS_FILE: path.join(папка, 'stats.json'),
            GH_TOKEN: 'test', GH_API: 'http://127.0.0.1:' + МОК_ПОРТ, GH_SYNC_MS: '500', POPULAR_SAVE_MS: '400',
            KUFAR: 'off', REALT: 'off', FLATBOOK: 'off', CHECKIN: 'off', KVARTIRKA: 'off' },
     stdio: 'ignore',

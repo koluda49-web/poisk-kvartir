@@ -130,7 +130,7 @@ check('/api/places: служебного alt в ответе нет', (поис�
 
   const папка = временнаяПапка('rec-routes-');   // раньше оставалась в %TEMP% после каждого прогона
   const сервер = spawn(process.execPath, ['kvartiry-server.js'], { cwd: корень, stdio: 'ignore', env: Object.assign({}, process.env, {
-    PORT: '8196', OSRM_URL: 'http://127.0.0.1:9625', KUDIN_DETAIL_URL: 'http://127.0.0.1:9627', DATA_DIR: папка, STATS_FILE: join(папка, 'stats.json'),
+    METRIKA_OFF: '1', PORT: '8196', OSRM_URL: 'http://127.0.0.1:9625', KUDIN_DETAIL_URL: 'http://127.0.0.1:9627', DATA_DIR: папка, STATS_FILE: join(папка, 'stats.json'),
     KUFAR: 'off', REALT: 'off', FLATBOOK: 'off', CHECKIN: 'off', KVARTIRKA: 'off', GH_TOKEN: '', RENDER_EXTERNAL_URL: '' }) });
   const гасить2 = () => { try { сервер.kill(); } catch {} };
   process.on('exit', гасить2);

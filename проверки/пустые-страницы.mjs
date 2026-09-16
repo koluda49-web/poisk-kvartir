@@ -29,7 +29,7 @@ const предзагрузка = join(папка, 'лежат.cjs');
 writeFileSync(предзагрузка, "const f = globalThis.fetch;\n"
   + "globalThis.fetch = (u, o) => /kufar\\.by|realt\\.by/.test(String(u && u.url || u)) ? Promise.reject(new Error('проверка: площадка не отвечает')) : f(u, o);\n");
 const сервер = spawn(process.execPath, ['-r', предзагрузка, 'kvartiry-server.js'], { cwd: КОРЕНЬ, stdio: 'ignore',
-  env: { ...process.env, PORT: String(ПОРТ), DATA_TEST: '1', DATA_TEST_NAMES: '', DATA_DIR: папка, STATS_FILE: join(папка, 'stats.json'),
+  env: { ...process.env, METRIKA_OFF: '1', PORT: String(ПОРТ), DATA_TEST: '1', DATA_TEST_NAMES: '', DATA_DIR: папка, STATS_FILE: join(папка, 'stats.json'),
          FLATBOOK: 'off', CHECKIN: 'off', KVARTIRKA: 'off', GH_TOKEN: '', RENDER_EXTERNAL_URL: '' } });
 async function завершить(код) {
   try { if (сервер.exitCode === null) сервер.kill(); } catch {}   // ровно наш процесс, по pid

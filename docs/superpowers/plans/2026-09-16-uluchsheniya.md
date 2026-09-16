@@ -22,7 +22,8 @@
 8. **Процессы.** НИКОГДА `taskkill /IM chrome.exe`, `/IM node.exe`, `pkill node` и любое убийство по имени — у владельца открыт свой Chrome и свои node. Порт **8080 не использовать**. Локальный сервер для проверок:
    ```bash
    cd "/c/Users/User-NUC/Desktop/Поиск квартир"
-   (PORT=8241 node kvartiry-server.js > "$TEMP/srv8241.log" 2>&1 &)
+   # METRIKA_OFF=1 обязательно: иначе каждая проверка в браузере шлёт визит в живой счётчик Метрики
+   (METRIKA_OFF=1 PORT=8241 node kvartiry-server.js > "$TEMP/srv8241.log" 2>&1 &)
    for i in $(seq 1 60); do curl -s http://127.0.0.1:8241/ping >/dev/null && break; sleep 2; done
    ```
    Остановить — только свой PID по порту:

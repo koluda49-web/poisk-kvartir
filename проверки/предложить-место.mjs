@@ -70,7 +70,7 @@ function запуститьСервер(папка) {
   const лог = [];
   const п = spawn(process.execPath, ['kvartiry-server.js'], {
     cwd: КОРЕНЬ,
-    env: { ...process.env, PORT: '8096', DATA_DIR: папка, STATS_FILE: path.join(папка, 'stats.json'), STATS_KEY: КЛЮЧ,
+    env: { ...process.env, METRIKA_OFF: '1', PORT: '8096', DATA_DIR: папка, STATS_FILE: path.join(папка, 'stats.json'), STATS_KEY: КЛЮЧ,
            GH_TOKEN: 'test', GH_API: 'http://127.0.0.1:' + МОК_ПОРТ, GH_SYNC_MS: '500', RENDER_EXTERNAL_URL: '',
            KUFAR: 'off', REALT: 'off', FLATBOOK: 'off', CHECKIN: 'off', KVARTIRKA: 'off' },
     stdio: ['ignore', 'pipe', 'pipe'],

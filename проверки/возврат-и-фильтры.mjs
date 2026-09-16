@@ -235,6 +235,33 @@ try {
     } else {
       console.log('    у первой метки один снимок — листать нечего, это не ошибка');
     }
+
+    // Точные адреса Realt приходят порциями и раньше перерисовывали карту,
+    // закрывая окошко, которое человек читает. Подставляем ответ /api/geo
+    // (Realt может и не отвечать) и проверяем: окошко живо, а метки
+    // перерисовываются, когда его закрыли.
+    const окноБыло = await js(`!!document.querySelector('.leaflet-popup')`);
+    if (окноБыло) {
+      await js(`(function(){
+        var ц = window.__map.getCenter();
+        window.__items.push({ src:'Realt', approx:true, link:'https://realt.by/proverka-okoshka/', price:77, title:'проверка', photos:[],
+                              lat:ц.lat, lng:ц.lng, chips:[] });
+        window.__родной = window.fetch;
+        window.fetch = function(u, o){
+          if(String(u).indexOf('/api/geo') >= 0) return Promise.resolve(new Response(JSON.stringify({ results: { 'https://realt.by/proverka-okoshka/': [ц.lat + 0.001, ц.lng + 0.001] } })));
+          return window.__родной(u, o);
+        };
+        enrichRealt(); return 1; })()`);
+      await sleep(2000);
+      check('окошко на карте не закрылось, когда пришли точные адреса Realt',
+            await js(`!!document.querySelector('.leaflet-popup')`));
+      await js(`window.fetch = window.__родной; window.__map.closePopup(); 1`);
+      await sleep(800);
+      check('после закрытия окошка метки перерисованы с новым адресом',
+            await js(`(function(){ var есть = false; window.__mlayer.eachLayer(function(l){
+              if(l.getLatLng && Math.abs(l.getLatLng().lat - (window.__items.find(function(x){ return x.link === 'https://realt.by/proverka-okoshka/'; }) || {}).lat) < 1e-9) есть = true; });
+              return есть && !window.__перерисоватьПосле; })()`));
+    }
   }
 } finally {
   console.log('\nИтог: успешно ' + passed + ', провалено ' + failed);
