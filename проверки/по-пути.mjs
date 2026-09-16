@@ -2,7 +2,7 @@
 //
 // Зачем. Человек из ролика открывает готовый маршрут и не знает, что в паре
 // километров от дороги стоит ещё замок или мельница. Проверяем API
-// (/api/route/near: не дальше 5 км, по порядку, без самих точек маршрута,
+// (/api/route/near: не дальше 5 км, по порядку дороги, без самих точек маршрута,
 // без OSRM — по прямым), а на странице маршрута — ленту карточек, кнопку
 // «+ в маршрут» (в ручном порядке место встаёт туда, где крюк меньше),
 // что лента не спрашивает сервер лишний раз и что на /m/<slug> добавление —
@@ -42,10 +42,10 @@ function проверитьОтвет(имя, d, путь, skip) {
   check(имя + ': не больше 12', it.length <= 12, it.length);
   check(имя + ': все не дальше 5 км', it.every(p => typeof p.km === 'number' && p.km <= 5), it.map(p => p.km).join(','));
   check(имя + ': км с одним знаком', it.every(p => Math.round(p.km * 10) / 10 === p.km));
-  check(имя + ': по возрастанию расстояния', it.every((p, i) => !i || it[i - 1].km <= p.km));
+  check(имя + ': по порядку вдоль дороги', it.every((p, i) => typeof p.along === 'number' && (!i || it[i - 1].along <= p.along)), it.map(p => p.along).join(','));
   check(имя + ': нет id из skip', it.every(p => !skip.includes(String(p.id))));
   check(имя + ': нет самих точек маршрута', it.every(p => путь.every(т => км(т.lat, т.lng, p.lat, p.lng) >= 0.3)));
-  check(имя + ': у мест все поля', it.every(p => ['id', 'name', 'addr', 'lat', 'lng', 'pic', 'cat', 'km'].every(k => k in p)));
+  check(имя + ': у мест все поля', it.every(p => ['id', 'name', 'addr', 'lat', 'lng', 'pic', 'cat', 'km', 'along'].every(k => k in p)));
   return it;
 }
 
@@ -62,6 +62,24 @@ if (поПути.length) {
 for (const плохой of ['', 'abc', '54.1,25.3', '1,2;3,4', '54.1,25.3;x']) {
   const d = await getJSON(SITE + '/api/route/near?p=' + encodeURIComponent(плохой));
   check('неправильный p=«' + плохой + '» → ok:false', d && d.ok === false, JSON.stringify(d));
+}
+// Длинная дорога: места должны идти вдоль всей дороги, а не только в городах на концах
+{
+  const pМГ = '53.90240,27.56190;53.67780,23.82950';
+  const дорогаМГ = await getJSON(SITE + '/api/route?p=' + pМГ);
+  if (дорогаМГ.ok) {
+    const d = await getJSON(SITE + '/api/route/near?p=' + pМГ);
+    const it = проверитьОтвет('Минск—Гродно', d, [{ lat: 53.9024, lng: 27.5619 }, { lat: 53.6778, lng: 23.8295 }], []);
+    const ids = it.map(p => String(p.id));
+    const придорожные = ['4726', '8209', '286', '4198'].filter(x => ids.includes(x));
+    check('Минск—Гродно: из Ракова, Ивья, Мурованки, Скиделя есть хотя бы 3', придорожные.length >= 3, ids.join(','));
+    const радиус = Math.min(15, 0.06 * дорогаМГ.km);
+    const уМинска = it.filter(p => км(53.9024, 27.5619, p.lat, p.lng) < радиус).length;
+    const уГродно = it.filter(p => км(53.6778, 23.8295, p.lat, p.lng) < радиус).length;
+    check('Минск—Гродно: у каждого конца не больше 2 мест', уМинска <= 2 && уГродно <= 2, уМинска + ' / ' + уГродно);
+    check('Минск—Гродно: места на всей дороге (разброс along ≥ 60% длины)',
+      it.length > 1 && it[it.length - 1].along - it[0].along >= 0.6 * дорогаМГ.km, it.map(p => p.along).join(','));
+  } else console.log('  (OSRM не ответил — Минск—Гродно пропускаю)');
 }
 const дорога = await getJSON(SITE + '/api/route?p=' + пара(липнишки, вороново, мурованка));
 if (дорога.ok) check('/api/route отдаёт минуты перегонов', Array.isArray(дорога.legMinutes) && дорога.legMinutes.length === 2
@@ -151,12 +169,22 @@ const поСправочнику = (места, a, b, skip) => места.filter
     const р3 = await getJSON(второй + '/api/route?p=' + pЛВ);
     check('поддельный OSRM с маршрутом → legMinutes', р3.ok === true && Array.isArray(р3.legMinutes) && р3.legMinutes.length === 1, JSON.stringify(р3).slice(0, 120));
     const местаВторого = (await getJSON(второй + '/api/places?light=1')).items || [];
-    const ждёмЛВ = Math.min(12, поСправочнику(местаВторого, липнишки, вороново, ['5069', '910027']).length);
+    const поНовымПравилам = (места, a, b, skip) => {
+      const длина = км(a.lat, a.lng, b.lat, b.lng), радиус = Math.min(15, 0.06 * длина);
+      const годные = поСправочнику(места, a, b, skip);
+      let уA = 0, уB = 0, дорожных = 0;
+      годные.forEach(p => {
+        const дA = км(a.lat, a.lng, p.lat, p.lng), дB = км(b.lat, b.lng, p.lat, p.lng);
+        if (Math.min(дA, дB) >= радиус) дорожных++; else if (дA <= дB) уA++; else уB++;
+      });
+      return Math.min(12, дорожных + Math.min(2, уA) + Math.min(2, уB));
+    };
+    const ждёмЛВ = поНовымПравилам(местаВторого, липнишки, вороново, ['5069', '910027']);
     const сДо2 = (await служебный()).счёт.поПути;
     const e1 = await getJSON(второй + '/api/route/near?p=' + pЛВ + '&skip=5069,910027');
     const e2 = await getJSON(второй + '/api/route/near?p=' + pЛВ + '&skip=5069,910027');
     const с2 = await служебный();
-    check('по дорогам Липнишки—Вороново: мест столько, сколько по справочнику (' + ждёмЛВ + ')',
+    check('по дорогам Липнишки—Вороново: мест столько, сколько по новым правилам (' + ждёмЛВ + ')',
       e1.ok === true && e1.items.length === ждёмЛВ && JSON.stringify(e2) === JSON.stringify(e1), JSON.stringify(e1).slice(0, 160));
     check('по дорогам: второй запрос из кэша', с2.счёт.поПути - сДо2 === 1, 'посчитали ' + (с2.счёт.поПути - сДо2));
     const запЛВ = с2.записи.find(z => z.ключ.startsWith(ключРядом(pЛВ)));
@@ -220,6 +248,12 @@ check('одна точка: к /api/route/near не ходили', (await зап
 await send('Page.navigate', { url: SITE + '/marshrut?p=910027,286' });
 const видна = await ждать(`!document.getElementById('rNear').hidden && document.querySelectorAll('#rNearList .nc').length > 0`, 80);
 check('две точки: секция «По пути» видна', видна);
+{
+  const естьИды = await иды();
+  const порядокAPI = (await getJSON(SITE + '/api/route/near?' + (await js(`ключПоПути()`)))).items
+    .map(p => String(p.id)).filter(x => !естьИды.includes(x));
+  check('лента идёт в порядке дороги, как в ответе сервера', JSON.stringify(await карточки()) === JSON.stringify(порядокAPI), (await карточки()).join(','));
+}
 check('заголовок «По пути — до 5 км от дороги»', (await js(`document.querySelector('#rNear h2').textContent`)) === 'По пути — до 5 км от дороги');
 // между «По пути» и поиском стоят «План дня» и «Сколько стоит дорога» (Task 6)
 check('секция под списком и над поиском', await js(`(function(){ var n = document.getElementById('rNear'), д = n.nextElementSibling;
