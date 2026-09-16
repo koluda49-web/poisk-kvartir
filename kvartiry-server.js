@@ -4813,6 +4813,39 @@ function ближеКЛинии(все, линия, пары, пропустит
     .map(м => ({ id:м.id, name:м.name, addr:м.addr, lat:м.lat, lng:м.lng, pic:м.pic, cat:м.cat, km:м.km, along:м.along }));
 }
 
+// ── Что рядом с жильём ────────────────────────────────────────────────────
+// Строка «Рядом: Мирский замок 0,1 км · …» в карточке объявления. Считаем
+// только для видимой страницы (до 24 карточек) одним запросом: мест около
+// восьмисот, с отсечением по рамке это доли миллисекунды, отдельный
+// пространственный индекс пока не нужен.
+const РЯДОМ_С_ЖИЛЬЁМ_КМ = 25;   // тот же радиус, что у кнопки «Что посмотреть рядом»
+function местаВокруг(все, lat, lng, радиус){
+  const dLat = радиус / 111, dLng = радиус / (111 * Math.cos(lat * Math.PI / 180));
+  const out = [];
+  for(const p of все){
+    if(Math.abs(p.lat - lat) > dLat || Math.abs(p.lng - lng) > dLng) continue;
+    const км = distKm(lat, lng, p.lat, p.lng);
+    // радиус сверяем с округлёнными км, как /api/places: «ещё N» в карточке
+    // должно совпасть с числом мест на вкладке, которую откроет кнопка
+    if(Math.round(км * 10) / 10 <= радиус) out.push({ p, км });
+  }
+  // как список мест на вкладке: сначала разряд (замок, костёл, усадьба), потом близость
+  return out.sort((a, b) => разряд(a.p) - разряд(b.p) || a.км - b.км);
+}
+function рядомСЖильём(все, lat, lng){
+  const вокруг = местаВокруг(все, lat, lng, РЯДОМ_С_ЖИЛЬЁМ_КМ);
+  const top = [];
+  for(const { p, км } of вокруг){
+    // часовня в двухстах метрах от уже названного замка — это то же место
+    if(top.some(t => distKm(t.lat, t.lng, p.lat, p.lng) < 1)) continue;
+    top.push({ id:p.id, name:p.name, lat:p.lat, lng:p.lng, km: Math.round(км * 10) / 10 });
+    if(top.length === 2) break;
+  }
+  return { n: вокруг.length,
+           top: top.map(t => ({ id:t.id, name:t.name, km:t.km, href:'/mesto/' + t.id + '-' + slugify(t.name) })),
+           w: false };   // Task 5: выходныеОтЖилья(все, lat, lng).length >= 3
+}
+
 // опции: true/false (старый вызов — только «порядок руками») или объект
 // { ручной, заголовок, вступление, адрес }. С адресом это страница готового
 // маршрута из видео (/m/<slug>): свой заголовок и вступление, индексируется,
@@ -7706,6 +7739,12 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
   background:var(--surface-2);color:var(--txt-2)}
 .plc .row .go2{background:linear-gradient(120deg,var(--accent),var(--accent-2));color:#fff;border:none}
 .plc .row .stay2{background:var(--accent-soft);color:var(--accent);border-color:transparent}
+.nb{margin-top:8px;font-size:12.5px;line-height:1.45;color:var(--txt-2);overflow-wrap:anywhere}
+.nb:empty{display:none}
+.nb-t{color:var(--txt-3)}
+.nb a{color:var(--txt);text-decoration:none;border-bottom:1px solid var(--line)}
+.nb a:hover{color:var(--accent);border-color:var(--accent)}
+.nb-more{font:inherit;color:var(--accent);background:none;border:0;padding:0;cursor:pointer}
 .seenear{width:100%;margin-top:8px;font:inherit;font-size:13.5px;font-weight:700;cursor:pointer;
   background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius-xs);
   padding:9px 12px;color:var(--txt-2)}
@@ -8439,9 +8478,11 @@ function renderCards(){
         +meta
         +'<div class="ttl">'+(x.title||'').replace(/</g,'&lt;')+'</div>'+desc
         +'<div class="act">'+call+'<a href="'+x.link+'" target="_blank" rel="noopener">Открыть</a></div>'
+        +((x.lat&&x.lng&&!x.approx&&x.src!=='H101')?('<div class="nb" id="nb'+idx+'" data-k="'+ключРядом(x)+'"></div>'):'')
         +((x.lat&&x.lng)?('<button class="seenear" type="button" onclick="placesNear('+idx+')">🏰 Что посмотреть рядом</button>'):'')
         +'</div></div>';
     }).join('');
+  дополнитьРядом(items, start);
   renderPager(pages);
   loadGalleries();
 }
@@ -9062,6 +9103,67 @@ function placesNear(idx){
   setCountry('places');
   if(window.__T) window.__T('places_near', {});
 }
+
+// ── «Рядом» в карточках жилья ─────────────────────────────────────────────
+// Сервер считает места вокруг видимых карточек одним запросом; ответы
+// помним по координатам, чтобы перелистывание назад и перерисовка не
+// спрашивали его снова. Выдача приходит волнами (площадки отвечают по
+// очереди, карточки перерисовываются после каждой) — поэтому запрос уходит
+// с небольшой задержкой и берёт то, что стоит на странице к этому моменту,
+// а координаты, о которых уже спросили, второй раз не спрашиваем.
+const РЯДОМ_КЭШ = {}, РЯДОМ_ИДЁТ = {};
+let рядомТаймер = 0;
+function ключРядом(x){ return (+x.lat).toFixed(4) + ',' + (+x.lng).toFixed(4); }
+function показатьРядом(idx, д){
+  const el = document.getElementById('nb' + idx);
+  if(!el) return;
+  if(!д || !д.n){ el.innerHTML = ''; return; }
+  const имена = д.top.map(function(p){
+    return '<a href="' + p.href + '">' + esc2(p.name) + '</a> ' + String(p.km).replace('.', ',') + ' км';
+  }).join(' · ');
+  const ещё = д.n > д.top.length
+    ? (' · <button type="button" class="nb-more" data-near="' + idx + '">ещё ' + (д.n - д.top.length) + '</button>') : '';
+  el.innerHTML = '<span class="nb-t">Рядом:</span> ' + имена + ещё;
+}
+function дополнитьРядом(items, start){
+  let нужно = false;
+  items.forEach(function(x, i){
+    if(!(x.lat && x.lng && !x.approx && x.src !== 'H101')) return;
+    const к = ключРядом(x);
+    if(РЯДОМ_КЭШ[к]) показатьРядом(start + i, РЯДОМ_КЭШ[к]); else нужно = true;
+  });
+  clearTimeout(рядомТаймер);
+  if(нужно) рядомТаймер = setTimeout(запроситьРядом, 350);
+}
+// Пишем во все карточки на странице с этими координатами — пока ждали,
+// страницу могли перелистнуть или перерисовать, номер карточки не важен.
+function разложитьРядом(){
+  document.querySelectorAll('#grid .nb[data-k]').forEach(function(el){
+    const д = РЯДОМ_КЭШ[el.getAttribute('data-k')];
+    if(д) показатьРядом(+el.id.slice(2), д);
+  });
+}
+async function запроситьРядом(){
+  const ключи = [];
+  document.querySelectorAll('#grid .nb[data-k]').forEach(function(el){
+    const к = el.getAttribute('data-k');
+    if(!РЯДОМ_КЭШ[к] && !РЯДОМ_ИДЁТ[к] && ключи.indexOf(к) < 0) ключи.push(к);
+  });
+  if(!ключи.length) return;
+  ключи.forEach(function(к){ РЯДОМ_ИДЁТ[к] = 1; });
+  try{
+    const d = await (await fetch('/api/places/ryadom?p=' + encodeURIComponent(ключи.join(';')))).json();
+    if(d && d.ok) ключи.forEach(function(к, i){ РЯДОМ_КЭШ[к] = d.items[i] || { n: 0, top: [], w: false }; });
+  }catch(e){}
+  ключи.forEach(function(к){ delete РЯДОМ_ИДЁТ[к]; });
+  разложитьРядом();
+}
+document.addEventListener('click', function(ev){
+  const b = ev.target && ev.target.closest ? ev.target.closest('[data-near]') : null;
+  if(!b) return;
+  ev.preventDefault();
+  placesNear(+b.getAttribute('data-near'));
+});
 
 function plCityCoords(){
   if(window.__plCenter) return window.__plCenter;
@@ -10776,6 +10878,21 @@ http.createServer(async (req,res)=>{
   // «Чаще всего добавляют в маршрут»: до 12 мест, которые добавили хотя бы
   // двое. Меньше четырёх таких — пусто: лента из двух карточек выглядит
   // случайной, а не «популярным».
+  // «Рядом» для карточек жилья: пачка координат видимой страницы
+  if(u.pathname === '/api/places/ryadom'){
+    const сырые = String(u.searchParams.get('p') || '').split(';').filter(Boolean);
+    const пары = парыМаршрута(u.searchParams.get('p'));
+    let ответ = { ok:false };
+    if(пары.length >= 1 && пары.length <= 24 && пары.length === сырые.length){
+      try{
+        const все = await placesRaw();
+        ответ = { ok:true, items: пары.map(c => рядомСЖильём(все, c[0], c[1])) };
+      }catch(e){ ответ = { ok:false }; }
+    }
+    res.writeHead(200, {'Content-Type':'application/json; charset=utf-8',
+                        'Cache-Control': ответ.ok ? 'public, max-age=600' : 'no-store'});
+    res.end(JSON.stringify(ответ)); return;
+  }
   if(u.pathname === '/api/places/popular'){
     let d = { items: [] };
     try{
