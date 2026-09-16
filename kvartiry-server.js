@@ -3476,6 +3476,36 @@ const SRC_TITLE = { Kufar:'Kufar', Realt:'Realt', Flatbook:'Flatbook', H101:'101
                     CheckIn:'Check-in', Kvartirka:'Kvartirka' };
 const srcTitle = v => SRC_TITLE[v] || v || 'источнике';
 
+// ── Подборка избранного по ссылке ────────────────────────────────────────
+// Хранить подборки негде (диск Render стирается при выкладке), поэтому сами
+// объявления едут в ссылке короткими кодами. Только пять известных площадок:
+// ссылка не должна превращаться в способ отправить человека на чужой сайт.
+// Функция вставляется и в скрипт главной (.toString()).
+function кодСсылки(link){
+  var s = String(link || ''), m;
+  var путь = /^[A-Za-z0-9\/_.-]{1,160}$/;
+  if((m = s.match(/^https:\/\/www\.kufar\.by\/item\/(\d{1,15})$/))) return 'k' + m[1];
+  var базы = [['r', 'https://realt.by/'], ['c', 'https://check-in.by/'], ['v', 'https://kvartirka.by/'], ['f', 'https://flatbook.by/']];
+  for(var i = 0; i < базы.length; i++){
+    if(s.indexOf(базы[i][1]) === 0){
+      var хвост = s.slice(базы[i][1].length);
+      return (путь.test(хвост) && хвост.indexOf('..') < 0) ? базы[i][0] + хвост : '';
+    }
+  }
+  if((m = s.match(/^https:\/\/([a-z0-9-]{1,30})\.flatbook\.by\/(.+)$/)) && путь.test(m[2]) && m[2].indexOf('..') < 0)
+    return 'g' + m[1] + '/' + m[2];
+  return '';
+}
+function ссылкаИзКода(код){
+  const к = String(код || ''), б = к.charAt(0), х = к.slice(1);
+  if(б === 'k') return /^\d{1,15}$/.test(х) ? 'https://www.kufar.by/item/' + х : '';
+  if(!/^[A-Za-z0-9\/_.-]{1,192}$/.test(х) || х.indexOf('..') >= 0) return '';
+  const базы = { r:'https://realt.by/', c:'https://check-in.by/', v:'https://kvartirka.by/', f:'https://flatbook.by/' };
+  if(базы[б]) return базы[б] + х;
+  if(б === 'g'){ const m = х.match(/^([a-z0-9-]{1,30})\/(.+)$/); return m ? 'https://' + m[1] + '.flatbook.by/' + m[2] : ''; }
+  return '';
+}
+
 // разбираем адрес вида 'brest-usadby' на город и уточнение
 function parseCitySlug(path){
   if(CITY_PAGES[path]) return { city: path, kind: '' };
@@ -6759,6 +6789,76 @@ async function спросPage(slug){
     + '</div></body></html>';
 }
 
+// Где искать объявление по ссылке, не спрашивая площадки: каталоги Check-in
+// и Kvartirka в памяти целиком; Kufar, Realt и Flatbook — в сырых ответах,
+// что лежат в кэше поиска, и в общем индексе «жильё рядом».
+async function объявленияПоСсылкам(ссылки){
+  const нужны = new Set(ссылки), нашли = new Map();
+  const смотреть = x => { if(x && x.link && нужны.has(x.link) && !нашли.has(x.link)) нашли.set(x.link, x); };
+  КАТАЛОГ.CheckIn.forEach(смотреть); КАТАЛОГ.Kvartirka.forEach(смотреть);
+  for(const [ключ, з] of SEARCH_CACHE){
+    if(ключ.indexOf('raw|kufar|') === 0 || ключ.indexOf('raw|realt|') === 0 || ключ.indexOf('raw|fb|') === 0)
+      (Array.isArray(з.data) ? з.data : []).forEach(смотреть);
+  }
+  let индекс = [];
+  if(нашли.size < нужны.size){ try{ индекс = await stayIndex(); }catch(e){} индекс.forEach(смотреть); }
+  // Уверенно сказать «объявления больше нет» можно, только если было где искать
+  const проверено = (КАТАЛОГ_ОБНОВЛЁН.CheckIn > 0 || КАТАЛОГ_ОБНОВЛЁН.Kvartirka > 0) && индекс.length + SEARCH_CACHE.size > 50;
+  return { найдены: ссылки.filter(l => нашли.has(l)).map(l => нашли.get(l)),
+           нет: ссылки.filter(l => !нашли.has(l)), проверено };
+}
+
+async function избранноеPage(s){
+  const коды = String(s || '').split('~').map(к => к.trim()).filter(Boolean).slice(0, 40);
+  const ссылки = [...new Set(коды.map(ссылкаИзКода).filter(Boolean))];
+  const d = ссылки.length ? await объявленияПоСсылкам(ссылки) : { найдены: [], нет: [], проверено: true };
+  const карточки = d.найдены.map(function(x){
+    const img = (x.photos && x.photos[0])
+      ? '<img src="' + esc(x.photos[0]) + '" loading="lazy" alt="' + esc(x.title || 'Жильё на сутки') + '">'
+      : '<div class="noimg">фото у источника</div>';
+    const мета = [x.area, (x.rooms ? x.rooms + '-комн' : ''), x.capacity ? ('до ' + x.capacity + ' гостей') : '']
+      .filter(Boolean).map(function(m){ return '<span>' + esc(m) + '</span>'; }).join('');
+    return '<article class="c"><a href="' + esc(x.link) + '" target="_blank" rel="noopener nofollow">' + img + '</a>'
+      + '<div class="b"><div class="p">' + (x.от ? 'от ' : '') + x.price + ' BYN <small>/ сутки</small></div>'
+      + '<div class="m">' + мета + '</div><h3>' + esc(x.title || 'Жильё на сутки') + '</h3>'
+      + '<a class="go" href="' + esc(x.link) + '" target="_blank" rel="noopener nofollow">Открыть на ' + esc(srcTitle(x.src)) + '</a></div></article>';
+  }).join('');
+  const площадка = l => srcTitle(l.indexOf('kufar') >= 0 ? 'Kufar' : l.indexOf('realt') >= 0 ? 'Realt'
+    : l.indexOf('check-in') >= 0 ? 'CheckIn' : l.indexOf('kvartirka') >= 0 ? 'Kvartirka' : 'Flatbook');
+  const ненайденные = d.нет.length
+    ? '<div class="gone"><b>Сейчас не нашли: ' + d.нет.length + '</b> — '
+      + (d.проверено ? 'скорее всего, объявление сняли с площадки.' : 'площадки ещё не ответили, попробуйте через пару минут.')
+      + '<ul>' + d.нет.map(l => '<li><a href="' + esc(l) + '" target="_blank" rel="noopener nofollow">Проверить на '
+      + esc(площадка(l)) + '</a></li>').join('') + '</ul></div>'
+    : '';
+  const пусто = !ссылки.length;
+  return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<meta name="robots" content="noindex,follow"><title>Подборка жилья на сутки</title>'
+    + '<meta name="theme-color" content="#9a3412">'
+    + '<style>' + СТИЛЬ_СПИСКА
+    +   '.gone{margin:22px 0 0;color:#4a5160;font-size:14.5px}.gone ul{margin:6px 0 0;padding-left:20px}.gone a{color:#9a3412}'
+    +   '.save{font:inherit;font-weight:700;background:#fff;color:#9a3412;border:1px solid #9a3412;border-radius:12px;padding:12px 20px;margin:0 0 22px;cursor:pointer}'
+    +   '@media (prefers-color-scheme:dark){.gone{color:#c2b7ab}.save{background:#1d1916}}'
+    + '</style></head><body><div class="w">'
+    + '<h1>Подборка жилья</h1>'
+    + (пусто
+        ? '<p class="lead">Подборка пустая: в ссылке нет объявлений. Отметьте варианты сердечком в поиске и нажмите «Поделиться подборкой».</p>'
+        : '<p class="lead">Эти варианты отметили и прислали вам ссылкой. Цены и наличие — из самих объявлений на площадках, '
+          + 'бронируйте напрямую у хозяина.</p>'
+          + (d.найдены.length ? '<button class="save" id="izSave" type="button">♥ Сохранить к себе в избранное</button>' : ''))
+    + (карточки ? '<div class="grid">' + карточки + '</div>' : '')
+    + ненайденные
+    + '<footer><p><a href="/">Искать жильё на сутки →</a></p></footer>'
+    + '</div><script>window.__ПОДБОРКА=' + вСкрипт(d.найдены) + ';'
+    + '(function(){var b=document.getElementById("izSave");if(!b)return;b.addEventListener("click",function(){'
+    +   'var f=[];try{f=JSON.parse(localStorage.getItem("pk_favs")||"[]");if(!Array.isArray(f))f=[];}catch(e){f=[];}'
+    +   'window.__ПОДБОРКА.forEach(function(x){if(!f.some(function(y){return y.link===x.link;}))f.push(x);});'
+    +   'try{localStorage.setItem("pk_favs",JSON.stringify(f));}catch(e){}'
+    +   'b.textContent="✓ Сохранено — "+f.length+" в избранном";});})();'
+    + '</' + 'script></body></html>';
+}
+
 
 // Стили страниц под поисковые запросы: города, районы, курорты.
 // Один набор на все — иначе правка в одном месте разъезжается с другим.
@@ -7913,6 +8013,11 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
 }
 .fav:hover{transform:scale(1.08);background:rgba(20,24,33,.6)}
 .fav.on{background:var(--accent);color:#fff}
+.favbar{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.favshare{font:inherit;font-weight:700;font-size:14px;padding:10px 16px;border-radius:var(--radius-sm);
+  background:var(--surface);color:var(--accent);border:1px solid var(--line-strong);cursor:pointer}
+.favshare:hover{border-color:var(--accent)}
+#favNote{font-size:12.5px;color:var(--txt-3)}
 .slider{position:relative}
 .sub-box{
   background:var(--surface);border:1px dashed var(--line-strong);border-radius:var(--radius);
@@ -8544,7 +8649,12 @@ function renderCards(){
   const start=(window.__page-1)*PAGE_SIZE;
   const items=all.slice(start, start+PAGE_SIZE);
   const N=nights();
-  $('#grid').innerHTML=items.map(function(x,i){
+  // В избранном сверху — «Поделиться подборкой»: избранное живёт только
+  // в этом браузере, и ссылка — единственный способ показать его другому.
+  const favbar = (window.__view==='fav' && FAVS.length)
+    ? '<div class="favbar"><button id="favShare" type="button" class="favshare">Поделиться подборкой</button><span id="favNote"></span></div>'
+    : '';
+  $('#grid').innerHTML=favbar+items.map(function(x,i){
       const idx=start+i;   // глобальный индекс в window.__items (для слайдера/описания)
       const capChip = x.capacity ? ('<span>до '+x.capacity+' гостей</span>') : '';
       const total = N ? ('<div class="total">'+(x.price*N)+' BYN за '+N+' ноч.</div>') : '';
@@ -9013,6 +9123,30 @@ document.addEventListener('click', function(ev){
   ev.preventDefault(); ev.stopPropagation();
   favToggle(+b.getAttribute('data-fav'));
   if(window.__T) window.__T('fav', {});
+});
+
+// ── Поделиться подборкой ──────────────────────────────────────────────────
+// Избранное живёт только в этом браузере. Ссылка /izbrannoe?s=… везёт сами
+// объявления короткими кодами — сервер ничего не хранит.
+async function поделитьсяПодборкой(){
+  const коды = FAVS.map(function(x){ return кодСсылки(x.link); }).filter(Boolean);
+  const россия = FAVS.filter(function(x){ return x.src === 'H101'; }).length;
+  if(!коды.length){ toast('В подборке нет объявлений из Беларуси'); return; }
+  const ссылка = location.origin + '/izbrannoe?s=' + коды.slice(0, 40).join('~');
+  const текст = 'Подборка жилья на сутки: ' + коды.length + ' ' + скл(коды.length, 'вариант', 'варианта', 'вариантов');
+  try{
+    if(navigator.share){ await navigator.share({ title: 'Подборка жилья', text: текст, url: ссылка }); }
+    else if(navigator.clipboard){ await navigator.clipboard.writeText(ссылка); toast('Ссылка на подборку скопирована'); }
+    else { window.prompt('Ссылка на подборку', ссылка); }
+    if(россия) $('#favNote').textContent = 'Отели России в ссылку не попадают.';
+    if(window.__T) window.__T('fav_share', { n: коды.length });
+  }catch(e){}
+}
+document.addEventListener('click', function(ev){
+  const b = ev.target && ev.target.closest ? ev.target.closest('#favShare') : null;
+  if(!b) return;
+  ev.preventDefault();
+  поделитьсяПодборкой();
 });
 
 // ── Фильтры на телефоне сворачиваются ─────────────────────────────────────
@@ -9959,6 +10093,10 @@ window.addEventListener('storage', function(e){
 
 ${перетаскиваниеСтрок.toString()}
 
+${кодСсылки.toString()}
+
+${скл.toString()}
+
 ${пересчитатьОкошко.toString()}
 
 ${подогнатьСнимки.toString()}
@@ -10821,6 +10959,14 @@ http.createServer(async (req,res)=>{
                           'Cache-Control':'public, max-age=600'});
       res.end(html); return;
     }
+  }
+  // Подборка избранного по ссылке: объявления закодированы в самой ссылке
+  if(u.pathname === '/izbrannoe'){
+    let html = '';
+    try{ html = await избранноеPage(u.searchParams.get('s')); }catch(e){ html = ''; }
+    if(!html){ res.writeHead(500, {'X-Robots-Tag':'noindex'}); res.end('Не получилось собрать подборку'); return; }
+    res.writeHead(200, {'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'no-cache', 'X-Robots-Tag':'noindex'});
+    res.end(html); return;
   }
   // Страницы под живой поисковый спрос: районные города, районы Минска,
   // курортные места. Отдаём их раньше городских — пересечений по адресам нет.
