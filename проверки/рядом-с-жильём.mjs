@@ -45,6 +45,7 @@ check('Мир: km с одним знаком и совпадает с расст
   return Math.round(t.km * 10) / 10 === t.km && Math.abs(км(мир[0], мир[1], p.lat, p.lng) - t.km) <= 0.06; }));
 check('Мир: ссылки на страницы мест', а.top.every(t => /^\/mesto\/\d+-[a-z0-9-]+$/.test(t.href)));
 check('у ответа поле w — логическое', typeof а.w === 'boolean' && typeof d.items[1].w === 'boolean');
+check('Мир: w = true (мест на выходные хватает)', а.w === true);
 for (const плохой of ['', 'abc', Array(25).fill('53.9,27.5').join(';')])
   check('неправильный p → ok:false (' + плохой.slice(0, 12) + '…)', (await getJSON(SITE + '/api/places/ryadom?p=' + encodeURIComponent(плохой))).ok === false);
 const t0 = Date.now();

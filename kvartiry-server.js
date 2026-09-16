@@ -4873,7 +4873,50 @@ function рядомСЖильём(все, lat, lng){
   }
   return { n: вокруг.length,
            top: top.map(t => ({ id:t.id, name:t.name, km:t.km, href:'/mesto/' + t.id + '-' + slugify(t.name) })),
-           w: false };   // Task 5: выходныеОтЖилья(все, lat, lng).length >= 3
+           // для ссылки в карточке важно лишь, хватает ли мест, — порядок объезда не перебираем
+           w: местаНаВыходные(все, lat, lng).length >= 3 };
+}
+
+// ── Выходные от жилья ─────────────────────────────────────────────────────
+// Из карточки объявления — готовый маршрут на день: 3–5 лучших мест в 30 км
+// и порядок, при котором кольцо от жилья и обратно самое короткое. Открываем
+// обычную страницу маршрута — там уже план дня и расчёт топлива.
+const ВЫХОДНЫЕ_КМ = 30, ВЫХОДНЫЕ_МАКС = 5;
+function местаНаВыходные(все, lat, lng){
+  const взято = [];
+  местаВокруг(все, lat, lng, ВЫХОДНЫЕ_КМ)
+    .filter(x => разряд(x.p) <= 1)   // памятники и музеи — не повод ехать
+    .sort((a, b) => разряд(a.p) - разряд(b.p) || (b.p.rating || 0) - (a.p.rating || 0) || a.км - b.км)
+    .forEach(({ p }) => {
+      if(взято.length >= ВЫХОДНЫЕ_МАКС) return;
+      if(взято.some(q => distKm(q.lat, q.lng, p.lat, p.lng) < 1)) return;   // то же место
+      взято.push(p);
+    });
+  return взято;
+}
+function выходныеОтЖилья(все, lat, lng){
+  return порядокПетли(lat, lng, местаНаВыходные(все, lat, lng));
+}
+// Пять мест — 120 порядков: перебрать быстрее, чем придумывать эвристику.
+function порядокПетли(lat, lng, места){
+  const дом = { lat, lng };
+  let лучший = места.slice(), лучшая = Infinity;
+  (function перебор(путь, остаток){
+    if(!остаток.length){
+      let д = 0, пред = дом;
+      путь.concat([дом]).forEach(т => { д += distKm(пред.lat, пред.lng, т.lat, т.lng); пред = т; });
+      if(д < лучшая - 1e-9){ лучшая = д; лучший = путь; }
+      return;
+    }
+    остаток.forEach((т, i) => перебор(путь.concat([т]), остаток.slice(0, i).concat(остаток.slice(i + 1))));
+  })([], места);
+  return лучший;
+}
+function ссылкаВыходных(lat, lng, места){
+  // У финиша координаты сдвинуты на 0,00001°: две точки с одним id маршрут склеил бы в одну
+  const старт = 'm' + lat.toFixed(5) + '_' + lng.toFixed(5) + '~' + encodeURIComponent('Жильё');
+  const финиш = 'm' + (lat + 0.00001).toFixed(5) + '_' + (lng + 0.00001).toFixed(5) + '~' + encodeURIComponent('Жильё');
+  return '/marshrut?p=' + [старт].concat(места.map(p => p.id), [финиш]).join(',') + '&o=1';
 }
 
 // опции: true/false (старый вызов — только «порядок руками») или объект
@@ -7946,6 +7989,7 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
 .nb a{color:var(--txt);text-decoration:none;border-bottom:1px solid var(--line)}
 .nb a:hover{color:var(--accent);border-color:var(--accent)}
 .nb-more{font:inherit;color:var(--accent);background:none;border:0;padding:0;cursor:pointer}
+.nb-wk{display:block;margin-top:6px;font-weight:700;color:var(--accent);text-decoration:none;border:0}
 .seenear{width:100%;margin-top:8px;font:inherit;font-size:13.5px;font-weight:700;cursor:pointer;
   background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius-xs);
   padding:9px 12px;color:var(--txt-2)}
@@ -9358,7 +9402,11 @@ function показатьРядом(idx, д){
   }).join(' · ');
   const ещё = д.n > д.top.length
     ? (' · <button type="button" class="nb-more" data-near="' + idx + '">ещё ' + (д.n - д.top.length) + '</button>') : '';
-  el.innerHTML = '<span class="nb-t">Рядом:</span> ' + имена + ещё;
+  const x = (window.__view==='fav' ? FAVS : (window.__items||[]))[idx];
+  const выходные = (д.w && x)
+    ? ('<a class="nb-wk" rel="nofollow" href="/vyhodnye?lat=' + (+x.lat).toFixed(5) + '&lng=' + (+x.lng).toFixed(5) + '">Маршрут на выходные от этого жилья →</a>')
+    : '';
+  el.innerHTML = '<span class="nb-t">Рядом:</span> ' + имена + ещё + выходные;
 }
 function дополнитьРядом(items, start){
   let нужно = false;
@@ -11188,6 +11236,19 @@ http.createServer(async (req,res)=>{
     }
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
     res.end(JSON.stringify(ответ)); return;
+  }
+  // «Выходные от этого жилья»: собираем маршрут и отправляем на его страницу
+  if(u.pathname === '/vyhodnye'){
+    const lat = +u.searchParams.get('lat'), lng = +u.searchParams.get('lng');
+    let куда = '/?country=places';
+    if(isFinite(lat) && isFinite(lng) && lat > 51 && lat < 56.5 && lng > 23 && lng < 33){
+      try{
+        const места = выходныеОтЖилья(await placesRaw(), lat, lng);
+        if(места.length >= 3) куда = ссылкаВыходных(lat, lng, места);
+      }catch(e){}
+    }
+    res.writeHead(302, { 'Location': куда, 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex' });
+    res.end(); return;
   }
   if(u.pathname === '/marshrut'){
     // Номера точек справочника и свои точки вида m53.99750_25.38580~Имя
