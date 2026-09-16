@@ -10757,9 +10757,41 @@ function страницаПредложений(){
 process.on('uncaughtException',  e => console.log('Непойманная ошибка:', e && e.message));
 process.on('unhandledRejection', e => console.log('Необработанный отказ:', e && e.message));
 
+// ── Яндекс.Метрика ────────────────────────────────────────────────────────
+// Счётчик 112722670, без информера: посетитель ничего не видит. Страниц
+// собирает десяток функций, поэтому код вставляется не в каждую, а в сам
+// ответ — на стыке </head><body>: новые страницы получают его без правок.
+// METRIKA_OFF=1 — для проверок, чтобы прогоны не слали визиты (на Render её нет).
+const МЕТРИКА_ГОЛОВА = '<script>(function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};m[i].l=1*new Date();for(var j=0;j<document.scripts.length;j++){if(document.scripts[j].src===r){return;}}k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})(window,document,"script","https://mc.yandex.ru/metrika/tag.js","ym");ym(112722670,"init",{clickmap:true,trackLinks:true,accurateTrackBounce:true,webvisor:true});</script>';
+const МЕТРИКА_ТЕЛО = '<noscript><div><img src="https://mc.yandex.ru/watch/112722670" style="position:absolute;left:-9999px" alt=""></div></noscript>';
+const МЕТРИКА_ВКЛ = process.env.METRIKA_OFF !== '1';
+// Личные страницы владельца: его заходы не должны попадать в статистику сайта.
+const БЕЗ_МЕТРИКИ = new Set(['/predlozheniya', '/stats', '/reis', '/istochnik']);
+function сМетрикой(html){
+  // Функцией, а не строкой замены: в строке «$» что-то значил бы.
+  return html.replace(/<\/head>(\s*<body[^>]*>)/, (м, тело) => МЕТРИКА_ГОЛОВА + '</head>' + тело + МЕТРИКА_ТЕЛО);
+}
+// Обёртка ответа: HTML-страницы (по Content-Type из writeHead) получают
+// счётчик, всё остальное — JSON, картинки, файлы маршрутов — идёт как было.
+function метрикаВОтвет(res){
+  const writeHead = res.writeHead, end = res.end;
+  let html = false;
+  res.writeHead = function(код, ...ещё){
+    const заголовки = ещё.find(x => x && typeof x === 'object') || {};
+    const тип = Object.keys(заголовки).find(к => к.toLowerCase() === 'content-type');
+    html = !!тип && /^text\/html/i.test(String(заголовки[тип]));
+    return writeHead.call(this, код, ...ещё);
+  };
+  res.end = function(тело, ...ещё){
+    if(html && typeof тело === 'string' && тело.indexOf('112722670') < 0) тело = сМетрикой(тело);
+    return end.call(this, тело, ...ещё);
+  };
+}
+
 http.createServer(async (req,res)=>{
   отметитьЗапрос();
   const u = new URL(req.url, 'http://localhost');
+  if(МЕТРИКА_ВКЛ && !БЕЗ_МЕТРИКИ.has(u.pathname)) метрикаВОтвет(res);
   if(u.pathname === '/api/search'){
     const data = await runSearchQuery(u.searchParams);
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
@@ -11444,7 +11476,9 @@ http.createServer(async (req,res)=>{
   // Отпечаток страницы: браузер пришлёт его обратно, и если ничего
   // не изменилось, мы ответим «304» без тела — это несколько сотен байт
   // вместо ста тридцати килобайт.
-  const tag = '"' + crypto.createHash('sha1').update(page).digest('base64').slice(0, 22) + '"';
+  // Счётчик вставляется позже, в метрикаВОтвет, — учитываем его в отпечатке,
+  // иначе браузер со старой копией без счётчика получал бы «304» и дальше.
+  const tag = '"' + crypto.createHash('sha1').update(page + (МЕТРИКА_ВКЛ ? МЕТРИКА_ГОЛОВА : '')).digest('base64').slice(0, 22) + '"';
   if(req.headers['if-none-match'] === tag){
     res.writeHead(304, {'ETag': tag, 'Cache-Control':'no-cache'});
     res.end(); return;

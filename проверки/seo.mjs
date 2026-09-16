@@ -77,7 +77,11 @@ function разобрать(html) {
     canonical: [...голова.matchAll(/<link\b[^>]*>/gi)].map(м => м[0])
       .filter(т => (атрибут(т, 'rel') || '').toLowerCase() === 'canonical').map(т => атрибут(т, 'href')),
     h1: [...чистый.matchAll(/<h1[\s>]/gi)].length,
-    безAlt: [...чистый.matchAll(/<img\b[^>]*>/gi)].map(м => м[0]).filter(т => !(атрибут(т, 'alt') || '').trim()),
+    // Пиксель Метрики в <noscript> — служебный, пустой alt у него правильный
+    // (читалка экрана его пропустит), а код счётчика задан дословно.
+    безAlt: [...чистый.matchAll(/<img\b[^>]*>/gi)].map(м => м[0])
+      .filter(т => !т.includes('src="https://mc.yandex.ru/watch/'))
+      .filter(т => !(атрибут(т, 'alt') || '').trim()),
     текст: раскрыть(чистый.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' '),
     jsonld,
   };
