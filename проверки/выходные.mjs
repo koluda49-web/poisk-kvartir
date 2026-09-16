@@ -83,6 +83,10 @@ if (есть) check('ссылка ведёт на /vyhodnye с координа�
   var a = document.querySelector('#grid .nb .nb-wk'), card = a.closest('.card'), i = [...document.querySelectorAll('#grid .card')].indexOf(card);
   var x = window.__items[(window.__page - 1) * 24 + i];
   return a.getAttribute('rel') === 'nofollow' && a.getAttribute('href') === '/vyhodnye?lat=' + (+x.lat).toFixed(5) + '&lng=' + (+x.lng).toFixed(5); })()`));
+if (есть) check('ссылка в цвете акцента и без подчёркивания-рамки', await js(`(function(){
+  var a = document.querySelector('#grid .nb .nb-wk'), cs = getComputedStyle(a), t = document.createElement('span');
+  t.style.color = 'var(--accent)'; a.parentNode.appendChild(t); var акцент = getComputedStyle(t).color; t.remove();
+  return cs.color === акцент && cs.borderBottomWidth === '0px' && cs.display === 'block'; })()`));
 check('на 400 px без прокрутки вбок', await js(`document.documentElement.scrollWidth <= innerWidth`));
 await js(`localStorage.clear(); 1`);
 

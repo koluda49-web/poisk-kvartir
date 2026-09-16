@@ -7989,7 +7989,8 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
 .nb a{color:var(--txt);text-decoration:none;border-bottom:1px solid var(--line)}
 .nb a:hover{color:var(--accent);border-color:var(--accent)}
 .nb-more{font:inherit;color:var(--accent);background:none;border:0;padding:0;cursor:pointer}
-.nb-wk{display:block;margin-top:6px;font-weight:700;color:var(--accent);text-decoration:none;border:0}
+/* .nb a красит ссылки в цвет текста с подчёркиванием — у ссылки на выходные свой вид */
+.nb a.nb-wk{display:block;margin-top:6px;font-weight:700;color:var(--accent);text-decoration:none;border:0}
 .seenear{width:100%;margin-top:8px;font:inherit;font-size:13.5px;font-weight:700;cursor:pointer;
   background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius-xs);
   padding:9px 12px;color:var(--txt-2)}
@@ -11245,7 +11246,7 @@ http.createServer(async (req,res)=>{
       try{
         const места = выходныеОтЖилья(await placesRaw(), lat, lng);
         if(места.length >= 3) куда = ссылкаВыходных(lat, lng, места);
-      }catch(e){}
+      }catch(e){ console.error('Выходные:', e.message); }
     }
     res.writeHead(302, { 'Location': куда, 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex' });
     res.end(); return;
