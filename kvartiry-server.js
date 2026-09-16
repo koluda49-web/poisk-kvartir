@@ -2539,6 +2539,40 @@ function точкаОбъявления(lat, lng, адрес, обл, ключ){
 // с объявлением, поэтому узнать можно прямо при сборе.
 const ЦЕНА_ЗА_ЧЕЛОВЕКА = /(?:за|с)\s*(?:1|одного|одну)?\s*(?:чел(?![а-яё])|человека|персону|гостя)|руб\.?\s*\/\s*чел(?![а-яё])|\/\s*чел(?![а-яё])|цена\s+за\s+место|за\s+койко-?место/i;
 
+// ── «Рекомендуемые» ───────────────────────────────────────────────────────
+// Владелец (16.09): по умолчанию сверху стояли самые дешёвые — а это места
+// в хостеле и цены за человека, и выдача выглядела обманом. Теперь без
+// выбора человека сверху обычное жильё по обычной для этой выдачи цене,
+// дальше — дешевле и дороже, в самом конце — похожее на койко-место.
+// Стоит выбрать «Дешёвые сверху» — порядок строго по цене, как раньше.
+// Функции идут и в скрипт главной (.toString()) — без стрелок.
+function похожеНаМесто(x){
+  var т = String((x && x.title) || '') + ' ' + ((x && x.chips) || []).join(' ');
+  return /хостел|hostel|койк|мест[оа] в (номере|комнате|хостеле)|спальн(ое|ые) мест|кровать в|за человека|с человека|за чел(\.|овек|$| )|\/ ?чел/i.test(т);
+}
+function медианаЦены(список){
+  var ц = (список || []).filter(function(x){ return x && x.price > 0 && !похожеНаМесто(x); })
+    .map(function(x){ return x.price; }).sort(function(a, b){ return a - b; });
+  return ц.length ? ц[Math.floor(ц.length / 2)] : 0;
+}
+function рекомендуемыйПорядок(список, медиана){
+  var м = медиана > 0 ? медиана : медианаЦены(список);
+  function полоса(x){
+    if(похожеНаМесто(x)) return 3;
+    if(!м || !(x.price > 0)) return 2;
+    var к = x.price / м;
+    if(к >= 0.75 && к <= 1.35) return 0;
+    if(к >= 0.5 && к <= 2.5) return 1;
+    return 2;
+  }
+  return (список || []).map(function(x){
+    return { x: x, п: полоса(x), д: (м && x.price > 0) ? Math.abs(Math.log(x.price / м)) : x.price || 0,
+             ф: (x.photos || []).length };
+  }).sort(function(a, b){
+    return a.п - b.п || a.д - b.д || b.ф - a.ф || (a.x.link < b.x.link ? -1 : a.x.link > b.x.link ? 1 : 0);
+  }).map(function(o){ return o.x; });
+}
+
 function ciОбъявление(a, обл, названиеОбл){
   // Тип улицы без названия не пишем: у объявлений со своим адресом
   // («д. Черевки, ул. Новая, 13») приходит одно «ул.», и заголовок
@@ -6570,7 +6604,7 @@ async function гидPage(slug){
       + '</div>'
     : '';
 
-  const карточки = (кв.items || []).slice(0, 12).map(function(x){
+  const карточки = рекомендуемыйПорядок(кв.items || []).slice(0, 12).map(function(x){
     const img = (x.photos && x.photos[0])
       ? '<img src="' + esc(x.photos[0]) + '" loading="lazy" alt="' + esc('Жильё посуточно ' + z.где) + '">'
       : '<div class="noimg">фото у источника</div>';
@@ -6757,7 +6791,7 @@ async function спросPage(slug){
   ПУСТЫЕ_СТРАНИЦЫ.delete(slug);
 
   const что = z.что || 'Квартиры на сутки';
-  const items = (d.items || []).slice(0, 30);
+  const items = рекомендуемыйПорядок(d.items || []).slice(0, 30);
   const цены = (d.items || []).map(x => x.price).filter(p => p > 0).sort((a, b) => a - b);
   const мин = цены.length ? цены[0] : 0;
   const сред = цены.length ? цены[Math.floor(цены.length / 2)] : 0;
@@ -7026,19 +7060,12 @@ async function cityPage(slug, kind){
   let data = { items: [], total: 0 };
   try{ data = await runSearchQuery(uu.searchParams); }catch(e){}
 
-  // Выдача отсортирована по цене, поэтому «первые 30» на /minsk и на
-  // /minsk-nedorogo оказывались одними и теми же карточками — для поисковика
-  // это две страницы с одинаковым содержимым, и он склеит их в одну.
-  // На основной странице города показываем срез по всему диапазону цен,
-  // на уточняющих — самое дешёвое.
+  // Основная страница — «Рекомендуемые», как главная по умолчанию: сверху
+  // обычное жильё по обычной цене. Уточнение «недорого» — дешёвые сверху
+  // (за ним и приходят); у усадеб и коттеджей — тоже рекомендуемые.
+  // Страницы /minsk и /minsk-nedorogo от этого по-прежнему разные.
   const pool = data.items || [];
-  let items;
-  if(!kind && pool.length > 40){
-    const step = pool.length / 30;
-    items = Array.from({length: 30}, (_, i) => pool[Math.floor(i * step)]).filter(Boolean);
-  } else {
-    items = pool.slice(0, 30);
-  }
+  const items = (kind === 'nedorogo' ? pool : рекомендуемыйПорядок(pool)).slice(0, 30);
   const prices = (data.items || []).map(x => x.price).filter(p => p > 0).sort((a,b)=>a-b);
   const minP = prices.length ? prices[0] : 0;
   const midP = prices.length ? prices[Math.floor(prices.length/2)] : 0;
@@ -7177,7 +7204,7 @@ ${ГОЛОВА_ГЛАВНОЙ.by}
   {"@type":"Question","name":"Как разместить своё объявление?",
    "acceptedAnswer":{"@type":"Answer","text":"Напишите нам — и мы разместим. Нужны фотографии, цена за сутки, адрес и телефон. Размещение бесплатное: комиссию мы не берём и места в выдаче не продаём. Ещё один способ попасть к нам — выложить объявление на Kufar, Realt или Flatbook, оттуда оно подтянется само примерно за полчаса."}},
   {"@type":"Question","name":"Откуда берутся цены и наличие?",
-   "acceptedAnswer":{"@type":"Answer","text":"Из самих объявлений. Kufar, Realt и Flatbook спрашиваем в реальном времени; каталоги check-in.by и kvartirka.by обновляем несколько раз в сутки. По России — 101hotels.com. Повторы убираем, места в выдаче не продаём: сортировка одна для всех, по цене."}},
+   "acceptedAnswer":{"@type":"Answer","text":"Из самих объявлений. Kufar, Realt и Flatbook спрашиваем в реальном времени; каталоги check-in.by и kvartirka.by обновляем несколько раз в сутки. По России — 101hotels.com. Повторы убираем, места в выдаче не продаём: порядок одинаковый для всех — сначала обычные варианты по типичной для города цене, а «дешёвые сверху» и другие порядки можно выбрать самому."}},
   {"@type":"Question","name":"Что такое раздел «Что посетить»?",
    "acceptedAnswer":{"@type":"Answer","text":"Почти 800 достопримечательностей Беларуси с фотографией, описанием и координатами. У каждой кнопка «Жильё рядом» — подбирает варианты в 30 километрах, а несколько точек складываются в маршрут на день с километражом по настоящим дорогам."}}
  ]}
@@ -8211,6 +8238,7 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
     <label class="fld">
       <span>Сортировка</span>
       <select id="sort">
+        <option value="recommended" selected>Рекомендуемые</option>
         <option value="price_asc">Дешёвые сверху</option>
         <option value="price_desc">Дорогие сверху</option>
         <option value="rating_desc">По рейтингу</option>
@@ -8410,7 +8438,8 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
     <h3>Хотите разместить объявление?</h3>
     <p><b>Напишите нам — и мы разместим.</b> Нужны фотографии, цена за сутки, адрес
        и телефон для связи. Размещение бесплатное: комиссию мы не берём и места
-       в выдаче не продаём, сортировка у всех одна — по цене.</p>
+       в выдаче не продаём, порядок у всех одинаковый — сначала обычные варианты по типичной
+       для города цене, а «дешёвые сверху» и другие порядки можно выбрать самому.</p>
     <p>Ещё один способ попасть к нам — выложить объявление на <b>Kufar</b>, <b>Realt</b>,
        <b>Flatbook</b>, <b>Check-in</b> или <b>Kvartirka</b>: оттуда оно подтянется само —
        с первых трёх обычно в течение получаса, с двух последних — в течение нескольких часов.</p>
@@ -8541,10 +8570,20 @@ function nights(){
 function currentSort(){
   return window.__mode==='ru'
     ? ($('#rfSort')?$('#rfSort').value:'price_asc')
-    : ($('#sort')?$('#sort').value:'price_asc');
+    : ($('#sort')?$('#sort').value:'recommended');
 }
 function sortItems(){
   const s=currentSort();
+  if(window.__mode!=='ru' && s==='recommended'){
+    // медиана — по всей выдаче; у предзагрузки в руках 24 карточки, медиану приносит сервер
+    const м = window.__медиана || медианаЦены(window.__all||[]);
+    // на месте, а не новым массивом: слайдер, описание и enrichRealt держат ссылку на __items
+    const порядок = рекомендуемыйПорядок(window.__items||[], м);
+    const items = window.__items||[];
+    items.length = 0;
+    порядок.forEach(function(x){ items.push(x); });
+    return;
+  }
   (window.__items||[]).sort(function(a,b){ return s==='price_desc'? b.price-a.price : s==='rating_desc'? (((b.rating||0)-(a.rating||0))||(a.price-b.price)) : a.price-b.price; });
 }
 async function runRF(){
@@ -8604,6 +8643,7 @@ async function run(){
     $('#stat').textContent='Ищу…'; $('#grid').innerHTML=''; $('#pager').innerHTML='';
   }
   window.__preloadShown = false;
+  window.__медиана = 0;
   window.__all=[]; window.__items=[]; window.__page=1;
 
   const N=nights();
@@ -9000,7 +9040,7 @@ function slide(card, dir){
 }
 // Беларусь
 document.querySelectorAll('#bar select, #bar input').forEach(el=>{ if(el.id!=='sort') el.addEventListener('change',run); });
-$('#sort').addEventListener('change', function(){ window.__page=1; renderCards(); });
+$('#sort').addEventListener('change', function(){ window.__page=1; renderCards(); syncUrl(); });
 $('#go').addEventListener('click',run);
 $('#qname').addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); run(); } });
 // Россия (101hotels)
@@ -10142,6 +10182,10 @@ window.addEventListener('storage', function(e){
 
 ${перетаскиваниеСтрок.toString()}
 
+${похожеНаМесто.toString()}
+${медианаЦены.toString()}
+${рекомендуемыйПорядок.toString()}
+
 ${кодСсылки.toString()}
 
 ${скл.toString()}
@@ -10268,7 +10312,7 @@ favSave();
 // type — «любой», как первый вариант в самой форме. Раньше здесь стояло 'flat':
 // выбранная «Квартира» не попадала ни в адрес, ни в запомненные настройки,
 // и при возврате со страницы места форма показывала «любой».
-const URL_DEFAULTS = { region:'minsk', city:'', type:'any', rooms:'', guests:'', min:'', max:'', source:'both', sort:'price_asc' };
+const URL_DEFAULTS = { region:'minsk', city:'', type:'any', rooms:'', guests:'', min:'', max:'', source:'both', sort:'recommended' };
 function syncUrl(){
   try{
     const p=new URLSearchParams();
@@ -10450,6 +10494,7 @@ syncPresets();
     if(!window.__PRELOAD || location.search) return;
     window.__all = window.__PRELOAD.items || [];
     window.__items = window.__all.slice();
+    window.__медиана = window.__PRELOAD.med || 0;
     window.__page = 1;
     const p = window.__PRELOAD;
     const parts = [];
@@ -11385,8 +11430,9 @@ http.createServer(async (req,res)=>{
     try{
       const pu = new URL('/api/search?region=minsk&city=&type=flat&rooms=&guests=&max=&source=both', 'http://localhost');
       const d = await runSearchQuery(pu.searchParams);
+      const порядок = рекомендуемыйПорядок(d.items || []);
       const preload = { total:d.total, kufar:d.kufar, realt:d.realt, flatbook:d.flatbook,
-                        items:(d.items||[]).slice(0, 24) };
+                        med: медианаЦены(d.items || []), items: порядок.slice(0, 24) };
       const inject = 'window.__PRELOAD=' + JSON.stringify(preload).replace(/</g,'\\u003c') + ';';
       // Подставляем функцией, а не строкой: в строке замены последовательности
       // $' и $` означают «весь текст после/до совпадения». Название объявления
