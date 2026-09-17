@@ -1,4 +1,4 @@
-// «Выходные от этого жилья»: /vyhodnye собирает петлю по лучшим местам в 30 км.
+// «🚗 Маршрут по местам рядом» от жилья: /vyhodnye собирает петлю по лучшим местам в 30 км.
 import { запуститьChrome } from './_браузер.mjs';
 
 const SITE = process.argv[2] || 'http://127.0.0.1:8241';
@@ -64,8 +64,6 @@ check('вне Беларуси — на вкладку мест', заГрани
 const мусор = await fetch(SITE + '/vyhodnye?lat=abc', { redirect: 'manual' });
 check('мусор в координатах — на вкладку мест', мусор.status === 302 && мусор.headers.get('location') === '/?country=places');
 check('noindex', /noindex/.test(r.headers.get('x-robots-tag') || ''));
-const р = await getJSON(SITE + `/api/places/ryadom?p=${lat},${lng}`);
-check('/api/places/ryadom у Мира: w = true', р.ok && р.items[0].w === true);
 
 // ── страница маршрута открывается с этими точками ──
 await send('Page.navigate', { url: SITE + куда });
@@ -77,16 +75,40 @@ check('план дня виден', await ждать(`!!document.getElementById(
 // ── ссылка в карточке ──
 await send('Page.navigate', { url: SITE + '/?region=minsk-obl&city=' + encodeURIComponent('Несвиж') + '&type=any' });
 await ждать(`document.querySelectorAll('#grid .card').length > 0 && !/Ищу/.test(document.getElementById('stat').textContent)`, 240);
-const есть = await ждать(`!!document.querySelector('#grid .nb .nb-wk')`, 60);
-check('у жилья под Несвижем есть «Маршрут на выходные…»', есть);
-if (есть) check('ссылка ведёт на /vyhodnye с координатами карточки и nofollow', await js(`(function(){
-  var a = document.querySelector('#grid .nb .nb-wk'), card = a.closest('.card'), i = [...document.querySelectorAll('#grid .card')].indexOf(card);
-  var x = window.__items[(window.__page - 1) * 24 + i];
-  return a.getAttribute('rel') === 'nofollow' && a.getAttribute('href') === '/vyhodnye?lat=' + (+x.lat).toFixed(5) + '&lng=' + (+x.lng).toFixed(5); })()`));
-if (есть) check('ссылка в цвете акцента и без подчёркивания-рамки', await js(`(function(){
-  var a = document.querySelector('#grid .nb .nb-wk'), cs = getComputedStyle(a), t = document.createElement('span');
-  t.style.color = 'var(--accent)'; a.parentNode.appendChild(t); var акцент = getComputedStyle(t).color; t.remove();
-  return cs.color === акцент && cs.borderBottomWidth === '0px' && cs.display === 'block'; })()`));
+const есть = await ждать(`!!document.querySelector('#grid a.seenear.wk')`, 20);
+check('у жилья под Несвижем есть «🚗 Маршрут по местам рядом»', есть && await js(`document.querySelector('#grid a.seenear.wk').textContent === '🚗 Маршрут по местам рядом'`));
+check('ссылка сразу после «Что посмотреть рядом» и есть ровно у карточек с точными координатами', await js(`(function(){
+  return [...document.querySelectorAll('#grid .card')].every(function(card, i){
+    var x = window.__items[(window.__page - 1) * 24 + i], a = card.querySelector('a.seenear.wk');
+    var нужна = !!(x.lat && x.lng && !x.approx && x.src !== 'H101');
+    if(!нужна) return !a;
+    var b = a && a.previousElementSibling;
+    return !!a && b && b.tagName === 'BUTTON' && b.classList.contains('seenear') && b.textContent === '🏰 Что посмотреть рядом'
+      && a.getAttribute('rel') === 'nofollow' && a.getAttribute('href') === '/vyhodnye?lat=' + (+x.lat).toFixed(5) + '&lng=' + (+x.lng).toFixed(5);
+  }); })()`));
+if (есть) check('оформлена как кнопка над ней и не шире карточки', await js(`(function(){
+  var a = document.querySelector('#grid a.seenear.wk'), b = a.previousElementSibling, ca = getComputedStyle(a), cb = getComputedStyle(b);
+  var ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect(), rc = a.closest('.card').getBoundingClientRect();
+  return ['fontSize','fontWeight','backgroundColor','borderTopWidth','borderTopColor','borderTopLeftRadius','color','paddingTop','textAlign'].every(function(k){ return ca[k] === cb[k]; })
+    && ca.textDecorationLine === 'none' && Math.abs(ra.width - rb.width) < 1 && Math.abs(ra.left - rb.left) < 1 && ra.right <= rc.right + 0.5; })()`));
+if (есть) {
+  const href = await js(`document.querySelector('#grid a.seenear.wk').getAttribute('href')`);
+  const пере = await fetch(SITE + href, { redirect: 'manual' });
+  check('ссылка из карточки ведёт через /vyhodnye на /marshrut', пере.status === 302 && (пере.headers.get('location') || '').startsWith('/marshrut?p='), пере.status + ' ' + пере.headers.get('location'));
+}
+check('строки «Рядом:» нет', await js(`!document.querySelector('#grid .nb') && !/Рядом:/.test(document.getElementById('grid').textContent)`));
+// приблизительные координаты и отели России — без ссылки (на подставленной выдаче)
+check('у approx и H101 ссылки нет, у точных есть', await js(`(function(){
+  var был = window.__items, стр = window.__page;
+  var база = { price: 50, rooms: 1, area: 'Несвиж', title: 'Проверка', photos: [], rating: 0, reviews: 0, phone: '', link: '' };
+  window.__items = [
+    Object.assign({}, база, { title: 'точные', src: 'Flatbook', lat: 53.2227, lng: 26.6917, approx: false, link: 'https://flatbook.by/proverka-1/' }),
+    Object.assign({}, база, { title: 'approx', src: 'Kufar', lat: 53.2227, lng: 26.6917, approx: true, link: 'https://www.kufar.by/item/1' }),
+    Object.assign({}, база, { title: 'H101', src: 'H101', cur: '₽', lat: 55.75, lng: 37.61, approx: false, link: 'https://101hotels.com/proverka' })];
+  window.__page = 1; renderCards();
+  var res = {}; document.querySelectorAll('#grid .card').forEach(function(c){ res[c.querySelector('.ttl').textContent] = !!c.querySelector('a.seenear.wk'); });
+  window.__items = был; window.__page = стр; renderCards();
+  return res['точные'] === true && res['approx'] === false && res['H101'] === false; })()`));
 check('на 400 px без прокрутки вбок', await js(`document.documentElement.scrollWidth <= innerWidth`));
 await js(`localStorage.clear(); 1`);
 
