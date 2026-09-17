@@ -42,6 +42,26 @@ for (const [src, u] of чужие) {
   check('чужая ссылка → пустой текст (' + src + ' ' + (u || 'пусто') + ')', r.text === '', JSON.stringify(r).slice(0, 100));
 }
 
+// не страница объявления — пустой текст сразу, без похода на площадку
+for (const [src, u] of [['Flatbook', 'https://flatbook.by/?n=1'], ['Flatbook', 'https://flatbook.by/'], ['CheckIn', 'https://check-in.by/search?city=grodno'],
+                        ['Kvartirka', 'https://kvartirka.by/lida/kvartiry/posutochno/'], ['CheckIn', 'https://check-in.by//example.com/kvartira/x']]) {
+  const t0 = Date.now();
+  const r = await getJSON(SITE + '/api/desc?' + new URLSearchParams({ src, url: u }));
+  check('не объявление → пустой текст быстро (' + src + ' ' + u + ')', r.text === '' && Date.now() - t0 < 500, (Date.now() - t0) + ' мс ' + JSON.stringify(r).slice(0, 80));
+}
+// запрос и якорь отбрасываются: это то же объявление и та же запись кэша
+const fb = выдача.filter(x => x.src === 'Flatbook').slice(0, 5);
+let образец = null;
+for (const x of fb) { const r = await getJSON(SITE + '/api/desc?' + new URLSearchParams({ src: 'Flatbook', url: x.link })); if (r.text) { образец = { x, text: r.text }; break; } }
+if (образец) {
+  const t0 = Date.now(); let все = true;
+  for (let n = 1; n <= 40; n++) {
+    const r = await getJSON(SITE + '/api/desc?' + new URLSearchParams({ src: 'Flatbook', url: образец.x.link + '?n=' + n + '#h' + n }));
+    if (r.text !== образец.text) все = false;
+  }
+  check('ссылка с ?n=…#… даёт тот же текст из кэша (40 вариантов быстро)', все && Date.now() - t0 < 3000, (Date.now() - t0) + ' мс');
+} else check('нашёлся Flatbook с описанием для проверки кэша', false);
+
 // ── браузер ──
 const { закрыть } = запуститьChrome(PORT, 'desc');
 let ws, id = 0; const pend = new Map(); const ошибки = [];

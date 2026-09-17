@@ -1523,16 +1523,50 @@ function isRealtUrl(v){
 // поддомены: у Flatbook города живут на grodno.flatbook.by и т. п.), без
 // чужого порта и «логина@» в адресе — иначе это снова был бы открытый прокси.
 const ДОМЕН_ОПИСАНИЯ = { Flatbook: 'flatbook.by', CheckIn: 'check-in.by', Kvartirka: 'kvartirka.by' };
-const ОПИСАНИЕ_TTL = 6 * 60 * 60 * 1000;
-function ссылкаПлощадки(src, v){
+// И только страницу объявления: адрес с другим путём (главная, поиск, что
+// угодно ещё) отклоняем, не скачивая. Запрос и якорь отбрасываем — у объявлений
+// их не бывает, а иначе ?n=1, ?n=2… были бы разными страницами для кэша.
+const ПУТЬ_ОПИСАНИЯ = {
+  Flatbook:  /^\/[a-z0-9]+(?:-[a-z0-9]+)+\/?$/i,                     // /kvartira-yl-chkalova-29/
+  CheckIn:   /^\/(?:kvartira|dom)\/[a-z0-9]+(?:-[a-z0-9]+)*\/?$/i,   // /dom/uyutnyj-domik-u-ozera-khotilki-32
+  Kvartirka: /^\/[a-z0-9-]+(?:\/[a-z0-9-]+){0,3}\/id\d+\/?$/i,      // /lida/kvartiry/posutochno/id4879
+};
+function наДоменеПлощадки(src, h){
   const домен = ДОМЕН_ОПИСАНИЯ[src];
-  if(!домен) return false;
+  h = String(h || '').toLowerCase();
+  return !!домен && (h === домен || h.endsWith('.' + домен));
+}
+// Возвращает приведённую ссылку https://хост/путь или '' — если ссылка не наша.
+function ссылкаОписания(src, v){
+  if(!ПУТЬ_ОПИСАНИЯ[src] || !v || String(v).length > 400) return '';
   try{
     const u = new URL(String(v));
-    const h = u.hostname.toLowerCase();
-    return u.protocol === 'https:' && !u.port && !u.username && !u.password
-      && (h === домен || h.endsWith('.' + домен));
-  }catch(e){ return false; }
+    if(u.protocol !== 'https:' || u.port || u.username || u.password) return '';
+    if(!наДоменеПлощадки(src, u.hostname) || !ПУТЬ_ОПИСАНИЯ[src].test(u.pathname)) return '';
+    return 'https://' + u.hostname.toLowerCase() + u.pathname;
+  }catch(e){ return ''; }
+}
+// Свой небольшой кэш, а не SEARCH_CACHE: тот общий на 300 записей, и сотня
+// запросов описаний вытесняла бы из него готовые выдачи жилья.
+// Пустой ответ и сбой помним недолго — площадка могла просто моргнуть.
+const ОПИСАНИЯ = new Map(), ОПИСАНИЯ_ИДУТ = new Map();
+const ОПИСАНИЕ_TTL = 6 * 60 * 60 * 1000, ОПИСАНИЕ_ПУСТО_TTL = 10 * 60 * 1000, ОПИСАНИЕ_СБОЙ_TTL = 60 * 1000;
+const ОПИСАНИЙ_МАКС = 500;
+function запомнитьОписание(к, text, срок){
+  ОПИСАНИЯ.delete(к);
+  ОПИСАНИЯ.set(к, { text, до: Date.now() + срок });
+  while(ОПИСАНИЯ.size > ОПИСАНИЙ_МАКС) ОПИСАНИЯ.delete(ОПИСАНИЯ.keys().next().value);   // Map помнит порядок — первым идёт самый старый
+}
+function описаниеСКэшем(src, url){
+  const к = src + '|' + url, з = ОПИСАНИЯ.get(к);
+  if(з && Date.now() < з.до) return Promise.resolve(з.text);
+  if(ОПИСАНИЯ_ИДУТ.has(к)) return ОПИСАНИЯ_ИДУТ.get(к);
+  const п = описаниеПлощадки(src, url)
+    .then(text => { запомнитьОписание(к, text, text ? ОПИСАНИЕ_TTL : ОПИСАНИЕ_ПУСТО_TTL); return text; },
+          e => { запомнитьОписание(к, '', ОПИСАНИЕ_СБОЙ_TTL); return ''; })
+    .finally(() => ОПИСАНИЯ_ИДУТ.delete(к));
+  ОПИСАНИЯ_ИДУТ.set(к, п);
+  return п;
 }
 // Разметка → текст. Абзацы оставляем переносами строк: у .desc в карточке
 // white-space:pre-line, и длинное описание усадьбы без абзацев читается плохо.
@@ -1562,10 +1596,11 @@ async function описаниеПлощадки(src, url){
     const a = j && j.props && (j.props.apartment || j.props.house);
     return текстИзРазметки(a && a.description);
   }
-  const r = await fetch(url, ждём({ headers: { 'User-Agent': UA, 'Accept-Language': 'ru' } }));
-  if(r.status === 404 || r.status === 410) return '';
-  if(!r.ok) throw new Error(src + ' ' + r.status);        // сбой площадки не кэшируем
-  if(r.url && !ссылкаПлощадки(src, r.url)) return '';      // увела переадресацией на чужой сайт — не разбираем
+  // Переадресации не выполняем: ссылка из выдачи ведёт прямо на объявление,
+  // а переход куда-то ещё — снятое объявление или чужой адрес. Это пустой текст.
+  const r = await fetch(url, ждём({ redirect: 'manual', headers: { 'User-Agent': UA, 'Accept-Language': 'ru' } }));
+  if((r.status >= 300 && r.status < 400) || r.status === 404 || r.status === 410) return '';
+  if(!r.ok) throw new Error(src + ' ' + r.status);
   const h = await r.text();
   let m = null;
   if(src === 'Flatbook') m = h.match(/class="(?:flat|cottage)-promo-text[^"]*">([\s\S]*?)(?:<div class="fadeout"|<a[\s>])/);
@@ -2399,6 +2434,11 @@ function ciЗапрос(путь, заголовки, осталосьПерех
   const переходов = осталосьПереходов === undefined ? 3 : осталосьПереходов;
   return new Promise(function(готово, беда){
     const адрес = /^https?:/.test(путь) ? путь : ('https://check-in.by' + путь);
+    // Путь теперь приходит и от посетителя (описание объявления), поэтому
+    // и сам адрес, и каждую переадресацию пускаем только на check-in.by.
+    let хост = '';
+    try{ const u = new URL(адрес); if(u.protocol === 'https:' && !u.port && !u.username) хост = u.hostname; }catch(e){}
+    if(!наДоменеПлощадки('CheckIn', хост)){ беда(new Error('check-in: чужой адрес ' + String(адрес).slice(0, 80))); return; }
     const з = require('https').get(адрес, { agent: CI_АГЕНТ, headers: заголовки || {} }, function(r){
       if([301, 302, 303, 307, 308].indexOf(r.statusCode) >= 0 && r.headers.location && переходов > 0){
         r.resume();
@@ -10852,11 +10892,11 @@ http.createServer(async (req,res)=>{
     try{
       const src=u.searchParams.get('src'), id=u.searchParams.get('id'), url=u.searchParams.get('url');
       if(src==='Kufar' && id && /^[0-9]{1,20}$/.test(id)){
-        const dj = await (await fetch('https://api.kufar.by/search-api/v1/item/'+id+'/rendered?lang=ru',{headers:{'User-Agent':UA}})).json();
+        const dj = await (await fetch('https://api.kufar.by/search-api/v1/item/'+id+'/rendered?lang=ru', ждём({headers:{'User-Agent':UA}}))).json();
         text = (dj.result && dj.result.body) || '';
-      } else if(ссылкаПлощадки(src, url)){
-        const ключ = 'desc|' + src + '|' + new URL(url).toString();
-        text = (await cached(ключ, async () => ({ text: await описаниеПлощадки(src, url) }), ОПИСАНИЕ_TTL)).text;
+      } else if(ПУТЬ_ОПИСАНИЯ[src]){
+        const ссылка = ссылкаОписания(src, url);          // не наша ссылка — пустой текст без запроса
+        if(ссылка) text = await описаниеСКэшем(src, ссылка);
       } else if(src==='Realt' && isRealtUrl(url)){
         const h = await (await fetch(url, ждём({headers:{'User-Agent':UA}}))).text();
         const m = h.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
