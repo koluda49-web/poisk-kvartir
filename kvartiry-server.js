@@ -2028,8 +2028,11 @@ const EXTRA_PLACES = [
   "addr": "д. Старые Василишки, Щучинский р-н",
   "cat": "костёл",
   "group": "Из маршрутов",
-  "pic": "",
-  "text": "Костёл в деревне Старые Василишки. Деревня известна как родина певца Чеслава Немена — в его родительском доме работает музей, до него несколько минут пешком."
+  "pic": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/25/Staryja_Vasilishki%2C_Church_of_St_Peter_and_Paul%2C_front_%281903%29_-_panoramio.jpg/960px-Staryja_Vasilishki%2C_Church_of_St_Peter_and_Paul%2C_front_%281903%29_-_panoramio.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+  "text": "Неоготический костёл из красного кирпича с двумя высокими башнями, построен в 1897–1903 годах по проекту архитектора Константина Войцеховского. Деревня известна как родина певца Чеслава Немена — в его родительском доме работает музей, до него несколько минут пешком.",
+  "author": "Ihar Strakha",
+  "lic": "CC BY 3.0",
+  "src": "https://commons.wikimedia.org/wiki/File:Staryja_Vasilishki,_Church_of_St_Peter_and_Paul,_front_(1903)_-_panoramio.jpg"
  },
  {
   "id": 910029,
