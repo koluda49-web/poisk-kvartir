@@ -1,0 +1,18 @@
+{
+  "4999": {
+    "pic": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2b/Benica_church.jpg/640px-Benica_church.jpg",
+    "author": "проверочный автор",
+    "lic": "CC BY-SA 4.0",
+    "src": "https://commons.wikimedia.org/wiki/File:Benica_church.jpg"
+  },
+  "4694": {
+    "pic": "https://evil.example.org/wikipedia/commons/a/a1/X.jpg",
+    "author": "проверочный автор",
+    "lic": "CC0"
+  },
+  "4985": {
+    "pic": "https://upload.wikimedia.org/wikipedia/commons/a/a1/Molodovo.jpg",
+    "author": "проверочный автор",
+    "lic": "CC BY 3.0"
+  }
+}
