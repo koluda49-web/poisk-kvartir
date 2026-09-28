@@ -6392,9 +6392,10 @@ function карточкаТочки(){
     if(своя(p)){
       var з = ЗДЕСЬ[id];
       return '<div class="pc" data-id="' + esc(id) + '">'
-        + (з && з.length ? ('<p class="pc-m">Объявление в этой точке:</p><div class="nr-list">' + з.map(плиткаЖилья).join('') + '</div>')
-            : (з === undefined ? '<p class="pc-m pc-wait">Проверяю, есть ли здесь объявление…</p>' : ''))
-        + '<p class="pc-m">Своя точка · ' + координаты(p) + '</p>'
+        + (з && з.length ? ('<p class="pc-m">' + (з.length > 1 ? 'Объявления' : 'Объявление') + ' в этой точке:</p>'
+              + '<div class="nr-list">' + з.map(плиткаЖилья).join('') + '</div>')
+            : ((з === undefined ? '<p class="pc-m pc-wait">Проверяю, есть ли здесь объявление…</p>' : '')
+              + '<p class="pc-m">Своя точка · ' + координаты(p) + '</p>'))
         + '<div class="pc-b"><button class="pc-stay" type="button" aria-expanded="false">Жильё рядом</button>'
         +   '<button class="pc-drop" type="button">Убрать из маршрута</button></div>'
         + '<div class="pc-st" hidden></div></div>';
@@ -6419,10 +6420,10 @@ function карточкаТочки(){
     if(своя(p)){
       var з = ЗДЕСЬ[id] || [];
       return '<div class="pp" data-id="' + esc(id) + '"><b>📍 ' + esc(p.name) + '</b>'
-        + '<small>Своя точка · ' + координаты(p) + '</small>'
+        + (з.length ? '' : ('<small>Своя точка · ' + координаты(p) + '</small>'))
         + з.map(function(x){
             return '<a class="pp-here" href="' + esc(x.link) + '" target="_blank" rel="noopener">🏠 '
-              + esc(x.title || x.name || 'Жильё на сутки') + ' — ' + (x.от ? 'от ' : '') + esc(x.price) + ' BYN · '
+              + esc(короткоеНазвание(x.title || x.name || 'Жильё на сутки')) + ' — ' + (x.от ? 'от ' : '') + esc(x.price) + ' BYN · '
               + esc(источникЖилья(x.src)) + ' →</a>';
           }).join('')
         + '<div class="pp-b"><button class="pp-drop" type="button">Убрать из маршрута</button></div></div>';
@@ -6469,7 +6470,8 @@ function карточкаТочки(){
   function окошко(p){
     if(!карта || typeof L === 'undefined') return;
     if(!ПОПАП){
-      ПОПАП = L.popup({ maxWidth: 260, minWidth: 210, autoPanPadding: [16, 16] });
+      // слева сверху стоят кнопки «+ −»: окошко от них отодвигаем
+      ПОПАП = L.popup({ maxWidth: 260, minWidth: 210, autoPanPadding: [16, 16], autoPanPaddingTopLeft: [56, 16] });
       карта.on('popupclose', function(e){ if(e.popup === ПОПАП) ПОПАП_ИД = ''; });
     }
     ПОПАП_ИД = String(p.id);
@@ -6551,6 +6553,17 @@ function карточкаТочки(){
       + '<span class="d">' + (x.от ? 'от ' : '') + esc(x.price) + ' BYN</span>'
       + '<span class="s">' + esc(источникЖилья(x.src))
       +   (x.approx ? (x.area ? (' · ' + esc(x.area)) : '') : (' · ' + String(x.km).replace('.', ',') + ' км')) + '</span></a>';
+  }
+  // Название объявления для окошка на карте. Заголовки на Kufar ограничены
+  // по длине, и хозяева обрывают их на полуслове: «…с горячей к», «…в Нал».
+  // В плитке такое прячет многоточие стилей, а в окошке строка видна вся.
+  // Длинное режем по целому слову, висящие предлоги и знаки убираем, ставим «…».
+  function короткоеНазвание(t){
+    t = String(t || '').replace(/\s+/g, ' ').trim();
+    if(t.length <= 34) return t;
+    var с = t.slice(0, 35).split(' '); с.pop();
+    while(с.length > 1 && /^(?:[а-яёa-z]{1,2}|от|до|на|за|из|по|для|под|при|над|без|про|или|[-–—,.:;(«"])$/i.test(с[с.length - 1])) с.pop();
+    return с.join(' ').replace(/[-–—,.:;(«"\s]+$/, '') + '…';
   }
   // Объявление ровно в своей точке: точные координаты жилья (не «примерно,
   // по району») не дальше 150 м. Ответ держим в памяти страницы; сбой —

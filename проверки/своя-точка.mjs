@@ -149,15 +149,27 @@ else {
   await send('Page.navigate', { url: SITE + '/marshrut?p=' + т + '~' + encodeURIComponent('Жильё') + ',5062' }); await sleep(1500);
   await js(`document.querySelector('.ownn.nm').click(); 1`);
   for (let i = 0; i < 60; i++) { if (await js(`!!document.querySelector('.pc') && !document.querySelector('.pc .pc-wait')`)) break; await sleep(500); }
-  check('в карточке своей точки есть «Объявление в этой точке»', await js(`/Объявление в этой точке/.test(document.querySelector('.pc').textContent)`));
+  check('в карточке своей точки есть «Объявление в этой точке»', await js(`/Объявлени[ея] в этой точке/.test(document.querySelector('.pc').textContent)`));
+  check('число в заголовке совпадает с числом объявлений', await js(`(()=>{const n=document.querySelectorAll('.pc a.nc').length, t=document.querySelector('.pc').textContent; return n > 1 ? /Объявления в этой точке/.test(t) : /Объявление в этой точке/.test(t);})()`));
+  check('при объявлении координаты своей точки не показываются', await js(`!/Своя точка ·/.test(document.querySelector('.pc').textContent) && !/Своя точка ·/.test(document.querySelector('.leaflet-popup').textContent)`));
+  check('название в окошке не обрывается на полуслове', await js(`[...document.querySelectorAll('.leaflet-popup a.pp-here')].every(a => { const н = a.textContent.replace(/^🏠\s*/, '').split(' — ')[0]; return н.length <= 35 || н.endsWith('…'); })`));
   check('ссылка ведёт на само объявление', await js(`[...document.querySelectorAll('.pc a.nc')].some(a => a.href === ${JSON.stringify(жильё.link)})`));
   check('и в окошке на карте тоже', await js(`[...document.querySelectorAll('.leaflet-popup a.pp-here')].some(a => a.href === ${JSON.stringify(жильё.link)})`));
   check('у своей точки есть «Жильё рядом»', await js(`!!document.querySelector('.pc .pc-stay')`));
+  // на телефоне окошко не заезжает на кнопки «+ −» карты
+  await send('Emulation.setDeviceMetricsOverride', { width: 400, height: 900, deviceScaleFactor: 1, mobile: true });
+  await send('Page.reload'); await sleep(2000);
+  await js(`document.querySelector('.ownn.nm').click(); 1`);
+  for (let i = 0; i < 60; i++) { if (await js(`!!document.querySelector('.leaflet-popup a.pp-here')`)) break; await sleep(500); }
+  await sleep(800);
+  check('на телефоне окошко не заезжает на «+ −»', await js(`(()=>{const a=document.querySelector('.leaflet-popup').getBoundingClientRect(), b=document.querySelector('.leaflet-control-zoom').getBoundingClientRect(); return a.left >= b.right || a.top >= b.bottom || a.bottom <= b.top;})()`));
+  await send('Emulation.setDeviceMetricsOverride', { width: 1200, height: 900, deviceScaleFactor: 1, mobile: false });
   // точка в чистом поле: объявления нет — и надпись «Проверяю…» не висит
   await send('Page.navigate', { url: SITE + '/marshrut?p=m53.90000_26.20000~' + encodeURIComponent('Поле') + ',5062' }); await sleep(1500);
   await js(`document.querySelector('.ownn.nm').click(); 1`);
   for (let i = 0; i < 60; i++) { if (await js(`!!document.querySelector('.pc') && !document.querySelector('.pc .pc-wait')`)) break; await sleep(500); }
-  check('в чистом поле объявления нет и «Проверяю» не висит', await js(`!/Объявление в этой точке|Проверяю/.test(document.querySelector('.pc').textContent)`));
+  check('в чистом поле объявления нет и «Проверяю» не висит', await js(`!/Объявлени[ея] в этой точке|Проверяю/.test(document.querySelector('.pc').textContent)`));
+  check('без объявления координаты на месте', await js(`/Своя точка ·/.test(document.querySelector('.pc').textContent)`));
 }
 
 check('в консоли нет ошибок', ошибки.length === 0, ошибки.slice(0, 2).join(' | '));
