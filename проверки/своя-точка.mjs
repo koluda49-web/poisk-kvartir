@@ -4,7 +4,8 @@
 // «Вольным мельником»). Проверяем, что точку можно поставить самому: на
 // карте мест и на странице маршрута, по нажатию на карту и по координатам;
 // что она попадает в ссылку вместе с именем, переживает переход между
-// страницами, её можно передвинуть и убрать, а на карте жилья кнопки нет.
+// страницами, её можно передвинуть и убрать, а на карте жилья кнопки нет;
+// если в точке стоит объявление — карточка точки ведёт на него.
 //
 // Сервер должен быть запущен.
 //   node проверки/своя-точка.mjs
@@ -135,6 +136,29 @@ check('на пустом маршруте карта открывается дл
 имяДляОкна = '';
 await js(`карта.fire('click', { latlng: L.latLng(53.9, 27.56) }); 1`); await sleep(400);
 check('без имени точка называется «Своя точка»', await js(`/Своя точка/.test(document.getElementById('rlist').textContent)`));
+
+// ── объявление в своей точке ────────────────────────────────────────────
+// «Маршрут по местам рядом» из карточки жилья и ссылки из роликов ставят
+// своей точкой само жильё. Раньше вернуться к объявлению со страницы
+// маршрута было нельзя. Берём любое жильё с точными координатами у Налибок.
+const жильё = ((await (await fetch(SITE + '/api/places/stay?lat=53.98804&lng=26.31518&r=30')).json()).items || [])
+  .find(x => !x.approx && x.lat && x.lng && x.link);
+if (!жильё) check('рядом с Налибоками нашлось жильё для проверки', false, 'в выдаче нет жилья с точными координатами');
+else {
+  const т = 'm' + (+жильё.lat).toFixed(5) + '_' + (+жильё.lng).toFixed(5);
+  await send('Page.navigate', { url: SITE + '/marshrut?p=' + т + '~' + encodeURIComponent('Жильё') + ',5062' }); await sleep(1500);
+  await js(`document.querySelector('.ownn.nm').click(); 1`);
+  for (let i = 0; i < 60; i++) { if (await js(`!!document.querySelector('.pc') && !document.querySelector('.pc .pc-wait')`)) break; await sleep(500); }
+  check('в карточке своей точки есть «Объявление в этой точке»', await js(`/Объявление в этой точке/.test(document.querySelector('.pc').textContent)`));
+  check('ссылка ведёт на само объявление', await js(`[...document.querySelectorAll('.pc a.nc')].some(a => a.href === ${JSON.stringify(жильё.link)})`));
+  check('и в окошке на карте тоже', await js(`[...document.querySelectorAll('.leaflet-popup a.pp-here')].some(a => a.href === ${JSON.stringify(жильё.link)})`));
+  check('у своей точки есть «Жильё рядом»', await js(`!!document.querySelector('.pc .pc-stay')`));
+  // точка в чистом поле: объявления нет — и надпись «Проверяю…» не висит
+  await send('Page.navigate', { url: SITE + '/marshrut?p=m53.90000_26.20000~' + encodeURIComponent('Поле') + ',5062' }); await sleep(1500);
+  await js(`document.querySelector('.ownn.nm').click(); 1`);
+  for (let i = 0; i < 60; i++) { if (await js(`!!document.querySelector('.pc') && !document.querySelector('.pc .pc-wait')`)) break; await sleep(500); }
+  check('в чистом поле объявления нет и «Проверяю» не висит', await js(`!/Объявление в этой точке|Проверяю/.test(document.querySelector('.pc').textContent)`));
+}
 
 check('в консоли нет ошибок', ошибки.length === 0, ошибки.slice(0, 2).join(' | '));
 console.log('\nПройдено ' + passed + ', падает ' + failed);

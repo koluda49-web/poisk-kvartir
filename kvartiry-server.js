@@ -6332,6 +6332,10 @@ function подогнатьСнимки(корень){
 function карточкаТочки(){
   var ЗАПРОСЫ = {}, ГОТОВО = {}, СБОЙ = {};
   var ОТКРЫТА = '', ПОПАП = null, ПОПАП_ИД = '';
+  // Объявления прямо в своей точке. Такую точку ставит «Маршрут по местам
+  // рядом» из карточки жилья, и её же даём в ссылках из роликов: без этого
+  // со страницы маршрута нельзя было вернуться к самому объявлению.
+  var ЗДЕСЬ = {};
   var список = document.getElementById('rlist');
 
   function точка(id){
@@ -6386,9 +6390,14 @@ function карточкаТочки(){
   function htmlКарточки(p){
     var id = String(p.id);
     if(своя(p)){
+      var з = ЗДЕСЬ[id];
       return '<div class="pc" data-id="' + esc(id) + '">'
+        + (з && з.length ? ('<p class="pc-m">Объявление в этой точке:</p><div class="nr-list">' + з.map(плиткаЖилья).join('') + '</div>')
+            : (з === undefined ? '<p class="pc-m pc-wait">Проверяю, есть ли здесь объявление…</p>' : ''))
         + '<p class="pc-m">Своя точка · ' + координаты(p) + '</p>'
-        + '<div class="pc-b"><button class="pc-drop" type="button">Убрать из маршрута</button></div></div>';
+        + '<div class="pc-b"><button class="pc-stay" type="button" aria-expanded="false">Жильё рядом</button>'
+        +   '<button class="pc-drop" type="button">Убрать из маршрута</button></div>'
+        + '<div class="pc-st" hidden></div></div>';
     }
     var d = ГОТОВО[id], и = инфо(p), ждём = !d && !СБОЙ[id];
     var текст = (d && d.text) || и.t || '';
@@ -6408,8 +6417,14 @@ function карточкаТочки(){
   function htmlОкошка(p){
     var id = String(p.id);
     if(своя(p)){
+      var з = ЗДЕСЬ[id] || [];
       return '<div class="pp" data-id="' + esc(id) + '"><b>📍 ' + esc(p.name) + '</b>'
         + '<small>Своя точка · ' + координаты(p) + '</small>'
+        + з.map(function(x){
+            return '<a class="pp-here" href="' + esc(x.link) + '" target="_blank" rel="noopener">🏠 '
+              + esc(x.title || x.name || 'Жильё на сутки') + ' — ' + (x.от ? 'от ' : '') + esc(x.price) + ' BYN · '
+              + esc(источникЖилья(x.src)) + ' →</a>';
+          }).join('')
         + '<div class="pp-b"><button class="pp-drop" type="button">Убрать из маршрута</button></div></div>';
     }
     var d = ГОТОВО[id], и = инфо(p), снимок = d && d.pics && d.pics[0];
@@ -6476,7 +6491,17 @@ function карточкаТочки(){
     var id = ОТКРЫТА = String(p.id);
     вставить(p);
     окошко(p);
-    if(своя(p) || ГОТОВО[id]) return;
+    if(своя(p)){
+      if(ЗДЕСЬ[id] !== undefined) return;
+      найтиЗдесь(p).then(function(){
+        if(ОТКРЫТА !== id) return;
+        var сейчас = точка(id); if(!сейчас) return;
+        вставить(сейчас);
+        if(ПОПАП_ИД === id){ ПОПАП.setContent(htmlОкошка(сейчас)); подогнатьСнимки(ПОПАП.getElement()); }
+      });
+      return;
+    }
+    if(ГОТОВО[id]) return;
     загрузить(p).then(function(){
       if(ОТКРЫТА !== id) return;
       var сейчас = точка(id); if(!сейчас) return;
@@ -6515,16 +6540,29 @@ function карточкаТочки(){
         ? ('<a class="pc-all" href="/?region=' + encodeURIComponent(d.region) + '&type=flat&source=both">Всё жильё рядом →</a>') : '';
       б.setAttribute('data-ok', '1');
       if(!items.length){ б.innerHTML = '<p class="pc-m">В 30 км жилья сейчас не нашлось.</p>' + все; return; }
-      б.innerHTML = '<div class="nr-list">' + items.map(function(x){
-        var ф = x.photos && x.photos[0];
-        return '<a class="nc" href="' + esc(x.link) + '" target="_blank" rel="noopener">'
-          + (ф ? ('<img src="' + esc(ф) + '" alt="" loading="lazy">') : '<div class="ni"></div>')
-          + '<span class="p">' + esc(x.title || x.name || 'Жильё на сутки') + '</span>'
-          + '<span class="d">' + (x.от ? 'от ' : '') + esc(x.price) + ' BYN</span>'
-          + '<span class="s">' + esc(источникЖилья(x.src))
-          +   (x.approx ? (x.area ? (' · ' + esc(x.area)) : '') : (' · ' + String(x.km).replace('.', ',') + ' км')) + '</span></a>';
-      }).join('') + '</div>' + все;
+      б.innerHTML = '<div class="nr-list">' + items.map(плиткаЖилья).join('') + '</div>' + все;
     }).catch(function(){ б.innerHTML = '<p class="pc-m">Жильё рядом сейчас не загрузилось.</p>'; });
+  }
+  function плиткаЖилья(x){
+    var ф = x.photos && x.photos[0];
+    return '<a class="nc" href="' + esc(x.link) + '" target="_blank" rel="noopener">'
+      + (ф ? ('<img src="' + esc(ф) + '" alt="" loading="lazy">') : '<div class="ni"></div>')
+      + '<span class="p">' + esc(x.title || x.name || 'Жильё на сутки') + '</span>'
+      + '<span class="d">' + (x.от ? 'от ' : '') + esc(x.price) + ' BYN</span>'
+      + '<span class="s">' + esc(источникЖилья(x.src))
+      +   (x.approx ? (x.area ? (' · ' + esc(x.area)) : '') : (' · ' + String(x.km).replace('.', ',') + ' км')) + '</span></a>';
+  }
+  // Объявление ровно в своей точке: точные координаты жилья (не «примерно,
+  // по району») не дальше 150 м. Ответ держим в памяти страницы; сбой —
+  // как «ничего не нашлось», чтобы не висела надпись «Проверяю…».
+  function найтиЗдесь(p){
+    var id = String(p.id);
+    return fetch('/api/places/stay?lat=' + p.lat + '&lng=' + p.lng + '&r=1').then(function(r){ return r.json(); })
+      .then(function(d){
+        ЗДЕСЬ[id] = ((d && d.items) || []).filter(function(x){
+          return x && x.link && !x.approx && typeof x.km === 'number' && x.km <= 0.15;
+        }).slice(0, 2);
+      }, function(){ ЗДЕСЬ[id] = []; });
   }
 
   список.addEventListener('click', function(e){
@@ -7339,6 +7377,7 @@ async function marshrutPage(ids, опции){
     + '.pp-im{width:100%;height:100%;object-fit:contain;display:block}'
     + '.pp b{display:block;font-size:15px;line-height:1.25}.pp small{display:block;color:#9c948c;font-size:12px}'
     + '.pp p{margin:5px 0 7px;color:#57534e}.pp-b{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center}'
+    + '.pp-here{display:block;margin:6px 0 8px;font-weight:600;line-height:1.35}'
     + '.pp-b a,.pp-b button{font:inherit;font-weight:600;background:none;border:0;padding:0;color:#9a3412;cursor:pointer;text-decoration:underline}'
     + '.about{margin:22px 0 0;max-width:70ch}.about h2{font-size:17px;line-height:1.25;margin:0 0 6px;letter-spacing:-.01em}'
     + '.about p{margin:0 0 10px}.about[hidden]{display:none}'
