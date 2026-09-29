@@ -9045,7 +9045,31 @@ const СПРОС = {
                             пояснение:'Дома, усадьбы и гостевые дома до 70 км от Минска, где по объявлению '
                               + 'помещается от 12 человек. Цена в объявлении — минимальная, обычно за будни '
                               + 'и нескольких гостей: за компанию, банкет и праздничные даты хозяева считают отдельно. '
-                              + 'Можно ли шуметь, есть ли зал и сколько выйдет на ваших людей, уточняйте у хозяина.' },
+                              + 'Можно ли шуметь, есть ли зал и сколько выйдет на ваших людей, уточняйте у хозяина.',
+                            // Большие корпоративы уходят не в дома, а в загородные комплексы с залами
+                            // (просьба владельца 29.09: «типа Робинсон Клаба»). На площадках
+                            // объявлений их нет — даём проверенным списком со ссылкой на сайт
+                            // комплекса, без цен и без фото. Сверено по сайтам комплексов 29.09.2026.
+                            площадки: [
+                              { имя:'Robinson Club', где:'берег Минского моря, Минский р-н, п/о Ратомка — 7 км от Минска',
+                                зал:'банкетные залы от 20 до 500 человек, шатёр до 400 человек фуршетом',
+                                жильё:'отель и коттеджи, самый большой — до 45 человек', сайт:'https://robins.by/meropriyatiya/korporativ-za-gorodom/' },
+                              { имя:'«Стайки»', где:'Минский р-н, у д. Ельница — 10 км от Минска, сосновый лес с озером',
+                                зал:'корпоративы от 30 до 300 человек, залы на 35 и 300 мест',
+                                жильё:'гостиницы на территории', сайт:'https://stayki.by/services/korporativnyj-otdyh/' },
+                              { имя:'«На том берегу»', где:'берег водохранилища Дрозды, у МКАД',
+                                зал:'банкеты и корпоративы',
+                                жильё:'19 отдельных домиков, всего до 48 спальных мест', сайт:'https://natomberegu.by/' },
+                              { имя:'Усадьба «Заречаны»', где:'Пуховичский р-н, д. Заречаны — 24 км от Минска',
+                                зал:'банкет и программа на месте, вместимость уточняйте',
+                                жильё:'несколько отдельных домов, есть банный дом', сайт:'https://zarechany.by/' },
+                              { имя:'Загородный клуб «Фестивальный»', где:'Воложинский р-н, хутор Орловщина — 30 км от Минска',
+                                зал:'ресторан с двумя залами, банкетный, каминный и конференц-зал; события до 1500 человек',
+                                жильё:'гостиница, гостевой дом, кемпинг; банный комплекс', сайт:'https://festclub.by/organizatsiya-meropriyatiy/korporativnyy-otdyh/' },
+                              { имя:'Парк-отель «Версаль»', где:'Пуховичский р-н, аг. Сергеевичи — около 70 км от Минска',
+                                зал:'ресторан с двумя банкетными залами, до 200 человек',
+                                жильё:'гостиница и пять коттеджей на 4–16 человек; банный комплекс', сайт:'https://versal-park.by/' },
+                            ] },
 
   // курортные места: тут ищут «снять домик», а не «жильё рядом с объектом»
   'braslav':      { точка:[55.6333, 27.05],  радиус:25,
@@ -9101,6 +9125,23 @@ async function спросДанные(z){
   }
   // полнота — по ответу до отбора по слову: в Уручье четыре варианта, а в Минске сотни
   return { items: items, total: items.length, полный: ответы.every(ответПолный) };
+}
+
+// Загородные комплексы с залами — для корпоративов на десятки и сотни
+// человек. Их нет на площадках объявлений, поэтому это не выдача, а короткий
+// проверенный список: где, какие залы, где ночевать и ссылка на сайт.
+function блокПлощадок(список){
+  if(!Array.isArray(список) || !список.length) return '';
+  return '<h2>Загородные комплексы с банкетными залами</h2>'
+    + '<p class="lead">Для компании больше, чем помещается в дом: залы, ночёвка и еда в одном месте. '
+    +   'Цены и свободные даты — на сайтах комплексов; мы их не бронируем и ничего с этого не получаем.</p>'
+    + '<div class="venues">' + список.map(function(п){
+        return '<article class="v"><h3>' + esc(п.имя) + '</h3>'
+          + '<p class="vw">' + esc(п.где) + '</p>'
+          + '<p><b>Залы:</b> ' + esc(п.зал) + '</p>'
+          + '<p><b>Ночёвка:</b> ' + esc(п.жильё) + '</p>'
+          + '<a class="go" href="' + esc(п.сайт) + '" target="_blank" rel="noopener nofollow">Сайт комплекса →</a></article>';
+      }).join('') + '</div>';
 }
 
 // Дом это или квартира. Разделы площадок для этого не годятся: в «усадьбы»
@@ -9192,6 +9233,8 @@ async function спросPage(slug){
     +   'у Check-in и Kvartirka — с обновлением несколько раз в сутки.</p>'
     + (z.пояснение ? ('<p class="lead">' + esc(z.пояснение) + '</p>') : '')
     + '<a class="cta" href="' + куда + '">Открыть поиск с фильтрами и картой →</a>'
+    + блокПлощадок(z.площадки)
+    + (z.площадки ? '<h2>Дома и усадьбы целиком</h2>' : '')
     + '<div class="grid">' + карточки + '</div>'
     + блокМестРядом(места, маршрут)
     + '<div class="others">' + рядом + '</div>'
@@ -9292,6 +9335,10 @@ const СТИЛЬ_СПИСКА = ':root{color-scheme:light dark}'
   + '.c .m span{font-size:12.5px;background:#f7f8fa;border:1px solid #eef0f4;border-radius:999px;padding:3px 9px;color:#4a5160}'
   + '.c h3{font-size:14.5px;font-weight:600;margin:2px 0 0;color:#141821}'
   + '.c .go{margin-top:auto;padding-top:8px;color:#9a3412;font-weight:700;text-decoration:none;font-size:14px}'
+  + '.venues{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;margin:0 0 10px}'
+  + '.v{background:#fff;border:1px solid #e2e5ea;border-radius:16px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}'
+  + '.v h3{margin:0;font-size:17px}.v p{margin:0;font-size:14px;color:#4a5160}.v .vw{color:#8b93a3;font-size:13px;margin-bottom:4px}'
+  + '.v .go{margin-top:auto;padding-top:8px;color:#9a3412;font-weight:700;text-decoration:none;font-size:14px}'
   + '.others{margin:34px 0 0;display:flex;flex-wrap:wrap;gap:10px}'
   + '.others a{background:#fff;border:1px solid #e2e5ea;border-radius:999px;padding:8px 16px;text-decoration:none;color:#141821;font-size:14px}'
   + 'footer{margin-top:34px;color:#8b93a3;font-size:13.5px;max-width:75ch}'
@@ -10393,6 +10440,8 @@ a.seenear{display:block;box-sizing:border-box;text-align:center;text-decoration:
   border-radius:999px;padding:9px 16px;cursor:pointer;transition:.15s;
 }
 .preset:hover{border-color:var(--line-strong);color:var(--txt)}
+.preset-go{text-decoration:none;color:var(--accent);border-color:color-mix(in srgb,var(--accent) 35%,var(--line))}
+.preset-go:hover{color:var(--accent);text-decoration:none}
 .preset.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);
   box-shadow:0 4px 14px -4px color-mix(in srgb,var(--accent) 70%,transparent)}
 /* Кружки с числом вместо кучи наложенных меток */
@@ -10705,6 +10754,8 @@ a.seenear{display:block;box-sizing:border-box;text-align:center;text-decoration:
     <button class="preset" type="button" data-preset="usadba">усадьбы</button>
     <button class="preset" type="button" data-preset="one">1 комната</button>
     <button class="preset" type="button" data-preset="photo">только с фото</button>
+    <a class="preset preset-go" href="/doma-na-novyj-god">Дома на Новый год →</a>
+    <a class="preset preset-go" href="/doma-dlya-korporativa">Для корпоратива →</a>
   </div>
 
   <div class="toolbar">
@@ -12571,7 +12622,7 @@ const PRESETS = {
     else  { $('#from').value = ''; $('#to').value = ''; }
   },
 };
-document.querySelectorAll('#presets .preset').forEach(function(b){
+document.querySelectorAll('#presets button.preset').forEach(function(b){
   b.addEventListener('click', function(){
     const key = b.getAttribute('data-preset');
     const on = !b.classList.contains('on');
@@ -12591,7 +12642,7 @@ function syncPresets(){
     photo:   $('#onlyPhoto').checked,
     weekend: !!($('#from').value && $('#to').value),
   };
-  document.querySelectorAll('#presets .preset').forEach(function(b){
+  document.querySelectorAll('#presets button.preset').forEach(function(b){
     b.classList.toggle('on', !!state[b.getAttribute('data-preset')]);
   });
 }

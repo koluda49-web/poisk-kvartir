@@ -35,6 +35,21 @@ for (const с of СТРАНИЦЫ) {
   check('кнопка ведёт в поиск домов', html.includes('href="/?region=minsk-obl&amp;type=cottage"') || html.includes('href="/?region=minsk-obl&type=cottage"'));
 }
 
+// корпоративы: загородные комплексы с залами — отдельным блоком, со ссылкой на сайт
+const корп = await (await fetch(SITE + '/doma-dlya-korporativa')).text();
+check('на странице корпоративов есть блок загородных комплексов', /Загородные комплексы с банкетными залами/.test(корп));
+check('в нём шесть комплексов', (корп.match(/<article class="v">/g) || []).length === 6, 'нашлось ' + (корп.match(/<article class="v">/g) || []).length);
+check('Robinson Club со ссылкой на свой сайт', /Robinson Club/.test(корп) && корп.includes('href="https://robins.by/'));
+check('ссылки на комплексы — nofollow и в новой вкладке', (корп.match(/class="go" href="https:\/\/[^"]+" target="_blank" rel="noopener nofollow">Сайт комплекса/g) || []).length === 6);
+check('у комплексов нет цен', корп.split('<article class="v">').slice(1).every(к => !/BYN/.test(к.split('</article>')[0])));
+const нг = await (await fetch(SITE + '/doma-na-novyj-god')).text();
+check('на странице Нового года комплексов нет', !/Загородные комплексы/.test(нг));
+
+// главная ведёт на обе подборки
+const главная = await (await fetch(SITE + '/')).text();
+check('на главной есть ссылка «Дома на Новый год»', главная.includes('href="/doma-na-novyj-god"'));
+check('на главной есть ссылка «Для корпоратива»', главная.includes('href="/doma-dlya-korporativa"'));
+
 // обе страницы в карте сайта и в «других подборках» у соседей
 const карта = await (await fetch(SITE + '/sitemap.xml')).text();
 for (const с of СТРАНИЦЫ) check('/' + с.slug + ' в карте сайта', карта.includes('/' + с.slug + '</loc>'));
