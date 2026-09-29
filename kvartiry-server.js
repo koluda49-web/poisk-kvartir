@@ -9027,6 +9027,26 @@ const СПРОС = {
   'dom-s-banej':    { обл:'minsk-obl', тип:'any', слово:'(^|[^а-яa-z])(бан[ья]|саун)',
                       что:'Дома и усадьбы на сутки с баней', где:'под Минском' },
 
+  // Сезонные (добавлены 29.09). Дома на Новый год разбирают в октябре–ноябре,
+  // корпоративы — тогда же. Своих данных о свободных датах у нас нет, поэтому
+  // отбираем то, что вообще годится: дома на компанию недалеко от Минска,
+  // а про праздничную цену и свободный вечер честно просим спросить хозяина.
+  'doma-na-novyj-god':    { обл:['minsk', 'minsk-obl'], тип:'any', дома:true, гостей:8, отМинска:100,
+                            что:'Дома на Новый год', где:'под Минском',
+                            поиск:'/?region=minsk-obl&type=cottage',
+                            пояснение:'Дома и усадьбы до 100 км от Минска, куда помещается компания от 8 человек. '
+                              + 'На Новый год такие разбирают в октябре–ноябре, поэтому смотреть лучше сейчас. '
+                              + 'Цена в объявлении — обычная, чаще всего за будни и двух гостей: '
+                              + 'новогодняя ночь почти везде дороже и часто сдаётся только на несколько суток. '
+                              + 'Свободен ли дом на 31 декабря и сколько это стоит, уточняйте у хозяина.' },
+  'doma-dlya-korporativa':{ обл:['minsk', 'minsk-obl'], тип:'any', дома:true, гостей:12, отМинска:70,
+                            что:'Дома и усадьбы для корпоратива', где:'под Минском',
+                            поиск:'/?region=minsk-obl&type=cottage',
+                            пояснение:'Дома, усадьбы и гостевые дома до 70 км от Минска, где по объявлению '
+                              + 'помещается от 12 человек. Цена в объявлении — минимальная, обычно за будни '
+                              + 'и нескольких гостей: за компанию, банкет и праздничные даты хозяева считают отдельно. '
+                              + 'Можно ли шуметь, есть ли зал и сколько выйдет на ваших людей, уточняйте у хозяина.' },
+
   // курортные места: тут ищут «снять домик», а не «жильё рядом с объектом»
   'braslav':      { точка:[55.6333, 27.05],  радиус:25,
                     что:'Домики и квартиры на сутки', где:'на Браславских озёрах' },
@@ -9057,11 +9077,21 @@ async function спросДанные(z){
       rooms:'', guests:'', max:'', source:'both' })); }catch(e){}
     return { items: d.items || [], total: (d.items || []).length, полный: ответПолный(обл) };
   }
-  const п = new URL('/api/search?region=' + (z.обл || 'minsk') +
-                    '&city=' + encodeURIComponent(z.город || '') +
-                    '&type=' + (z.тип || 'any') + '&source=both', 'http://localhost');
-  const d = await runSearchQuery(п.searchParams);
-  let items = d.items || [];
+  const области = Array.isArray(z.обл) ? z.обл : [z.обл || 'minsk'];
+  const ответы = await Promise.all(области.map(function(обл){
+    const п = new URL('/api/search?region=' + обл +
+                      '&city=' + encodeURIComponent(z.город || '') +
+                      '&type=' + (z.тип || 'any') + '&source=both', 'http://localhost');
+    return runSearchQuery(п.searchParams);
+  }));
+  const было = new Set();
+  let items = [].concat.apply([], ответы.map(function(d){ return d.items || []; }))
+    .filter(function(x){ return x && x.link && !было.has(x.link) && было.add(x.link); });
+  if(z.дома) items = items.filter(этоДом);
+  if(z.гостей) items = items.filter(function(x){ return (parseInt(x.capacity, 10) || 0) >= z.гостей; });
+  if(z.отМинска) items = items.filter(function(x){
+    return x.lat && x.lng && !x.approx && distKm(53.9023, 27.5619, +x.lat, +x.lng) <= z.отМинска;
+  });
   if(z.слово){
     // Название района в объявлении пишут по-разному: то в заголовке, то
     // в поле города. Смотрим оба, ё приравниваем к е.
@@ -9070,7 +9100,18 @@ async function спросДанные(z){
     items = items.filter(x => rx.test(мягко(x.title)) || rx.test(мягко(x.area)));
   }
   // полнота — по ответу до отбора по слову: в Уручье четыре варианта, а в Минске сотни
-  return { items: items, total: items.length, полный: ответПолный(d) };
+  return { items: items, total: items.length, полный: ответы.every(ответПолный) };
+}
+
+// Дом это или квартира. Разделы площадок для этого не годятся: в «усадьбы»
+// и «коттеджи» Kufar и Realt отдают и квартиры. Надёжнее адрес объявления —
+// у Check-in, Kvartirka и Flatbook дом видно по нему, — а у Kufar заголовок.
+const ДОМ_В_АДРЕСЕ = /check-in\.by\/dom\/|kvartirka\.by\/[^/]+\/usadby\/|flatbook\.by\/kottedzh/i;
+const ДОМ_В_ЗАГОЛОВКЕ = /(^|[^а-яё])(дом|домик|коттедж|усадьб|агроусадьб|шале|хаус|house|вилл|сруб|a-?frame|афрейм|барнхаус|база отдыха|гостев)/i;
+function этоДом(x){
+  const t = String((x && x.title) || '');
+  if(/квартир|студи|апартамент|комнат/i.test(t)) return false;
+  return ДОМ_В_АДРЕСЕ.test(String((x && x.link) || '')) || ДОМ_В_ЗАГОЛОВКЕ.test(t.toLowerCase());
 }
 
 async function спросPage(slug){
@@ -9117,11 +9158,13 @@ async function спросPage(slug){
       + esc(srcTitle(x.src)) + '</a></div></article>';
   }).join('');
 
-  const куда = z.точка
+  const куда = z.поиск ? z.поиск : z.точка
     ? ('/?country=places')
     : ('/?region=' + (z.обл || 'minsk') + (z.город ? ('&city=' + encodeURIComponent(z.город)) : '') + '&type=' + (z.тип || 'any'));
 
-  const рядом = Object.keys(СПРОС).filter(function(k){ return k !== slug; }).slice(0, 12)
+  // сезонные подборки (с пояснением) — первыми: сейчас их ищут больше всего
+  const рядом = Object.keys(СПРОС).filter(function(k){ return k !== slug; })
+    .sort(function(a, b){ return (СПРОС[b].пояснение ? 1 : 0) - (СПРОС[a].пояснение ? 1 : 0); }).slice(0, 12)
     .map(function(k){ return '<a href="/' + k + '">' + esc((СПРОС[k].что || 'Жильё') + ' ' + СПРОС[k].где) + '</a>'; }).join('');
 
   const ld = {
@@ -9147,6 +9190,7 @@ async function спросPage(slug){
     +   (z.точка ? '. Показываем то, что сдаётся в радиусе ' + (z.радиус || 25) + ' километров' : '')
     +   '. Цены берутся из самих объявлений: у Kufar, Realt и Flatbook — в реальном времени, '
     +   'у Check-in и Kvartirka — с обновлением несколько раз в сутки.</p>'
+    + (z.пояснение ? ('<p class="lead">' + esc(z.пояснение) + '</p>') : '')
     + '<a class="cta" href="' + куда + '">Открыть поиск с фильтрами и картой →</a>'
     + '<div class="grid">' + карточки + '</div>'
     + блокМестРядом(места, маршрут)
