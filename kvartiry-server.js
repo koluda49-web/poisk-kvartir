@@ -5646,18 +5646,23 @@ const PAGE_KINDS = {
   '':            { type:'flat',    max:0,  what:'Квартиры на сутки',        extra:'' },
   'nedorogo':    { type:'flat',    max:70, what:'Недорогие квартиры на сутки',
                    extra:' до 70 рублей' },
-  'usadby':      { type:'usadba',  max:0,  what:'Усадьбы на сутки',          extra:'' },
-  'kottedzhi':   { type:'cottage', max:0,  what:'Коттеджи и дома на сутки',  extra:'' },
+  // Усадьбы и коттеджи (29.09, по Вордстату): «агроусадьба» ищут 16 тыс. раз в месяц, «усадьба
+  // на сутки» — 262; «дом на сутки» — 4,7 тыс., «коттедж на сутки» — 1,4 тыс. Разделы площадок
+  // отдают сюда и квартиры (на /minsk-usadby были районы Минска), поэтому оставляем только дома.
+  // Данные тут по всей области — так и пишем: «в Гродненской области», а не «в Гродно».
+  'usadby':      { type:'usadba',  max:0,  what:'Агроусадьбы на сутки',      extra:'', дома:true, областью:true },
+  'kottedzhi':   { type:'cottage', max:0,  what:'Дома и коттеджи на сутки',  extra:'', дома:true, областью:true },
 };
 
+const ПЕРЕЕХАЛИ = { 'minsk-usadby': '/minsk-obl-usadby', 'minsk-kottedzhi': '/doma-na-sutki-pod-minskom' };
 const CITY_PAGES = {
   'minsk':     { city:'Минск',    where:'в Минске',            what:'Квартиры на сутки' },
-  'brest':     { city:'Брест',    where:'в Бресте',            what:'Квартиры на сутки' },
-  'gomel':     { city:'Гомель',   where:'в Гомеле',            what:'Квартиры на сутки' },
-  'grodno':    { city:'Гродно',   where:'в Гродно',            what:'Квартиры на сутки' },
-  'vitebsk':   { city:'Витебск',  where:'в Витебске',          what:'Квартиры на сутки' },
-  'mogilev':   { city:'Могилёв',  where:'в Могилёве',          what:'Квартиры на сутки' },
-  'minsk-obl': { city:'Минская область', where:'в Минской области', what:'Жильё на сутки' }
+  'brest':     { city:'Брест',    where:'в Бресте',            what:'Квартиры на сутки', обл_где:'в Брестской области' },
+  'gomel':     { city:'Гомель',   where:'в Гомеле',            what:'Квартиры на сутки', обл_где:'в Гомельской области' },
+  'grodno':    { city:'Гродно',   where:'в Гродно',            what:'Квартиры на сутки', обл_где:'в Гродненской области' },
+  'vitebsk':   { city:'Витебск',  where:'в Витебске',          what:'Квартиры на сутки', обл_где:'в Витебской области' },
+  'mogilev':   { city:'Могилёв',  where:'в Могилёве',          what:'Квартиры на сутки', обл_где:'в Могилёвской области' },
+  'minsk-obl': { city:'Минская область', where:'в Минской области', what:'Жильё на сутки', обл_где:'в Минской области' }
 };
 
 const esc = t => String(t==null?'':t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -9027,6 +9032,24 @@ const СПРОС = {
   'dom-s-banej':    { обл:'minsk-obl', тип:'any', слово:'(^|[^а-яa-z])(бан[ья]|саун)',
                       что:'Дома и усадьбы на сутки с баней', где:'под Минском' },
 
+  // Под частые запросы из Вордстата (Беларусь, 26.08–24.09.2026), добавлены 29.09:
+  // «квартиру на сутки без посредников» 833 + 538, «однокомнатные квартиры на сутки» ~2 200,
+  // «дом на сутки» 4 685 и «дом под Минском на сутки» ~530 — ищут «дом», а не «коттедж».
+  'kvartiry-bez-posrednikov': { обл:'minsk', город:'Минск', тип:'flat',
+                            что:'Квартиры на сутки без посредников', где:'в Минске',
+                            поиск:'/?region=minsk&type=flat',
+                            пояснение:'Мы не посредник: не бронируем, не берём комиссию и ничего не добавляем к цене. '
+                              + 'Кнопка ведёт прямо в объявление на площадке, а дальше вы договариваетесь с тем, кто его разместил, — '
+                              + 'по телефону из объявления. Бывает, что квартиру сдаёт управляющая компания: это видно по описанию и отзывам.' },
+  'minsk-odnokomnatnye':  { обл:'minsk', город:'Минск', тип:'flat', комнат:1,
+                            что:'Однокомнатные квартиры на сутки', где:'в Минске',
+                            поиск:'/?region=minsk&type=flat&rooms=1' },
+  'doma-na-sutki-pod-minskom': { обл:['minsk', 'minsk-obl'], тип:'any', дома:true, отМинска:60,
+                            что:'Дома на сутки', где:'под Минском',
+                            поиск:'/?region=minsk-obl&type=cottage',
+                            пояснение:'Дома, коттеджи и усадьбы целиком — не дальше 60 км от Минска. '
+                              + 'Баню, купель и мангал хозяева часто считают отдельно: смотрите описание объявления.' },
+
   // Сезонные (добавлены 29.09). Дома на Новый год разбирают в октябре–ноябре,
   // корпоративы — тогда же. Своих данных о свободных датах у нас нет, поэтому
   // отбираем то, что вообще годится: дома на компанию недалеко от Минска,
@@ -9040,7 +9063,9 @@ const СПРОС = {
                               + 'новогодняя ночь почти везде дороже и часто сдаётся только на несколько суток. '
                               + 'Свободен ли дом на 31 декабря и сколько это стоит, уточняйте у хозяина.' },
   'doma-dlya-korporativa':{ обл:['minsk', 'minsk-obl'], тип:'any', дома:true, гостей:12, отМинска:70,
-                            что:'Дома и усадьбы для корпоратива', где:'под Минском',
+                            // «новогодний корпоратив» 1 774, «… минск» 513 — называем так, как ищут
+                            что:'Новогодний корпоратив', где:'под Минском',
+                            заголовок:'Новогодний корпоратив под Минском: дома, усадьбы и загородные комплексы',
                             поиск:'/?region=minsk-obl&type=cottage',
                             пояснение:'Дома, усадьбы и гостевые дома до 70 км от Минска, где по объявлению '
                               + 'помещается от 12 человек. Цена в объявлении — минимальная, обычно за будни '
@@ -9113,6 +9138,7 @@ async function спросДанные(z){
     .filter(function(x){ return x && x.link && !было.has(x.link) && было.add(x.link); });
   if(z.дома) items = items.filter(этоДом);
   if(z.гостей) items = items.filter(function(x){ return (parseInt(x.capacity, 10) || 0) >= z.гостей; });
+  if(z.комнат) items = items.filter(function(x){ return (parseInt(x.rooms, 10) || 0) === z.комнат; });
   if(z.отМинска) items = items.filter(function(x){
     return x.lat && x.lng && !x.approx && distKm(53.9023, 27.5619, +x.lat, +x.lng) <= z.отМинска;
   });
@@ -9172,7 +9198,7 @@ async function спросPage(slug){
 
   const { места, маршрут } = await местаСтраницы(центрСтраницы(z));
   const сМестами = места.length >= 3;
-  const title = заголовокСтраницы(что + ' ' + z.где,
+  const title = z.заголовок ? z.заголовок : заголовокСтраницы(что + ' ' + z.где,
     сМестами ? [' и что посмотреть рядом', ' — снять посуточно', ' посуточно'] : [' — снять посуточно', ' посуточно']);
   const desc = описаниеСтраницы([
     что + ' ' + z.где + ': ' + вариантов(d.total) + (мин ? (', цены от ' + мин + ' BYN за сутки') : '') + '.',
@@ -9446,6 +9472,9 @@ async function cityPage(slug, kind){
                      '&rooms=&guests=&max=' + (k.max || '') + '&source=both', 'http://localhost');
   let data = { items: [], total: 0 };
   try{ data = await runSearchQuery(uu.searchParams); }catch(e){}
+  if(k.дома){ const дома = (data.items || []).filter(этоДом); data = Object.assign({}, data, { items: дома, total: дома.length }); }
+  // у усадеб и коттеджей данные по всей области — и название по области
+  const где = (k.областью && c.обл_где) ? c.обл_где : c.where;
 
   // Основная страница — «Рекомендуемые», как главная по умолчанию: сверху
   // обычное жильё по обычной цене. Уточнение «недорого» — дешёвые сверху
@@ -9461,10 +9490,10 @@ async function cityPage(slug, kind){
   // блок мест — только на основной странице города: уточняющие остаются про цену и тип
   const { места, маршрут } = await местаСтраницы(!kind ? центрСтраницы(c) : null);
   const сМестами = места.length >= 3;
-  const title = заголовокСтраницы(k.what + ' ' + c.where + k.extra,
-    сМестами ? [' и что посмотреть рядом', ' — снять посуточно', ' посуточно'] : [' — снять посуточно', ' посуточно']);
+  const title = заголовокСтраницы(k.what + ' ' + где + k.extra,
+    сМестами ? [' посуточно и что посмотреть рядом', ' — снять посуточно', ' посуточно'] : [' — снять посуточно', ' посуточно']);
   const desc  = описаниеСтраницы([
-    k.what + ' ' + c.where + k.extra + (data.total ? (': ' + вариантов(data.total)) : ' от частников')
+    k.what + ' ' + где + k.extra + (data.total ? (': ' + вариантов(data.total)) : ' от частников')
       + (minP ? (', цены от ' + minP + ' BYN за сутки') : '') + '.',
     фразаОМестах(места, маршрут),
     ['Объявления Kufar, Realt, Flatbook, Check-in и Kvartirka в одном списке.', сМестами ? 'Объявления пяти площадок в одном списке.' : ''],
@@ -9474,28 +9503,28 @@ async function cityPage(slug, kind){
 
   const cards = items.map(function(x){
     const img = (x.photos && x.photos[0])
-      ? '<img src="' + esc(x.photos[0]) + '" loading="lazy" alt="' + esc(k.what + ' ' + c.where + ' — ' + (x.title||'')) + '">'
+      ? '<img src="' + esc(x.photos[0]) + '" loading="lazy" alt="' + esc(k.what + ' ' + где + ' — ' + (x.title||'')) + '">'
       : '<div class="noimg">фото у источника</div>';
     const meta = [x.area, (x.rooms ? x.rooms + '-комн' : ''), x.capacity ? ('до ' + x.capacity + ' гостей') : '']
       .filter(Boolean).map(function(m){ return '<span>' + esc(m) + '</span>'; }).join('');
     return '<article class="c"><a href="' + esc(x.link) + '" target="_blank" rel="noopener nofollow">' + img + '</a>'
       + '<div class="b"><div class="p">' + (x.от ? 'от ' : '') + x.price + ' BYN <small>/ сутки</small></div>'
       + '<div class="m">' + meta + '</div>'
-      + '<h3>' + esc(x.title || (k.what + ' ' + c.where)) + '</h3>'
+      + '<h3>' + esc(x.title || (k.what + ' ' + где)) + '</h3>'
       + '<a class="go" href="' + esc(x.link) + '" target="_blank" rel="noopener nofollow">Открыть на ' + esc(srcTitle(x.src)) + '</a>'
       + '</div></article>';
   }).join('');
 
   const others = Object.keys(CITY_PAGES).filter(function(x){ return x !== slug || kind; })
     .map(function(x){ return '<a href="/' + x + '">' + esc(CITY_PAGES[x].city) + '</a>'; }).join('')
-    + Object.keys(PAGE_KINDS).filter(function(x){ return x && x !== (kind || ''); })
-      .map(function(x){ return '<a href="/' + slug + '-' + x + '">' + esc(PAGE_KINDS[x].what) + ' ' + esc(c.where) + '</a>'; }).join('');
+    + Object.keys(PAGE_KINDS).filter(function(x){ return x && x !== (kind || '') && !ПЕРЕЕХАЛИ[slug + '-' + x]; })
+      .map(function(x){ return '<a href="/' + slug + '-' + x + '">' + esc(PAGE_KINDS[x].what) + ' ' + esc((PAGE_KINDS[x].областью && c.обл_где) ? c.обл_где : c.where) + '</a>'; }).join('');
 
   const ld = {
     '@context':'https://schema.org', '@type':'ItemList',
     name: title, numberOfItems: items.length,
     itemListElement: items.slice(0,10).map(function(x,i){
-      return { '@type':'ListItem', position:i+1, name:(x.title || (c.what+' '+c.where)), url:x.link };
+      return { '@type':'ListItem', position:i+1, name:(x.title || (c.what+' '+где)), url:x.link };
     })
   };
 
@@ -9505,10 +9534,10 @@ async function cityPage(slug, kind){
     + '<meta name="theme-color" content="#9a3412">'
     + '<link rel="manifest" href="/manifest.webmanifest">'
     + jsonLD(ld)
-    + крошки([['Главная', '/'], [k.what + ' ' + c.where]])
+    + крошки([['Главная', '/'], [k.what + ' ' + где]])
     + '<style>' + СТИЛЬ_СПИСКА
     + '</style></head><body><div class="w">'
-    + '<h1>' + esc(k.what) + ' ' + esc(c.where) + esc(k.extra) + '</h1>'
+    + '<h1>' + esc(k.what) + ' ' + esc(где) + esc(k.extra) + '</h1>'
     + '<p class="lead">Собрали объявления частников с <b>Kufar</b>, <b>Realt</b>, <b>Flatbook</b>, <b>Check-in</b> и <b>Kvartirka</b> в один список — '
     +   'не нужно открывать пять сайтов. Сейчас доступно <b>' + (data.total || 0) + '</b> '
     +   скл(data.total || 0, 'вариант', 'варианта', 'вариантов')
@@ -13455,6 +13484,10 @@ http.createServer(async (req,res)=>{
     }
     // наполнить нечем — пусть будет честное «нет такой страницы»
   }
+  // В черте Минска агроусадеб и домов почти нет — эти адреса переехали насовсем
+  if(ПЕРЕЕХАЛИ[u.pathname.slice(1)]){
+    res.writeHead(301, { 'Location': ПЕРЕЕХАЛИ[u.pathname.slice(1)] }); res.end(); return;
+  }
   const cityHit = parseCitySlug(u.pathname.slice(1));
   if(cityHit){
     try{
@@ -13746,7 +13779,7 @@ http.createServer(async (req,res)=>{
         return '<url><loc>'+SITE_URL+'/'+k+'</loc><changefreq>daily</changefreq><priority>0.8</priority></url>';
       }))
       .concat([].concat(...Object.keys(CITY_PAGES).map(function(city){
-        return Object.keys(PAGE_KINDS).filter(Boolean).map(function(kind){
+        return Object.keys(PAGE_KINDS).filter(function(kind){ return kind && !ПЕРЕЕХАЛИ[city + '-' + kind]; }).map(function(kind){
           return '<url><loc>'+SITE_URL+'/'+city+'-'+kind+'</loc><changefreq>daily</changefreq><priority>0.6</priority></url>';
         });
       })));

@@ -88,7 +88,7 @@ check('у усадеб есть названия и адреса (' + ((fb.items
 
 // ── 5. страницы под поиск ──────────────────────────────────────────────────
 console.log('\n=== страницы под поисковики ===');
-const pages = ['/minsk', '/brest', '/minsk-nedorogo', '/brest-usadby', '/minsk-kottedzhi'];
+const pages = ['/minsk', '/brest', '/minsk-nedorogo', '/brest-usadby', '/minsk-obl-kottedzhi'];
 for (const p of pages) {
   const r = await fetch(BASE + p);
   const html = await r.text();

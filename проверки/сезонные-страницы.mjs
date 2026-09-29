@@ -15,7 +15,7 @@ const текст = h => h.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/st
 
 const СТРАНИЦЫ = [
   { slug: 'doma-na-novyj-god',     h1: 'Дома на Новый год под Минском',                  гостей: 8,  пояснение: /31 декабря/ },
-  { slug: 'doma-dlya-korporativa', h1: 'Дома и усадьбы для корпоратива под Минском',     гостей: 12, пояснение: /банкет/ },
+  { slug: 'doma-dlya-korporativa', h1: 'Новогодний корпоратив под Минском',              гостей: 12, пояснение: /банкет/ },
 ];
 for (const с of СТРАНИЦЫ) {
   console.log('— /' + с.slug);
@@ -24,7 +24,7 @@ for (const с of СТРАНИЦЫ) {
   check('страница открывается', r.status === 200, 'код ' + r.status);
   if (r.status !== 200) continue;
   check('заголовок h1 «' + с.h1 + '»', html.includes('<h1>' + с.h1 + '</h1>'));
-  check('title про то же', new RegExp('<title>' + с.h1).test(html));
+  check('title про то же', new RegExp('<title>' + с.h1).test(html), (html.match(/<title>[^<]*/) || [''])[0]);
   check('есть пояснение про цену и даты', с.пояснение.test(текст(html)) && /уточняйте у хозяина/.test(текст(html)));
   const карточки = html.split('<article class="c">').slice(1);
   check('не меньше пяти вариантов', карточки.length >= 5, 'карточек ' + карточки.length);
