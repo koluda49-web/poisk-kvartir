@@ -73,5 +73,26 @@ check('с /minsk нет ссылок на переехавшие адреса', 
 for (const п of ['/kvartiry-bez-posrednikov', '/minsk-odnokomnatnye', '/doma-na-sutki-pod-minskom'])
   check(п + ' в карте сайта', карта.includes(п + '</loc>'));
 
+// «Что посмотреть в Гродно / Минске» («что посмотреть в Минске» 5,2 тыс., «Гродно что посмотреть» 4,2 тыс.)
+for (const [п, где, первое] of [['/chto-posmotret-grodno', 'в Гродно', /Старый замок|Коложск|Новый замок/],
+                                 ['/chto-posmotret-minsk', 'в Минске', /ратуша|Свято-Духов|Архикафедральный|Троицкое/i]]) {
+  const { код, html } = await стр(п);
+  check(п + ' открывается с h1 «Что посмотреть ' + где + '»', код === 200 && h1(html) === 'Что посмотреть ' + где, код + ' ' + h1(html));
+  if (код !== 200) continue;
+  const места = [...html.matchAll(/<h3><a href="[^"]+">([^<]+)<\/a><\/h3><div class="m"><span>([\d,]+) км от центра/g)].map(м => ({ имя: м[1], км: +м[2].replace(',', '.') }));
+  check(п + ': не меньше 8 мест', места.length >= 8, 'мест ' + места.length);
+  check(п + ': наверху — главное в центре', места.length > 0 && места[0].км <= 3 && первое.test(места.slice(0, 3).map(x => x.имя).join(' ')), места.slice(0, 3).map(x => x.имя + ' ' + x.км).join('; '));
+  check(п + ': у каждого места есть описание', (html.match(/<p class="t">[^<]{60,}/g) || []).length === места.length);
+  const сВикисклада = (html.match(/<img src="https:\/\/(thumb|upload)\.wikimedia\.org/g) || []).length;
+  check(п + ': у фото с Викисклада подписан автор и лицензия', сВикисклада === (html.match(/class="cr">Фото:/g) || []).length, 'фото ' + сВикисклада);
+  check(п + ': Куропат на странице нет', !/Куропат/.test(html));
+  check(п + ' в карте сайта', карта.includes(п + '</loc>'));
+}
+check('с /grodno есть ссылка на «Что посмотреть в Гродно»', /href="\/chto-posmotret-grodno"/.test((await стр('/grodno')).html));
+{
+  const r = await (await fetch(SITE + '/api/place?id=910089')).json();
+  check('Минская ратуша есть на карте и с подписью фото', /ратуша/i.test(r.name || '') && !!(r.cred && r.cred.author && r.cred.lic), JSON.stringify(r.cred || {}));
+}
+
 console.log('\nПройдено ' + passed + ', падает ' + failed);
 process.exit(failed ? 1 : 0);
