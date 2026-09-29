@@ -13112,7 +13112,8 @@ const БЕЗ_МЕТРИКИ = new Set(['/predlozheniya', '/stats', '/reis', '/is
 // Подтверждение прав на сайт в Google Search Console и Яндекс.Вебмастере
 // (29.09.2026). Метатеги должны стоять на главной; ставим туда же, куда
 // счётчик, — в головы всех страниц. Удалить тег — потерять доступ к отчётам.
-const ПОДТВЕРЖДЕНИЕ_ПОИСКА = '<meta name="google-site-verification" content="oBovOHAJusDyTa1KfPsqTdXoUI8i9aCV49Hbe6BXqPk">';
+const ПОДТВЕРЖДЕНИЕ_ПОИСКА = '<meta name="google-site-verification" content="oBovOHAJusDyTa1KfPsqTdXoUI8i9aCV49Hbe6BXqPk">'
+  + '<meta name="yandex-verification" content="1a9742ce2001d283">';
 function сМетрикой(html){
   // Функцией, а не строкой замены: в строке «$» что-то значил бы.
   return html.replace(/<\/head>(\s*<body[^>]*>)/, (м, тело) => ПОДТВЕРЖДЕНИЕ_ПОИСКА + МЕТРИКА_ГОЛОВА + '</head>' + тело + МЕТРИКА_ТЕЛО);
