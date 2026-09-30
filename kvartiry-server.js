@@ -5939,7 +5939,9 @@ function крошки(звенья){
 // заголовок после ~60 знаков, описание — после ~160, и обрезает посреди
 // слова. Поэтому всё собирается здесь, по одним правилам (их сторожит
 // проверки/seo.mjs).
-const СНИМОК_САЙТА = SITE_URL + encodeURI('/фото-точек/hero-2.jpg');   // снимок из шапки главной: краснокирпичный костёл с двумя башнями
+const СНИМОК_САЙТА_ПУТЬ = '/фото-точек/hero-2.jpg';   // снимок из шапки главной: краснокирпичный костёл с двумя башнями
+const СНИМОК_САЙТА = SITE_URL + encodeURI(СНИМОК_САЙТА_ПУТЬ);
+const ПОДПИСЬ_СНИМКА_САЙТА = 'Костёл из красного кирпича с двумя башнями';
 const ЗАГОЛОВОК_МАКС = 60, ОПИСАНИЕ_МИН = 120, ОПИСАНИЕ_МАКС = 160;
 
 // Заголовок до 60 знаков: основа и первый из хвостов, который влезает.
@@ -5986,23 +5988,82 @@ function годенДляПревью(pic){
   return п.charAt(0) === '/' || п.indexOf(KUDIN + '/') === 0;
 }
 
-// Метатеги индексируемой страницы. путь — от корня сайта («/mesto/1-zamok»),
-// снимок — абсолютный адрес или путь к нашему файлу; без снимка — шапка главной.
-function метаСтраницы(о){
-  const адрес = SITE_URL + о.путь;
-  const снимок = годенДляПревью(о.снимок) ? снимокДляСоцсетей(о.снимок) : СНИМОК_САЙТА;
-  return '<title>' + esc(о.title) + '</title>'
-    + '<meta name="description" content="' + esc(о.desc) + '">'
-    + '<meta name="robots" content="index,follow">'
-    + '<link rel="canonical" href="' + esc(адрес) + '">'
-    + '<meta property="og:type" content="' + (о.тип || 'website') + '">'
+// Снимок и подпись для превью страницы со списком мест: первое место, чей
+// снимок годится. Ни у одного не годится — пусто, и будет шапка главной.
+function превьюМест(места){
+  const п = (места || []).find(p => p && годенДляПревью(p.pic));
+  return п ? { снимок: п.pic, подпись: п.name } : {};
+}
+
+// Размеры своего снимка для og:image:width/height. Telegram и Viber без них
+// бывает, что показывают маленькую картинку сбоку вместо большой сверху, а
+// угадывать размер по файлу им приходится дольше. Читаем из заголовка файла
+// (JPEG — маркер SOF, PNG — IHDR) один раз на файл; в ключе время правки —
+// файл, заменённый под тем же именем, перечитается. Чужие снимки (kudin.by)
+// не качаем и размеров им не пишем: выдуманный размер хуже никакого.
+const РАЗМЕРЫ_СНИМКОВ = new Map();
+function размерыСнимка(pic){
+  const имя = String(pic || '').replace(/^\/фото-точек\//, '');
+  if(имя === String(pic || '') || /[\\/]|\.\./.test(имя)) return null;
+  const файл = __dirname + '/фото-точек/' + имя;
+  let st;
+  try{ st = fs.statSync(файл); }catch(e){ return null; }
+  const ключ = имя + '|' + st.mtimeMs + '|' + st.size;
+  if(РАЗМЕРЫ_СНИМКОВ.has(ключ)) return РАЗМЕРЫ_СНИМКОВ.get(ключ);
+  let р = null;
+  try{
+    const b = fs.readFileSync(файл);
+    if(b[0] === 0x89 && b.toString('latin1', 1, 4) === 'PNG') р = { w: b.readUInt32BE(16), h: b.readUInt32BE(20) };
+    else if(b[0] === 0xFF && b[1] === 0xD8){
+      let i = 2;
+      while(i + 9 < b.length){
+        if(b[i] !== 0xFF){ i++; continue; }
+        const м = b[i + 1];
+        if(м === 0xFF || м === 0x01 || (м >= 0xD0 && м <= 0xD8)){ i += (м === 0xFF ? 1 : 2); continue; }   // заполнение и маркеры без длины
+        // SOF0–SOF15; C4, C8 и CC с тем же началом — таблицы, не кадр
+        if(м >= 0xC0 && м <= 0xCF && м !== 0xC4 && м !== 0xC8 && м !== 0xCC){ р = { h: b.readUInt16BE(i + 5), w: b.readUInt16BE(i + 7) }; break; }
+        i += 2 + b.readUInt16BE(i + 2);
+      }
+    }
+  }catch(e){ р = null; }
+  if(р && !(р.w > 0 && р.h > 0)) р = null;
+  РАЗМЕРЫ_СНИМКОВ.set(ключ, р);
+  return р;
+}
+
+// Теги для превью ссылки в мессенджерах и соцсетях (og:* и twitter:card).
+// Отдельно от метаСтраницы: служебные страницы — маршрут по ссылке и
+// подборка избранного — в поиск не идут (noindex, без canonical), а ссылкой
+// на них как раз делятся чаще всего. адрес — полный, для og:url; снимок —
+// путь к нашему файлу или адрес на kudin.by, подпись — что на снимке.
+function ogТеги(о){
+  const годен = годенДляПревью(о.снимок);
+  const снимок = годен ? снимокДляСоцсетей(о.снимок) : СНИМОК_САЙТА;
+  const путь = годен ? String(о.снимок) : СНИМОК_САЙТА_ПУТЬ;
+  const р = путь.charAt(0) === '/' ? размерыСнимка(путь) : null;
+  const подпись = годен ? о.подпись : ПОДПИСЬ_СНИМКА_САЙТА;
+  return '<meta property="og:type" content="' + (о.тип || 'website') + '">'
     + '<meta property="og:site_name" content="Поиск жилья на сутки">'
     + '<meta property="og:locale" content="ru_BY">'
     + '<meta property="og:title" content="' + esc(о.ogTitle || о.title) + '">'
     + '<meta property="og:description" content="' + esc(о.desc) + '">'
-    + '<meta property="og:url" content="' + esc(адрес) + '">'
+    + '<meta property="og:url" content="' + esc(о.адрес) + '">'
     + '<meta property="og:image" content="' + esc(снимок) + '">'
+    + (р ? ('<meta property="og:image:width" content="' + р.w + '">'
+          + '<meta property="og:image:height" content="' + р.h + '">') : '')
+    + (подпись ? ('<meta property="og:image:alt" content="' + esc(подпись) + '">') : '')
     + '<meta name="twitter:card" content="summary_large_image">';
+}
+
+// Метатеги индексируемой страницы. путь — от корня сайта («/mesto/1-zamok»),
+// снимок — абсолютный адрес или путь к нашему файлу; без снимка — шапка главной.
+function метаСтраницы(о){
+  const адрес = SITE_URL + о.путь;
+  return '<title>' + esc(о.title) + '</title>'
+    + '<meta name="description" content="' + esc(о.desc) + '">'
+    + '<meta name="robots" content="index,follow">'
+    + '<link rel="canonical" href="' + esc(адрес) + '">'
+    + ogТеги(Object.assign({}, о, { адрес: адрес }));
 }
 // Значение в код скрипта страницы. JSON сам по себе экранирует кавычки и
 // обратную косую черту; «<» превращаем в \u003c, чтобы «</script>» в тексте не
@@ -6332,7 +6393,7 @@ async function mestoPageBuild(id){
 
   return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-    + метаСтраницы({ title: title, desc: desc, путь: путь, снимок: кадры.find(годенДляПревью), тип: 'article', ogTitle: имя })
+    + метаСтраницы({ title: title, desc: desc, путь: путь, снимок: кадры.find(годенДляПревью), подпись: имя, тип: 'article', ogTitle: имя })
     + '<meta name="theme-color" content="#9a3412">'
     + jsonLD({ '@context':'https://schema.org', '@type':'TouristAttraction',
         name: p.name, description: текст ? (текст.length <= 300 ? текст : (текст.slice(0, 299).replace(/\s+\S*$/, '') + '…')) : undefined,
@@ -7590,14 +7651,28 @@ async function marshrutPage(ids, опции){
     // на самой странице он остаётся полным.
     голова = метаСтраницы({ title: заголовокСтраницы(заголовок, [' — маршрут на день', ' — маршрут', '']),
                             desc: описание, путь: о.адрес, тип: 'article', ogTitle: заголовок,
-                            снимок: сФото ? сФото.pic : '' })
+                            снимок: сФото ? сФото.pic : '', подпись: сФото ? сФото.name : '' })
       + jsonLD(списокТочек);
   } else {
+    // Маршрут по ссылке в поиск не идёт (noindex, без canonical), но им
+    // делятся в Viber и Telegram — в превью должны быть названия точек и
+    // снимок первой точки, у которой он годится, а не общая шапка сайта.
+    // У своих точек (m53.99_25.38~Имя) снимка нет — их пропускаем.
+    const описание = 'Маршрут на день по Беларуси'
+      + (точки.length ? (': ' + точки.length + ' ' + скл(точки.length, 'точка', 'точки', 'точек')
+                         + ', около ' + Math.round(сумма) + ' км между ними') : '')
+      + '. Карта, порядок объезда и переход в Яндекс.Карты.';
+    const сФото = точки.map(p => p.own ? null : все.find(x => String(x.id) === String(p.id)))
+      .find(p => p && годенДляПревью(p.pic));
+    // в og:url — только узнанные точки, в порядке ссылки: мусор из адреса наружу не отдаём
+    const узнанные = ids.filter(t => /^[0-9]+$/.test(t) ? все.some(x => String(x.id) === t) : !!своюТочкуИзСсылки(t));
     голова = '<title>' + esc(заголовок) + '</title>'
-      + '<meta name="description" content="Маршрут на день по Беларуси'
-      +   (точки.length ? (': ' + точки.length + ' точек, около ' + Math.round(сумма) + ' км между ними') : '')
-      +   '. Карта, порядок объезда и переход в Яндекс.Карты.">'
-      + '<meta name="robots" content="noindex,follow">';
+      + '<meta name="description" content="' + esc(описание) + '">'
+      + '<meta name="robots" content="noindex,follow">'
+      + ogТеги({ title: заголовок, desc: описание, тип: 'article',
+                 адрес: SITE_URL + '/marshrut' + (узнанные.length
+                   ? ('?p=' + узнанные.map(encodeURIComponent).join(',') + (ручной ? '&o=1' : '')) : ''),
+                 снимок: сФото ? сФото.pic : '', подпись: сФото ? сФото.name : '' });
   }
 
   return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
@@ -8723,8 +8798,8 @@ async function подборкаPage(slug){
 
   return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-    + метаСтраницы({ title: заголовокСтраницы(п.title, [': места по Беларуси', '']), desc: описание,
-                     путь: '/podborka/' + п.slug, тип: 'article', ogTitle: п.title, снимок: (места.find(p => годенДляПревью(p.pic)) || {}).pic })
+    + метаСтраницы(Object.assign({ title: заголовокСтраницы(п.title, [': места по Беларуси', '']), desc: описание,
+                     путь: '/podborka/' + п.slug, тип: 'article', ogTitle: п.title }, превьюМест(места)))
     + '<meta name="theme-color" content="#9a3412">'
     + jsonLD({ '@context':'https://schema.org', '@type':'ItemList', name: п.title, url: адрес,
                numberOfItems: места.length,
@@ -8951,8 +9026,8 @@ async function маршрутСобрать(slug){
 
   return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-    + метаСтраницы({ title: title, desc: desc, путь: '/' + slug, тип: 'article',
-                     ogTitle: м.заголовок, снимок: (точки.find(т => т.место && годенДляПревью(т.место.pic)) || { место: {} }).место.pic })
+    + метаСтраницы(Object.assign({ title: title, desc: desc, путь: '/' + slug, тип: 'article', ogTitle: м.заголовок },
+                                 превьюМест(точки.map(т => т.место))))
     + '<meta name="theme-color" content="#9a3412">'
     + jsonLD(ld)
     + крошки([['Главная', '/'], ['Маршруты', '/?country=places'], [м.заголовок]])
@@ -9182,7 +9257,7 @@ async function гидPage(slug){
 
   return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-    + метаСтраницы({ title: title, desc: desc, путь: '/' + slug, тип: 'article' })
+    + метаСтраницы(Object.assign({ title: title, desc: desc, путь: '/' + slug, тип: 'article' }, превьюМест(d.места)))
     + '<meta name="theme-color" content="#9a3412">'
     + '<link rel="manifest" href="/manifest.webmanifest">'
     + jsonLD(ld)
@@ -9495,7 +9570,7 @@ async function спросPage(slug){
 
   return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-    + метаСтраницы({ title: title, desc: desc, путь: '/' + slug })
+    + метаСтраницы(Object.assign({ title: title, desc: desc, путь: '/' + slug }, превьюМест(места)))
     + '<meta name="theme-color" content="#9a3412">'
     + '<link rel="manifest" href="/manifest.webmanifest">'
     + jsonLD(ld)
@@ -9565,9 +9640,28 @@ async function избранноеPage(s){
       + esc(площадка(l)) + '</a></li>').join('') + '</ul></div>'
     : '';
   const пусто = !ссылки.length;
+  // Подборку пересылают в мессенджер — там нужны число вариантов, цена и
+  // пара заголовков, а не голое «Подборка жилья». Снимок — только шапка
+  // сайта: фото объявлений чужие, в превью их не ставим (как в годенДляПревью).
+  const n = d.найдены.length;
+  const цены = d.найдены.map(x => x.price).filter(p => p > 0).sort((a, b) => a - b);
+  const заголовок = 'Подборка жилья на сутки' + (n ? (': ' + вариантов(n)) : '');
+  // в og:url — только коды, из которых вышла ссылка: мусор из адреса наружу не отдаём
+  const годныеКоды = коды.filter(ссылкаИзКода);
+  const описание = n
+    ? описаниеСтраницы([
+        вариантов(n) + (цены.length ? (', цены от ' + цены[0] + ' BYN за сутки') : '') + '.',
+        ...d.найдены.slice(0, 3).map(x => String(x.title || '').replace(/\s+/g, ' ').trim().replace(/[\s.,;:!?…]+$/, ''))
+          .filter(Boolean).map(t => t + '.'),
+        'Бронирование напрямую у хозяина.',
+      ])
+    : 'Варианты жилья на сутки, отмеченные сердечком и присланные ссылкой. Цены и наличие — в самих объявлениях на площадках.';
   return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-    + '<meta name="robots" content="noindex,follow"><title>Подборка жилья на сутки</title>'
+    + '<meta name="robots" content="noindex,follow"><title>' + esc(заголовок) + '</title>'
+    + '<meta name="description" content="' + esc(описание) + '">'
+    + ogТеги({ title: заголовок, desc: описание,
+               адрес: SITE_URL + '/izbrannoe' + (годныеКоды.length ? ('?s=' + годныеКоды.map(encodeURIComponent).join('~')) : '') })
     + '<meta name="theme-color" content="#9a3412">'
     + '<style>' + СТИЛЬ_СПИСКА
     +   '.gone{margin:22px 0 0;color:#4a5160;font-size:14.5px}.gone ul{margin:6px 0 0;padding-left:20px}.gone a{color:#9a3412}'
@@ -9897,7 +9991,7 @@ async function cityPage(slug, kind){
 
   return '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-    + метаСтраницы({ title: title, desc: desc, путь: путь })
+    + метаСтраницы(Object.assign({ title: title, desc: desc, путь: путь }, превьюМест(места)))
     + '<meta name="theme-color" content="#9a3412">'
     + '<link rel="manifest" href="/manifest.webmanifest">'
     + jsonLD(ld)

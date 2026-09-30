@@ -73,6 +73,7 @@ function разобрать(html) {
     robots: мета('name', 'robots').join(',').toLowerCase(),
     ogTitle: мета('property', 'og:title'), ogDesc: мета('property', 'og:description'),
     ogUrl: мета('property', 'og:url'), ogImage: мета('property', 'og:image'),
+    ogW: мета('property', 'og:image:width'), ogH: мета('property', 'og:image:height'),
     twitter: мета('name', 'twitter:card'),
     canonical: [...голова.matchAll(/<link\b[^>]*>/gi)].map(м => м[0])
       .filter(т => (атрибут(т, 'rel') || '').toLowerCase() === 'canonical').map(т => атрибут(т, 'href')),
@@ -110,6 +111,46 @@ function типыJSONLD(блоки, адрес) {
     }
   }
   return типы;
+}
+
+// ── превью ссылки в мессенджерах ────────────────────────────────────────
+// Картинка превью — только наш снимок или с kudin.by (правило владельца,
+// годенДляПревью в сервере). Викисклад и фото объявлений — никогда, даже
+// если другого снимка у страницы нет: тогда ставится шапка сайта.
+// Размеры, если указаны, — целые числа: по ним Telegram и Viber решают,
+// показать картинку большой сверху или маленькой сбоку.
+const ЧУЖИЕ_СНИМКИ = /wikimedia\.org|wikipedia\.org|kufar|realt\.|check-in|kvartirka|flatbook/i;
+function проверитьПревью(адрес, с) {
+  const н = т => нарушение(адрес, т);
+  const к = с.ogImage[0] || '';
+  if (к && !(к.startsWith(ОСНОВА + '/') || к.startsWith('https://kudin.by/'))) н('og:image не наш и не kudin.by: ' + к);
+  if (ЧУЖИЕ_СНИМКИ.test(к)) н('og:image — чужой снимок (Викисклад или объявление): ' + к);
+  for (const [имя, v] of [['og:image:width', с.ogW], ['og:image:height', с.ogH]]) {
+    if (v.length > 1) н(имя + ': ' + v.length + ' шт.');
+    if (v.length && !/^[1-9]\d{1,4}$/.test(String(v[0]))) н(имя + ' не число: ' + v[0]);
+  }
+  if (с.ogW.length !== с.ogH.length) н('og:image:width без og:image:height или наоборот');
+  if (с.ogW.length && !к.startsWith(ОСНОВА + '/')) н('размеры у чужого снимка — их никто не мерил: ' + к);
+}
+// Служебная страница, которой делятся ссылкой: в поиск не идёт, но превью
+// в мессенджере у неё должно быть полным.
+async function превьюСлужебной(путь, что, вЗаголовке) {
+  проверено++;
+  const r = await взять(путь);
+  if (r.код !== 200) { нарушение(путь, что + ': код ' + r.код); return; }
+  const с = разобрать(r.тело);
+  const н = т => нарушение(путь, что + ': ' + т);
+  if (с.titles.length !== 1) н('<title> на странице: ' + с.titles.length);
+  if (с.canonical.length) н('canonical у служебной страницы');
+  if (/index,follow/.test(с.robots) && !/noindex/.test(с.robots)) н('robots index у служебной страницы');
+  for (const [имя, v] of [['og:title', с.ogTitle], ['og:description', с.ogDesc], ['og:url', с.ogUrl], ['og:image', с.ogImage], ['twitter:card', с.twitter]]) {
+    if (v.length !== 1 || !String(v[0] || '').trim()) н(имя + ': ' + (v.length ? 'пусто' : 'нет') + (v.length > 1 ? ' (' + v.length + ' шт.)' : ''));
+  }
+  if (с.ogImage[0] && !/^https?:\/\//.test(с.ogImage[0])) н('og:image не абсолютный: ' + с.ogImage[0]);
+  else if (с.ogImage[0]) картинки.add(с.ogImage[0]);
+  if (с.ogUrl[0] && !с.ogUrl[0].startsWith(ОСНОВА + путь.split('?')[0])) н('og:url не на эту страницу: ' + с.ogUrl[0]);
+  if (вЗаголовке && !(с.ogTitle[0] || '').includes(вЗаголовке)) н('в og:title нет «' + вЗаголовке + '»: ' + с.ogTitle[0]);
+  проверитьПревью(путь, с);
 }
 
 // ── правила индексируемой страницы ──────────────────────────────────────
@@ -156,6 +197,7 @@ async function индексируемая(путь, тип, ждёмТипы) {
     if (!/^https?:\/\//.test(с.ogImage[0])) н('og:image не абсолютный: ' + с.ogImage[0]);
     else картинки.add(с.ogImage[0]);
   }
+  проверитьПревью(адрес, с);
   if (с.безAlt.length) н('img без alt (или пустой): ' + с.безAlt.length + ' — ' + с.безAlt[0].slice(0, 120));
   const типы = типыJSONLD(с.jsonld, адрес);
   for (const т of ждёмТипы || []) if (!типы.has(т)) н('нет JSON-LD ' + т + (типы.size ? ' (есть: ' + [...типы].join(', ') + ')' : ''));
@@ -265,6 +307,21 @@ for (const [тип, список] of Object.entries(поТипам)) {
   }
 }
 
+// ── служебные ───────────────────────────────────────────────────────────
+const первые = места.slice(0, 3).map(п => п.match(/^\/mesto\/(\d+)/)[1]).join(',');
+// Превью маршрута по ссылке: в og:title — название первой точки (его берём
+// из JSON-LD страницы этого места: в og:title места к имени дописана
+// местность), порядок «как в ссылке» — тоже.
+{
+  const ld = разобрать((await взять(места[0])).тело).jsonld
+    .map(б => { try { return JSON.parse(б); } catch (e) { return {}; } }).find(о => о['@type'] === 'TouristAttraction') || {};
+  const перваяТочка = ld.name || '';
+  if (!перваяТочка) нарушение(места[0], 'нет имени места в JSON-LD — не с чем сверить превью маршрута');
+  await превьюСлужебной('/marshrut?p=' + первые, 'превью маршрута по ссылке', перваяТочка);
+  await превьюСлужебной('/marshrut?p=' + первые + '&o=1', 'превью маршрута с порядком руками', перваяТочка);
+  await превьюСлужебной('/izbrannoe?s=k1', 'превью подборки избранного');
+}
+
 // Картинки для соцсетей: наши должны открываться, чужие не проверяем —
 // до kudin.by из проверки не всегда есть связь.
 for (const к of картинки) {
@@ -281,8 +338,6 @@ for (const к of канонические) {
   if (r.код !== 200) нарушение(к, 'canonical отвечает ' + r.код);
 }
 
-// ── служебные ───────────────────────────────────────────────────────────
-const первые = места.slice(0, 3).map(п => п.match(/^\/mesto\/(\d+)/)[1]).join(',');
 await служебная('/marshrut?p=' + первые, 'самодельный маршрут');
 await служебная('/marshrut', 'пустой маршрут');
 await служебная('/predlozheniya?key=' + КЛЮЧ, 'предложения');
