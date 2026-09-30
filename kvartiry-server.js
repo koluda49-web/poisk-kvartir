@@ -1000,7 +1000,11 @@ async function realtGeo(url){
 // ограничение параллелизма, чтобы не завалить бесплатный инстанс
 async function mapLimit(items, limit, fn){
   const res=new Array(items.length); let i=0;
-  async function worker(){ while(i<items.length){ const idx=i++; res[idx]=await fn(items[idx],idx); } }
+  // После каждого элемента — setImmediate: ответы площадок часто уже лежат
+  // в памяти, и тогда await не отпускает цикл событий — двадцать поисков шли
+  // одним куском, а на бесплатном Render (десятая доля ядра) сайт на это
+  // время замирал на секунды для всех посетителей (30.09.2026).
+  async function worker(){ while(i<items.length){ const idx=i++; res[idx]=await fn(items[idx],idx); await new Promise(r=>setImmediate(r)); } }
   await Promise.all(Array.from({length:Math.min(limit,items.length||1)}, worker));
   return res;
 }
@@ -4731,6 +4735,10 @@ const DETAIL_TTL = 24 * 60 * 60 * 1000;
 // отдельной нагрузки на источники почти нет: их ответы и так лежат в памяти.
 const STAY_REGIONS = ['minsk','minsk-obl','brest','gomel','grodno','vitebsk','mogilev'];
 const STAY_TYPES = ['flat','usadba','cottage'];
+// Живёт 30 минут, а не 8, как выдача: сборка — это 21 поиск по всем площадкам
+// и каталогам, на бесплатном Render секунды процессора; для «что рядом»
+// получасовая свежесть достаточна.
+const STAY_INDEX_TTL = 30 * 60 * 1000;
 async function stayIndex(){
   return cached('idx|stay', async ()=>{
     const было = new Set(), все = [];
@@ -4742,19 +4750,24 @@ async function stayIndex(){
       runSearchQuery(new URLSearchParams({ region:r, city:'', type:t,
         rooms:'', guests:'', max:'', source:'both' }))
         .then(d => ({ t, r, items: d.items || [] })).catch(()=>({ t, r, items: [] })));
-    части.forEach(d => d.items.forEach(x => {
-      // Точных координат нет у всего Realt: он ставит метку у центра города.
-      // Отбрасывать их — значит выкинуть целый источник из трёх, поэтому
-      // берём, но расстояние по ним считается приблизительное. В карточке
-      // такие помечены словом «около».
-      if(!x.lat || !x.lng || было.has(x.link)) return;
-      было.add(x.link);
-      // сам объявление ни вида, ни области не несёт — помечаем тем запросом,
-      // который его принёс: по области потом выбирается, куда ведёт кнопка
-      все.push(Object.assign({}, x, { vid: d.t, reg: d.r }));
-    }));
+    // По частям, с передышкой между ними: копия семи тысяч объявлений одним
+    // циклом на Render держала сайт больше секунды.
+    for(const d of части){
+      d.items.forEach(x => {
+        // Точных координат нет у всего Realt: он ставит метку у центра города.
+        // Отбрасывать их — значит выкинуть целый источник из трёх, поэтому
+        // берём, но расстояние по ним считается приблизительное. В карточке
+        // такие помечены словом «около».
+        if(!x.lat || !x.lng || было.has(x.link)) return;
+        было.add(x.link);
+        // сам объявление ни вида, ни области не несёт — помечаем тем запросом,
+        // который его принёс: по области потом выбирается, куда ведёт кнопка
+        все.push(Object.assign({}, x, { vid: d.t, reg: d.r }));
+      });
+      await new Promise(r => setImmediate(r));
+    }
     return все;
-  });
+  }, STAY_INDEX_TTL);
 }
 
 // Жильё рядом с точкой: общий список страны плюс отдельный запрос по
@@ -5605,7 +5618,10 @@ function освежитьВыдачу(сразу){
     if(!сразу) return;                                 // уже назначено — дождётся своего часа
     clearTimeout(освежитьПозже); освежитьПозже = null;
   }
-  const сделать = () => { освежитьПозже = null; выдачаОсвежена = Date.now(); сброситьВыдачуЖилья(); warmUp(); };
+  // Промежуточная выкладка (сбор ещё идёт, раз в 20 секунд) освежает только
+  // выдачу; список «что рядом» перестраиваем один раз — по готовому каталогу.
+  // Раньше он строился заново каждые 20 секунд сбора: на Render это паузы до 4,5 с.
+  const сделать = () => { освежитьПозже = null; выдачаОсвежена = Date.now(); сброситьВыдачуЖилья(сразу); warmUp(сразу); };
   const ждать = сразу ? 0 : Math.max(0, выдачаОсвежена + ОСВЕЖАТЬ_НЕ_ЧАЩЕ - Date.now());
   if(!ждать) сделать();
   else { освежитьПозже = setTimeout(сделать, ждать); if(освежитьПозже.unref) освежитьПозже.unref(); }
@@ -6024,10 +6040,10 @@ const isEmpty = d => Array.isArray(d) ? d.length === 0
 // Сбросить выдачи жилья — и только их. Отели России, рейсы и сырые
 // ответы площадок остаются: к переключению источников и к обновлению
 // досок они отношения не имеют, а их повторный сбор стоит секунды.
-function сброситьВыдачуЖилья(){
+function сброситьВыдачуЖилья(иИндекс){
   let сколько = 0;
   for(const к of [...SEARCH_CACHE.keys()]){
-    if(к.startsWith('/api/search?') || к.startsWith('idx|')){ SEARCH_CACHE.delete(к); сколько++; }
+    if(к.startsWith('/api/search?') || (иИндекс !== false && к.startsWith('idx|'))){ SEARCH_CACHE.delete(к); сколько++; }
   }
   return сколько;
 }
@@ -14788,11 +14804,12 @@ const WARM_UP = [
   '/api/search?region=minsk&city=&type=flat&rooms=&guests=&max=&source=realt',
   '/api/search?region=minsk&city=&type=flat&rooms=&guests=&max=&source=flatbook'
 ];
-function warmUp(){
+function warmUp(сИндексом){
   // Общий список жилья для «что рядом» — заранее, чтобы первый нажавший
-  // кнопку не ждал семь секунд.
-  stayIndex().then(function(l){ console.log('Прогрев «рядом»: ' + l.length); })
-             .catch(function(e){ console.log('Прогрев «рядом» не удался:', e.message); });
+  // кнопку не ждал семь секунд. При промежуточной выкладке каталога — нет.
+  if(сИндексом !== false)
+    stayIndex().then(function(l){ console.log('Прогрев «рядом»: ' + l.length); })
+               .catch(function(e){ console.log('Прогрев «рядом» не удался:', e.message); });
   WARM_UP.forEach(function(path){
     const uu = new URL(path, 'http://localhost');
     runSearchQuery(uu.searchParams)
