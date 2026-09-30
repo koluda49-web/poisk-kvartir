@@ -113,5 +113,28 @@ check('с /grodno есть ссылка на «Что посмотреть в Г
   check('с /brest есть ссылка на «Что посмотреть в Бресте»', /href="\/chto-posmotret-brest"/.test((await стр('/brest')).html));
 }
 
+// «дом с бассейном» и однокомнатные по городам (добавлено 30.09, задача pages)
+for (const [п, где, чужие] of [['/grodno-odnokomnatnye', 'в Гродно', /Лида|Слоним|Волковыск/],
+                                ['/brest-odnokomnatnye', 'в Бресте', /Барановичи|Пинск|Кобрин/],
+                                ['/gomel-odnokomnatnye', 'в Гомеле', /Мозырь|Жлобин|Речица/]]) {
+  const { код, html } = await стр(п);
+  check(п + ' открывается с h1 «Однокомнатные квартиры на сутки ' + где + '»', код === 200 && h1(html) === 'Однокомнатные квартиры на сутки ' + где, код + ' ' + h1(html));
+  if (код !== 200) continue;
+  const к = карточки(html);
+  check(п + ': все варианты однокомнатные', к.length >= 5 && к.every(x => x.мета.includes('1-комн')), 'карточек ' + к.length + ', не 1-комн: ' + к.filter(x => !x.мета.includes('1-комн')).length);
+  // «Брестская ул.» в Барановичах — не Брест
+  check(п + ': других городов области нет', к.every(x => !чужие.test(x.мета.join(' ') + ' ' + x.h3)), (к.find(x => чужие.test(x.мета.join(' ') + ' ' + x.h3)) || {}).h3);
+}
+{
+  const { код, html } = await стр('/doma-s-bassejnom');
+  check('/doma-s-bassejnom открывается с h1', код === 200 && h1(html) === 'Дома на сутки с бассейном в Беларуси', код + ' ' + h1(html));
+  const к = карточки(html);
+  check('…и там только дома с бассейном', к.length >= 5 && к.every(x => /бассейн/i.test(x.h3) && !/квартир|студи|апартамент|комнат/i.test(x.h3)),
+    'карточек ' + к.length + '; ' + (к.find(x => !/бассейн/i.test(x.h3) || /квартир|студи|апартамент|комнат/i.test(x.h3)) || {}).h3);
+  check('…и честно просит уточнить бассейн у хозяина', /уточняйте у хозяина/.test(html));
+}
+for (const п of ['/grodno-odnokomnatnye', '/brest-odnokomnatnye', '/gomel-odnokomnatnye', '/doma-s-bassejnom'])
+  check(п + ' в карте сайта', карта.includes(п + '</loc>'));
+
 console.log('\nПройдено ' + passed + ', падает ' + failed);
 process.exit(failed ? 1 : 0);
