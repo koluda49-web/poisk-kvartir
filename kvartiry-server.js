@@ -6018,11 +6018,14 @@ function сброситьВыдачуЖилья(){
   return сколько;
 }
 
-async function cached(key, fn, ttl){
+// моложе — для прогрева: освежить запись, если ей уже столько мс, хотя она ещё жива.
+// Живую запись при этом не убираем — посетители берут её, пока идёт новый запрос.
+async function cached(key, fn, ttl, моложе){
   const life = ttl || CACHE_TTL;
   const hit = SEARCH_CACHE.get(key);
-  if(hit && Date.now() - hit.at <= (isEmpty(hit.data) ? Math.min(пауза(key), life) : life)) return hit.data;
-  if(hit) SEARCH_CACHE.delete(key);
+  const жива = hit && Date.now() - hit.at <= (isEmpty(hit.data) ? Math.min(пауза(key), life) : life);
+  if(жива && !(моложе && Date.now() - hit.at >= моложе)) return hit.data;
+  if(hit && !жива) SEARCH_CACHE.delete(key);
   if(INFLIGHT.has(key)) return INFLIGHT.get(key);
   const p = (async ()=>{
     try{
@@ -14768,11 +14771,14 @@ function warmUp(){
   // который страница делает при переключении: город по умолчанию и цена
   // по возрастанию. Ключ кэша считаем той же функцией, что и обработчик, —
   // иначе прогреется одно, а спросится другое.
+  // Прогрев раз в 7 минут, а запись живёт 8: без «моложе» он видел живую запись
+  // и ничего не делал, она истекала на 8-й минуте, и до 14-й первый зашедший
+  // снова ждал 101hotels. Поэтому освежаем, как только записи 5 минут.
   const рф = new URL('/api/rf/search?city=moskva&sort=price_asc', 'http://localhost');
   cached(cacheKey(рф), function(){
     return searchRF('moskva', { types:'', stars:'', services:'', rating:'',
                                 no_card:'', bathroom:'', maxP:0, minP:0, sort:'price_asc' });
-  }).then(function(d){ console.log('Прогрев отелей России: ' + (d && d.total)); })
+  }, undefined, 5 * 60 * 1000).then(function(d){ console.log('Прогрев отелей России: ' + (d && d.total)); })
     .catch(function(e){ console.log('Прогрев отелей не удался:', e.message); });
 }
 setTimeout(warmUp, 1500);
