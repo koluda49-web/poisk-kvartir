@@ -11,10 +11,10 @@
 // число своих точек (по умолчанию рабочий): у нас их должно быть больше
 // ровно на число новых. Не ответил — только предупреждение.
 //   node проверки/новые-места-belahrudka.mjs http://127.0.0.1:8241
-//   node проверки/новые-места-belahrudka.mjs http://127.0.0.1:8241 https://poisk-kvartir.onrender.com
+//   node проверки/новые-места-belahrudka.mjs http://127.0.0.1:8241 https://nochy.by
 
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
-const БАЗА = process.argv[3] || 'https://poisk-kvartir.onrender.com';
+const БАЗА = process.argv[3] || 'https://nochy.by';
 const ПЕРВЫЙ = 910038, ПОСЛЕДНИЙ = 910087;
 const ЧИСЛО = ПОСЛЕДНИЙ - ПЕРВЫЙ + 1;   // 50
 

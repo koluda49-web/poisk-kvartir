@@ -10,7 +10,7 @@
 //
 // Сервер должен быть запущен.
 //   node проверки/по-пути.mjs
-//   node проверки/по-пути.mjs https://poisk-kvartir.onrender.com
+//   node проверки/по-пути.mjs https://nochy.by
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { join, dirname } from 'node:path';

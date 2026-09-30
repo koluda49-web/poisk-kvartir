@@ -25,9 +25,9 @@ npm run проверка-страницы   проверит, что скрип�
 Обе можно натравить и на живой сайт — просто допиши адрес:
 
 ```
-npm test https://poisk-kvartir.onrender.com
-npm run проверка-страниц https://poisk-kvartir.onrender.com
-npm run проверка-страницы https://poisk-kvartir.onrender.com
+npm test https://nochy.by
+npm run проверка-страниц https://nochy.by
+npm run проверка-страницы https://nochy.by
 ```
 
 Если всё хорошо — в конце будет «провалено 0». Если что-то сломалось,

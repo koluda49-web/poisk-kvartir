@@ -14,7 +14,7 @@
 //
 // Нужен Chrome. Сервер должен быть уже запущен.
 //   npm run проверка-возврата
-//   npm run проверка-возврата https://poisk-kvartir.onrender.com
+//   npm run проверка-возврата https://nochy.by
 
 import { запуститьChrome } from './_браузер.mjs';
 

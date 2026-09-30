@@ -10,7 +10,7 @@
 // Проверка сама поднимает два сервера (8243 — со счётчиком, 8244 — METRIKA_OFF=1)
 // с выключенными площадками и временной папкой данных и гасит их по своим PID.
 //   node проверки/метрика.mjs
-//   node проверки/метрика.mjs https://poisk-kvartir.onrender.com   (страницы со счётчиком — с живого сайта)
+//   node проверки/метрика.mjs https://nochy.by   (страницы со счётчиком — с живого сайта)
 
 import { spawn } from 'node:child_process';
 import { rmSync, mkdirSync } from 'node:fs';

@@ -11,7 +11,7 @@
 //
 // Сервер должен быть запущен.
 //   node проверки/маршруты-из-видео.mjs
-//   node проверки/маршруты-из-видео.mjs https://poisk-kvartir.onrender.com
+//   node проверки/маршруты-из-видео.mjs https://nochy.by
 import { readFileSync } from 'node:fs';
 import { запуститьChrome } from './_браузер.mjs';
 
@@ -36,13 +36,13 @@ check('заголовок h1 из файла', html.includes('<h1>' + м.title +
 const escHtml = t => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 check('вступление под заголовком', html.includes('<p class="intro">' + escHtml(м.intro) + '</p>'));
 check('индексируется', /<meta name="robots" content="index,follow">/.test(html));
-check('canonical', html.includes('<link rel="canonical" href="https://poisk-kvartir.onrender.com/m/lida-voronovo">'));
+check('canonical', html.includes('<link rel="canonical" href="https://nochy.by/m/lida-voronovo">'));
 check('og:title и og:description', html.includes('<meta property="og:title" content="' + escHtml(м.title) + '">')
   && html.includes('<meta property="og:description" content="' + escHtml(м.description || м.intro) + '">'));
 const ogImage = (html.match(/<meta property="og:image" content="([^"]+)">/) || [])[1] || '';
 check('og:image — полный адрес', /^https:\/\/[^/]+\//.test(ogImage), ogImage);
 if (ogImage) {
-  const r = await fetch(ogImage.replace('https://poisk-kvartir.onrender.com', SITE), { method: 'GET' }).catch(() => null);
+  const r = await fetch(ogImage.replace('https://nochy.by', SITE), { method: 'GET' }).catch(() => null);
   check('og:image открывается', !!r && r.ok, r ? String(r.status) : 'нет ответа');
 }
 
@@ -72,8 +72,8 @@ for (const slug of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
   check('/m/' + slug + ' — 404' + (slug === '__proto__' ? ' (или 403 от прокси)' : ''), st === 404 || (slug === '__proto__' && st === 403), String(st));
 }
 const карта = await (await fetch(SITE + '/sitemap.xml')).text();
-check('в sitemap.xml есть /m', карта.includes('<loc>https://poisk-kvartir.onrender.com/m</loc>'));
-check('в sitemap.xml есть /m/lida-voronovo', карта.includes('<loc>https://poisk-kvartir.onrender.com/m/lida-voronovo</loc>'));
+check('в sitemap.xml есть /m', карта.includes('<loc>https://nochy.by/m</loc>'));
+check('в sitemap.xml есть /m/lida-voronovo', карта.includes('<loc>https://nochy.by/m/lida-voronovo</loc>'));
 
 // ── в браузере ───────────────────────────────────────────────────────────
 const { закрыть } = запуститьChrome(PORT, 'video');

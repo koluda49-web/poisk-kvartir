@@ -8,7 +8,7 @@
 //
 // Сервер должен быть уже запущен.
 //   npm run проверка-мест
-//   npm run проверка-мест https://poisk-kvartir.onrender.com
+//   npm run проверка-мест https://nochy.by
 
 const BASE = process.argv[2] || 'http://127.0.0.1:8080';
 let failed = 0, passed = 0;

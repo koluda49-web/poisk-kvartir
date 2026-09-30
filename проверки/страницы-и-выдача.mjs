@@ -9,7 +9,7 @@
 // Сервер должен быть уже запущен.
 //   npm start                        а в другом окне:
 //   npm run проверка-страниц
-//   npm run проверка-страниц https://poisk-kvartir.onrender.com
+//   npm run проверка-страниц https://nochy.by
 
 const BASE = process.argv[2] || 'http://127.0.0.1:8080';
 let failed = 0, passed = 0;

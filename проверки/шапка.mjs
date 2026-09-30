@@ -11,7 +11,7 @@
 //
 // Сервер должен быть запущен.
 //   node проверки/шапка.mjs
-//   node проверки/шапка.mjs https://poisk-kvartir.onrender.com
+//   node проверки/шапка.mjs https://nochy.by
 // Снимки шапки (375 и 1200 px) пишутся, если задан префикс пути:
 //   SNIMKI=C:/папка/шапка- node проверки/шапка.mjs   → шапка-375.png, шапка-1200.png
 import { writeFileSync } from 'node:fs';

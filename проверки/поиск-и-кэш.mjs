@@ -8,7 +8,7 @@
 // Сервер должен быть уже запущен.
 //   npm start                     а в другом окне:
 //   npm test                      (проверит http://127.0.0.1:8080)
-//   npm test https://poisk-kvartir.onrender.com     (проверит живой сайт)
+//   npm test https://nochy.by     (проверит живой сайт)
 
 const BASE = process.argv[2] || 'http://127.0.0.1:8080';
 let failed = 0, passed = 0;

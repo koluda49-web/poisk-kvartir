@@ -15,7 +15,7 @@
 // пуст в первую минуту и что check-in собран без пропусков, смотрит
 // проверки/каталоги-полнота.mjs.
 //   node проверки/доски.mjs
-//   node проверки/доски.mjs https://poisk-kvartir.onrender.com
+//   node проверки/доски.mjs https://nochy.by
 
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 let failed = 0, passed = 0;

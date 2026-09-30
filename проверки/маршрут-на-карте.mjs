@@ -7,7 +7,7 @@
 //
 // Сервер должен быть запущен.
 //   node проверки/маршрут-на-карте.mjs
-//   node проверки/маршрут-на-карте.mjs https://poisk-kvartir.onrender.com
+//   node проверки/маршрут-на-карте.mjs https://nochy.by
 import { запуститьChrome } from './_браузер.mjs';
 
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';

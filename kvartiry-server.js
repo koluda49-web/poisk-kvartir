@@ -12,7 +12,11 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 // ждать его до перезапуска сервера.
 const WAIT = 15000;
 const ждём = (extra) => Object.assign({ signal: AbortSignal.timeout(WAIT) }, extra || {});
-const SITE_URL = 'https://poisk-kvartir.onrender.com';
+// Свой домен с 30.09.2026. Старый адрес на onrender остаётся рабочим: с него
+// постоянный 301 сюда же с тем же путём — ссылки в старых постах ТикТока не ломаются.
+const ГЛАВНЫЙ_ХОСТ = 'nochy.by';
+const СТАРЫЕ_ХОСТЫ = new Set(['poisk-kvartir.onrender.com', 'www.nochy.by']);
+const SITE_URL = 'https://' + ГЛАВНЫЙ_ХОСТ;
 
 // ── Своя статистика посещений (без Метрики/Analytics) ──────────────────────
 // События копятся в памяти и раз в 30 секунд сбрасываются в файл рядом с сервером.
@@ -474,7 +478,7 @@ function refHost(r){
     if(/google/i.test(h))            return 'Google';
     if(/yandex|ya\.ru/i.test(h))     return 'Яндекс';
     if(/facebook|fb\.com/i.test(h))  return 'Facebook';
-    if(h.indexOf('poisk-kvartir') >= 0) return 'внутри сайта';
+    if(h.indexOf('poisk-kvartir') >= 0 || h.indexOf('nochy.by') >= 0) return 'внутри сайта';
     return h.slice(0,40);
   }catch(e){ return 'прямой заход'; }
 }
@@ -682,7 +686,7 @@ function statsPage(популярное){
       tile('Запросов с запуска', ЗАПРОСОВ, 'включая пинги и роботов') +
     '</div><p class="note">' +
       (ДОЛЬШЕ_ВСЕГО_МОЛЧАЛИ >= 14 * 60 * 1000
-        ? 'Перерыв дорастал до пятнадцати минут — значит, сайт успевал заснуть, и внешний пингер до него не доходит. Проверьте монитор: он должен дёргать https://poisk-kvartir.onrender.com/ping не реже чем раз в 10 минут.'
+        ? 'Перерыв дорастал до пятнадцати минут — значит, сайт успевал заснуть, и внешний пингер до него не доходит. Проверьте монитор: он должен дёргать https://poisk-kvartir.onrender.com/ping (или https://nochy.by/ping) не реже чем раз в 10 минут.'
         : (Date.now() - ЗАПУЩЕН < 20 * 60 * 1000
             ? 'Сайт запущен недавно — подождите полчаса, и по «самому долгому перерыву» станет видно, будит ли его пингер.'
             : 'Перерывы короче пятнадцати минут: кто-то регулярно дёргает сайт, засыпать он не должен.')) +
@@ -7656,7 +7660,7 @@ function картинкаМаршрута(д){
     }
 
     // где открыть этот маршрут: сайт и путь страницы
-    var сайт = 'poisk-kvartir.onrender.com';
+    var сайт = 'nochy.by';
     к.font = 'bold 30px ' + ШРИФТ; к.fillStyle = '#9a3412';
     к.fillText(сайт, ОТСТУП, В - 58);
     var шс = к.measureText(сайт).width;
@@ -10468,18 +10472,18 @@ ${ГОЛОВА_ГЛАВНОЙ.by}
 <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <script type="application/ld+json">
 {"@context":"https://schema.org","@graph":[
-{"@type":"WebSite","@id":"https://poisk-kvartir.onrender.com/#sajt",
- "url":"https://poisk-kvartir.onrender.com/",
+{"@type":"WebSite","@id":"https://nochy.by/#sajt",
+ "url":"https://nochy.by/",
  "name":"Поиск жилья на сутки",
  "inLanguage":"ru",
  "description":"Квартиры, коттеджи и усадьбы на сутки по Беларуси из Kufar, Realt, Flatbook, Check-in и Kvartirka в одной выдаче, отели России с 101Hotels и 798 достопримечательностей с подбором жилья рядом.",
- "publisher":{"@id":"https://poisk-kvartir.onrender.com/#кто"},
+ "publisher":{"@id":"https://nochy.by/#кто"},
  "potentialAction":{"@type":"SearchAction",
-  "target":{"@type":"EntryPoint","urlTemplate":"https://poisk-kvartir.onrender.com/?name={search_term_string}"},
+  "target":{"@type":"EntryPoint","urlTemplate":"https://nochy.by/?name={search_term_string}"},
   "query-input":"required name=search_term_string"}},
-{"@type":"Organization","@id":"https://poisk-kvartir.onrender.com/#кто",
+{"@type":"Organization","@id":"https://nochy.by/#кто",
  "name":"Поиск жилья на сутки",
- "url":"https://poisk-kvartir.onrender.com/",
+ "url":"https://nochy.by/",
  "areaServed":[{"@type":"Country","name":"Беларусь"},{"@type":"Country","name":"Россия"}],
  "description":"Собираем объявления посуточного жилья с Kufar, Realt, Flatbook, Check-in и Kvartirka в одну выдачу. Комиссию не берём и жильё сами не сдаём."},
 {"@type":"FAQPage",
@@ -14011,7 +14015,10 @@ const БЕЗ_МЕТРИКИ = new Set(['/predlozheniya', '/stats', '/reis', '/is
 // (29.09.2026). Метатеги должны стоять на главной; ставим туда же, куда
 // счётчик, — в головы всех страниц. Удалить тег — потерять доступ к отчётам.
 const ПОДТВЕРЖДЕНИЕ_ПОИСКА = '<meta name="google-site-verification" content="oBovOHAJusDyTa1KfPsqTdXoUI8i9aCV49Hbe6BXqPk">'
-  + '<meta name="yandex-verification" content="1a9742ce2001d283">';
+  + '<meta name="yandex-verification" content="1a9742ce2001d283">'
+  // nochy.by (30.09.2026) — свои теги у нового адреса в обеих консолях
+  + '<meta name="google-site-verification" content="kTwdRUwbRezhHYh3JCWYq8XWHekzF7q1k2xce_Zv01M">'
+  + '<meta name="yandex-verification" content="994f05556a5dd515">';
 function сМетрикой(html){
   // Функцией, а не строкой замены: в строке «$» что-то значил бы.
   return html.replace(/<\/head>(\s*<body[^>]*>)/, (м, тело) => ПОДТВЕРЖДЕНИЕ_ПОИСКА + МЕТРИКА_ГОЛОВА + '</head>' + тело + МЕТРИКА_ТЕЛО);
@@ -14036,6 +14043,14 @@ function метрикаВОтвет(res){
 http.createServer(async (req,res)=>{
   отметитьЗапрос();
   const u = new URL(req.url, 'http://localhost');
+  // Старый адрес и www — навсегда на nochy.by, путь и метки (?from=tiktok-…)
+  // сохраняются. /ping не трогаем: его дёргает пингер, чтобы сайт не засыпал.
+  // Отправку форм (POST) со старой открытой вкладки тоже принимаем как есть.
+  const хост = String(req.headers.host || '').toLowerCase().replace(/:\d+$/, '');
+  if(СТАРЫЕ_ХОСТЫ.has(хост) && u.pathname !== '/ping' && (req.method === 'GET' || req.method === 'HEAD')){
+    res.writeHead(301, { 'Location': SITE_URL + req.url, 'Cache-Control': 'public, max-age=86400' });
+    res.end(); return;
+  }
   if(МЕТРИКА_ВКЛ && !БЕЗ_МЕТРИКИ.has(u.pathname)) метрикаВОтвет(res);
   if(u.pathname === '/api/search'){
     const data = await runSearchQuery(u.searchParams);

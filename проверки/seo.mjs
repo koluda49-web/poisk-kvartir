@@ -22,11 +22,11 @@
 //
 // Сервер должен быть запущен.
 //   node проверки/seo.mjs                                  (http://127.0.0.1:8095)
-//   node проверки/seo.mjs https://poisk-kvartir.onrender.com
+//   node проверки/seo.mjs https://nochy.by
 //   SEO_MEST=все node проверки/seo.mjs                     (все места, не 30)
 
 const SITE = (process.argv[2] || 'http://127.0.0.1:8095').replace(/\/$/, '');
-const ОСНОВА = 'https://poisk-kvartir.onrender.com';
+const ОСНОВА = 'https://nochy.by';
 const КЛЮЧ = process.env.STATS_KEY || 'poisk2026';
 // SEO_MEST=все — обойти все места, а не выборку (долго: каждое место тянет описание с kudin.by)
 const МЕСТ_В_ВЫБОРКЕ = process.env.SEO_MEST === 'все' ? Infinity : (+process.env.SEO_MEST || 30);

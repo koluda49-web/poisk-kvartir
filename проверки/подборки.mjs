@@ -22,7 +22,7 @@ import { запуститьChrome, удалитьПапку } from './_брау�
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 const PORT = 9607, sleep = ms => new Promise(r => setTimeout(r, ms));
 const ПОДБОРКИ = JSON.parse(readFileSync(new URL('../подборки.json', import.meta.url), 'utf8'));
-const ОСНОВА = 'https://poisk-kvartir.onrender.com';
+const ОСНОВА = 'https://nochy.by';
 
 let failed = 0, passed = 0;
 const check = (n, ok, d) => ok ? (passed++, console.log('  OK   ' + n)) : (failed++, console.log('  ПАДАЕТ ' + n + (d ? '  — ' + d : '')));

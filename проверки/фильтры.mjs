@@ -7,7 +7,7 @@
 //
 // Сервер должен быть запущен, и каталоги досок уже собраны (~3 минуты).
 //   node проверки/фильтры.mjs
-//   node проверки/фильтры.mjs https://poisk-kvartir.onrender.com
+//   node проверки/фильтры.mjs https://nochy.by
 import { запуститьChrome } from './_браузер.mjs';
 
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';

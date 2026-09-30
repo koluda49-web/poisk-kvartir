@@ -8,7 +8,7 @@
 //
 // Нужен Chrome. Сервер должен быть уже запущен.
 //   npm run проверка-вкладок
-//   npm run проверка-вкладок https://poisk-kvartir.onrender.com
+//   npm run проверка-вкладок https://nochy.by
 //
 // Сервер трогать не нужно: на время первого блока проверка сама задерживает
 // ответы /api/search на 2,5 с через CDP (Fetch.requestPaused), иначе на

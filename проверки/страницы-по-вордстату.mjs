@@ -9,7 +9,7 @@
 //
 // Сервер должен быть запущен.
 //   node проверки/страницы-по-вордстату.mjs
-//   node проверки/страницы-по-вордстату.mjs https://poisk-kvartir.onrender.com
+//   node проверки/страницы-по-вордстату.mjs https://nochy.by
 const SITE = process.argv[2] || 'http://127.0.0.1:8080';
 let failed = 0, passed = 0;
 const check = (n, ok, d) => ok ? (passed++, console.log('  OK   ' + n)) : (failed++, console.log('  ПАДАЕТ ' + n + (d ? '  — ' + d : '')));
