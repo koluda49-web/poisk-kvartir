@@ -4,6 +4,16 @@
 // На Render порт берётся из переменной окружения PORT.
 
 const http = require('http');
+// Диагностика «сайт то и дело замирает» (30.09.2026): задержка цикла событий.
+// /ping?diag=1 показывает худшую паузу за минуту, память и время работы.
+const ЗАДЕРЖКА_ЦИКЛА = require('perf_hooks').monitorEventLoopDelay({ resolution: 20 });
+ЗАДЕРЖКА_ЦИКЛА.enable();
+const ПАУЗЫ = [];   // [время, худшая пауза мс] по 10-секундным окнам за последние 10 минут
+setInterval(function(){
+  ПАУЗЫ.push([Date.now(), Math.round(ЗАДЕРЖКА_ЦИКЛА.max / 1e6)]);
+  if(ПАУЗЫ.length > 60) ПАУЗЫ.shift();
+  ЗАДЕРЖКА_ЦИКЛА.reset();
+}, 10000).unref();
 const crypto = require('crypto');
 const PORT = process.env.PORT || 8080;   // Render задаёт свой порт через переменную окружения
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36';
@@ -14421,6 +14431,14 @@ http.createServer(async (req,res)=>{
   // Render считает это входящим запросом и не усыпляет сервис.
   if(u.pathname === '/ping'){
     res.writeHead(200, {'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'});
+    if(u.searchParams.get('diag') === '1'){
+      const m = process.memoryUsage(), мб = x => Math.round(x / 1048576);
+      res.end('uptime ' + Math.round((Date.now() - ЗАПУЩЕН) / 1000) + 's\n'
+        + 'rss ' + мб(m.rss) + ' МБ, heap ' + мб(m.heapUsed) + '/' + мб(m.heapTotal) + ' МБ\n'
+        + 'сейчас: пауза до ' + Math.round(ЗАДЕРЖКА_ЦИКЛА.max / 1e6) + ' мс\n'
+        + ПАУЗЫ.slice().reverse().map(function(x){ return new Date(x[0]).toISOString().slice(11, 19) + ' ' + x[1] + ' мс'; }).join('\n'));
+      return;
+    }
     res.end('ok ' + Math.round((Date.now() - ЗАПУЩЕН) / 1000) + 's'); return;
   }
   if(u.pathname === '/favicon.ico'){
