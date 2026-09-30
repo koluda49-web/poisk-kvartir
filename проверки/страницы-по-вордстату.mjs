@@ -93,6 +93,25 @@ check('с /grodno есть ссылка на «Что посмотреть в Г
   const r = await (await fetch(SITE + '/api/place?id=910089')).json();
   check('Минская ратуша есть на карте и с подписью фото', /ратуша/i.test(r.name || '') && !!(r.cred && r.cred.author && r.cred.lic), JSON.stringify(r.cred || {}));
 }
+// «Что посмотреть в Бресте» (добавлено 30.09, задача brest): в центре — храмы и Советская,
+// а не только памятник, часы и кошки, которые одни и были на карте с фото
+{
+  const п = '/chto-posmotret-brest';
+  const { код, html } = await стр(п);
+  check(п + ' открывается с h1 «Что посмотреть в Бресте»', код === 200 && h1(html) === 'Что посмотреть в Бресте', код + ' ' + h1(html));
+  const места = [...html.matchAll(/<h3><a href="[^"]+">([^<]+)<\/a><\/h3><div class="m"><span>([\d,]+) км от центра/g)].map(м => ({ имя: м[1], км: +м[2].replace(',', '.') }));
+  check(п + ': не меньше 8 мест', места.length >= 8, 'мест ' + места.length);
+  check(п + ': наверху — главное в центре', места.length > 0 && места[0].км <= 3 && /Николаевск|Симеонов|Воздвижен|Советск/i.test(места.slice(0, 3).map(x => x.имя).join(' ')),
+        места.slice(0, 3).map(x => x.имя + ' ' + x.км).join('; '));
+  check(п + ': есть братская церковь, Симеоновский собор и костёл', ['Николаевская братская', 'Симеоновский', 'Воздвижения'].every(с => места.some(x => x.имя.includes(с))),
+        места.map(x => x.имя).join('; '));
+  check(п + ': у каждого места есть описание', места.length > 0 && (html.match(/<p class="t">[^<]{60,}/g) || []).length === места.length);
+  const сВикисклада = (html.match(/<img src="https:\/\/(thumb|upload)\.wikimedia\.org/g) || []).length;
+  check(п + ': у фото с Викисклада подписан автор и лицензия', сВикисклада === (html.match(/class="cr">Фото:/g) || []).length, 'фото ' + сВикисклада);
+  check(п + ': Куропат на странице нет', !/Куропат/.test(html));
+  check(п + ' в карте сайта', карта.includes(п + '</loc>'));
+  check('с /brest есть ссылка на «Что посмотреть в Бресте»', /href="\/chto-posmotret-brest"/.test((await стр('/brest')).html));
+}
 
 console.log('\nПройдено ' + passed + ', падает ' + failed);
 process.exit(failed ? 1 : 0);
