@@ -5038,13 +5038,25 @@ async function stayNearPoint(lat, lng, r, вид){
         .catch(()=>[])));
     части.push([].concat(...ещё));
 
+    // Дальние отсеиваем до копирования: в списке семь тысяч объявлений, а рядом
+    // с одним местом — десятки. Копия каждого стоила на Render больше секунды
+    // на каждое открытие страницы места (01.10.2026: «долго грузится»).
     const было = new Set();
-    items = [].concat(...части)
-      .filter(x => (!вид || x.vid === вид) && x.lat && x.lng
-                   && !было.has(x.link) && было.add(x.link) !== null)
-      .map(x => Object.assign({}, x, { km: Math.round(distKm(lat, lng, x.lat, x.lng) * 10) / 10 }))
-      .filter(x => x.km <= r)
-      .sort((a, b) => a.price - b.price);
+    const dLat = r / 110, dLng = r / (110 * Math.max(0.2, Math.cos(lat * Math.PI / 180)));
+    const найденные = [];
+    for(const список of части){
+      for(const x of список){
+        if((вид && x.vid !== вид) || !x.lat || !x.lng) continue;
+        if(Math.abs(x.lat - lat) > dLat || Math.abs(x.lng - lng) > dLng) continue;
+        const km = Math.round(distKm(lat, lng, x.lat, x.lng) * 10) / 10;
+        if(km > r || было.has(x.link)) continue;
+        было.add(x.link);
+        найденные.push(Object.assign({}, x, { km: km }));
+      }
+    }
+    // Как на главной: сначала обычные варианты по типичной цене, а не самые
+    // дешёвые (владелец 01.10.2026: «выведены самые дешёвые, а надо средние»).
+    items = рекомендуемыйПорядок(найденные);
 
     // Куда вести кнопку «Показать все варианты в области»: туда, где это
     // жильё и стоит. Считаем по тридцати ближайшим — дальние могут быть уже
@@ -5458,7 +5470,7 @@ function рекомендуемыйПорядок(список, медиана){
   return (список || []).map(function(x){
     return { x: x, п: полоса(x), д: (м && x.price > 0) ? Math.abs(Math.log(x.price / м)) : x.price || 0 };
   }).sort(function(a, b){
-    return a.п - b.п || a.д - b.д || (a.x.link < b.x.link ? -1 : a.x.link > b.x.link ? 1 : 0);
+    return a.п - b.п || a.д - b.д || ((a.x.km || 0) - (b.x.km || 0)) || (a.x.link < b.x.link ? -1 : a.x.link > b.x.link ? 1 : 0);
   }).map(function(o){ return o.x; });
 }
 
@@ -6840,7 +6852,21 @@ function местностьМеста(p){
 // в Щорсах», адрес «Щорсы») — не повторяем; сравниваем с начала слова, иначе
 // адрес «Мир» совпал бы с «Владимира».
 const АДМИН_ЧАСТЬ = /(област|обл\.|район|р-н|сельсовет|с\/с)/i;
+// Страница места сравнивает имя с именами всех 900 точек и трижды пересчитывала
+// каждое (с регулярным выражением внутри). Результат зависит только от имени
+// и адреса, поэтому помним его.
+const КЭШ_ЧАСТЕЙ_ИМЕНИ = new Map();
 function частиИмениМеста(p){
+  const ключ = p.id + '\u0001' + p.name + '\u0001' + (p.addr || '');
+  let р = КЭШ_ЧАСТЕЙ_ИМЕНИ.get(ключ);
+  if(!р){
+    р = частиИмениМестаСчитать(p);
+    if(КЭШ_ЧАСТЕЙ_ИМЕНИ.size > 5000) КЭШ_ЧАСТЕЙ_ИМЕНИ.clear();
+    КЭШ_ЧАСТЕЙ_ИМЕНИ.set(ключ, р);
+  }
+  return р;
+}
+function частиИмениМестаСчитать(p){
   const имя = String(p.name || '').trim();
   const все = местностьМеста(p).split(', ').map(ч => ч.trim()).filter(Boolean);
   const части = все.filter(ч => !АДМИН_ЧАСТЬ.test(ч)).concat(все.filter(ч => АДМИН_ЧАСТЬ.test(ч) && !/област|обл\.|сельсовет|с\/с/i.test(ч)));
@@ -7063,6 +7089,7 @@ async function mestoPageBuild(id){
     + '.back{display:inline-block;margin:0 0 14px;padding:9px 17px;background:#fff;border:1px solid #e9e2d8;'
     +   'border-radius:999px;text-decoration:none;color:#1c1917;font-size:14.5px;font-weight:600}'
     + '.back:hover{border-color:#9a3412;color:#9a3412}'
+    + '.mapb{margin-left:8px;border-color:#9a3412;color:#9a3412}'
     + 'h1{font-size:clamp(24px,4.6vw,36px);line-height:1.15;margin:0 0 6px;letter-spacing:-.02em}'
     + '.where{color:#57534e;margin:0 0 16px}'
     // снимок целиком: высота рамки — по кадру (подогнатьСнимки), кадр вписан без обрезки
@@ -7105,6 +7132,8 @@ async function mestoPageBuild(id){
     +   '.noimg{background:#2b251f}.where,.c .m span{color:#c2b7ab}a{color:#e2703a}.ph{background:#241f1a}}'
     + '</style></head><body><div class="w">'
     + '<a class="back" id="back" href="/?country=places">← Ко всем местам</a>'
+    // Открывает главную сразу на карте мест, с этой точкой в центре и открытым окошком
+    + '<a class="back mapb" rel="nofollow" href="/?country=places&amp;view=map&amp;place=' + p.id + '">🗺 Посмотреть на карте</a>'
     + '<h1>' + esc(p.name) + '</h1>'
     + (где ? ('<p class="where">' + esc(где) + '</p>') : '')
     + снимки
@@ -7147,7 +7176,7 @@ async function mestoPageBuild(id){
     + '(function(){var a=document.getElementById("back");if(!a)return;'
     + 'var свой=false, куда="";'
     + 'try{ var r=document.referrer;'
-    + '  var п=r.slice(location.origin.length); if(r && r.indexOf(location.origin)===0 && /^\\/(\\?|$)/.test(п)){ куда=r; свой=true; }'
+    + '  var п=r.slice(location.origin.length); if(r && r.indexOf(location.origin)===0 && /^\\/(\\?|$|podborka\\/|m(\\/|$)|marshrut|chto-posmotret-|gde-ostanovitsya-)/.test(п)){ куда=r; свой=true; }'
     + '  else { var с=localStorage.getItem("backTo");'
     + '         if(с && с.charAt(0)==="/") куда=с; } }catch(e){}'
     + 'if(куда) a.href=куда;'
@@ -11110,6 +11139,12 @@ button.mp-call{font:inherit;font-size:13px;font-weight:700;text-align:left;
   object-fit:cover;
   display:block;
 }
+.slider.ld::before{
+  content:"";position:absolute;left:50%;top:50%;width:34px;height:34px;margin:-17px 0 0 -17px;
+  border:3px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;
+  animation:slspin .8s linear infinite;z-index:2;pointer-events:none;
+}
+@keyframes slspin{to{transform:rotate(360deg)}}
 .slider::after{
   content:"";position:absolute;inset:0;pointer-events:none;
   background:linear-gradient(180deg,rgba(0,0,0,.28) 0%,transparent 26%,transparent 62%,rgba(0,0,0,.32) 100%);
@@ -12342,6 +12377,7 @@ function renderCards(){
         +'</div></div>';
     }).join('');
   renderPager(pages);
+  ждатьВторойСнимок();
   loadGalleries();
 }
 // Дотягиваем галереи фото для Flatbook/101hotels (на текущей странице) — чтобы работал слайдер
@@ -12606,14 +12642,60 @@ async function showDesc(card){
 }
 // листание фото в карточке
 window.__idx={};
+// Снимки карточек: 1 — уже запрошен у сети, 2 — загружен. Раньше следующий
+// снимок просили только в момент нажатия, и листать приходилось с паузой
+// (30.09.2026: «вторые и последующие фото долго подгружаются»).
+window.__pre={};
+function предзагрузить(card, n){
+  const ph=(window.__items[card]||{}).photos||[];
+  if(ph.length<2) return;
+  const u=ph[((n%ph.length)+ph.length)%ph.length];
+  if(!u || window.__pre[u]) return;
+  window.__pre[u]=1;
+  const i=new Image();
+  i.onload=function(){ window.__pre[u]=2; };
+  i.src=u;
+}
 function slide(card, dir){
   const ph=(window.__items[card]||{}).photos||[];
   if(ph.length<2) return;
   const cur=(window.__idx[card]||0);
   const next=(cur+dir+ph.length)%ph.length;
   window.__idx[card]=next;
-  const img=document.getElementById('im'+card); if(img) img.src=ph[next];
+  const img=document.getElementById('im'+card);
   const cnt=document.getElementById('cnt'+card); if(cnt) cnt.textContent=(next+1)+'/'+ph.length;
+  if(img){
+    const url=ph[next], box=img.parentNode;
+    if(window.__pre[url]===2){ img.src=url; box.classList.remove('ld'); }
+    else{
+      // не загрузился — оставляем прежний кадр и крутилку, пустую рамку не показываем
+      box.classList.add('ld');
+      const t=new Image();
+      t.onload=t.onerror=function(){
+        window.__pre[url]=2;
+        if((window.__idx[card]||0)===next){ img.src=url; box.classList.remove('ld'); }
+      };
+      t.src=url;
+    }
+  }
+  предзагрузить(card,next+1); предзагрузить(card,next-1);
+}
+// Второй снимок — заранее для карточек, которые вот-вот покажутся на экране
+function ждатьВторойСнимок(){
+  if(window.__sliderIO){ window.__sliderIO.disconnect(); window.__sliderIO=null; }
+  if(!('IntersectionObserver' in window)) return;
+  if(navigator.connection && navigator.connection.saveData) return;
+  const io=new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if(!e.isIntersecting) return;
+      io.unobserve(e.target);
+      const im=e.target.querySelector('.im');
+      const k=im ? +im.id.slice(2) : -1;
+      if(k>=0) предзагрузить(k,1);
+    });
+  },{rootMargin:'250px'});
+  window.__sliderIO=io;
+  document.querySelectorAll('#grid .slider').forEach(function(el){ io.observe(el); });
 }
 // Беларусь
 document.querySelectorAll('#bar select, #bar input').forEach(el=>{ if(el.id!=='sort') el.addEventListener('change',run); });
@@ -13249,6 +13331,7 @@ async function stayNear(i){
 async function plotPlaces(){
   if(typeof L === 'undefined') return;
   if(!window.__map){ plotMap(false); }
+  const токен = window.__plТокен = (window.__plТокен || 0) + 1;   // новее отрисовка — старая молчит
   // В списке лежат первые триста точек, а на карте должны быть все.
   const p2 = plParams(); p2.set('light', '1');
   const key = p2.toString();
@@ -13300,9 +13383,24 @@ async function plotPlaces(){
   });
   рисоватьМаршрутНаКарте();
   setTimeout(function(){
+    if(токен !== window.__plТокен) return;
     window.__map.invalidateSize();
-    if(pts.length) window.__map.fitBounds(pts, { padding:[45,45], maxZoom:13 });
+    if(window.__плФокус && window.__plMarkers[window.__плФокус]) открытьМестоНаКарте();
+    else if(pts.length) window.__map.fitBounds(pts, { padding:[45,45], maxZoom:13 });
   }, 60);
+}
+// Открыть окошко точки, с которой пришли со страницы места. Точка может сидеть
+// в кластере — тогда карта сама раздвигает его и открывает окошко.
+function открытьМестоНаКарте(){
+  const id = window.__плФокус;
+  const mk = id ? (window.__plMarkers || {})[id] : null;
+  if(!mk || (window.__mlayer && window.__mlayer.hasLayer && !window.__mlayer.hasLayer(mk))) return;
+  window.__плФокус = 0;
+  window.__map.setView(mk.getLatLng(), 14);
+  if(window.__mlayer && typeof window.__mlayer.zoomToShowLayer === 'function')
+    window.__mlayer.zoomToShowLayer(mk, function(){ mk.openPopup(); });
+  else mk.openPopup();
+  try{ $('#map').scrollIntoView({ behavior:'smooth', block:'center' }); }catch(e){}
 }
 
 // Переносим человека из места в поиск жилья по той же области. Не ссылкой
@@ -13898,6 +13996,11 @@ function applyUrl(){
       if(q.get('to')){   $('#to').value   = q.get('to');   $('#plTo').value   = q.get('to'); }
       window.__plGroup = q.get('group') || '';
       setCountry('places', true);
+      // со страницы места: сразу карта, и на ней — эта точка
+      if(q.get('view') === 'map'){
+        window.__плФокус = +q.get('place') || 0;
+        setView('map');
+      }
       return;
     }
     if(q.get('country')==='ru'){
