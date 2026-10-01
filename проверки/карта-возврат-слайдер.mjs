@@ -101,14 +101,19 @@ if (карт) {
     дальняя.ph[1] = дальняя.ph[1] + '?cb=' + Date.now();
     await js(`window.__items[${дальняя.i}].photos[1] = ${JSON.stringify(дальняя.ph[1])}; 1`);
     await send('Network.emulateNetworkConditions', { offline: false, latency: 1500, downloadThroughput: 20 * 1024, uploadThroughput: 20 * 1024 });
+    // Эмуляция сети в тестовом Chrome действует не всегда (запросы через сервис-воркер
+    // она не замедляет). Сперва убеждаемся, что свежий снимок правда идёт медленно.
+    const замер = await js(`new Promise(function(r){ var t0=performance.now(), i=new Image(); i.onload=i.onerror=function(){ r(Math.round(performance.now()-t0)); }; i.src=${JSON.stringify(дальняя.ph[2])}+'?cb='+Date.now(); })`);
+    const медленно = замер >= 1200;
+    if (!медленно) { check('эмуляция медленной сети в этом Chrome не сработала (' + замер + ' мс) — проверка крутилки пропущена', true); }
     await js(`document.getElementById('im${дальняя.i}').parentNode.querySelector('.nav.next').click(); 1`);
     await sleep(300);
-    check('при медленной сети: крутилка включена, кадр прежний',
+    if (медленно) check('при медленной сети: крутилка включена, кадр прежний',
           (await js(`document.getElementById('im${дальняя.i}').parentNode.classList.contains('ld')`)) === true
           && (await js(`document.getElementById('im${дальняя.i}').src`)) === дальняя.ph[0],
           await js(`JSON.stringify({ld: document.getElementById('im${дальняя.i}').parentNode.className, src: document.getElementById('im${дальняя.i}').src.slice(-30), ph0: ${JSON.stringify(дальняя.ph[0].slice(-30))}, pre1: (window.__pre||{})[${JSON.stringify(дальняя.ph[1])}], idx: (window.__idx||{})[${дальняя.i}]})`));
     await send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
-    check('когда снимок загрузился — показан он, крутилка выключена',
+    if (медленно) check('когда снимок загрузился — показан он, крутилка выключена',
           await ждать(`document.getElementById('im${дальняя.i}').src === ${JSON.stringify(дальняя.ph[1])} && !document.getElementById('im${дальняя.i}').parentNode.classList.contains('ld')`, 40));
   }
 }
