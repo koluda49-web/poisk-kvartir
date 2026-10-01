@@ -5022,6 +5022,32 @@ async function stayIndex(){
 // ближайшим городам. Одним списком не обойтись — Kufar отдаёт не больше
 // двухсот объявлений на запрос, и в областной выдаче городские помещаются
 // не полностью.
+// Жильё города по виду, уже с пометкой вида и области. Для каждой страницы места
+// раньше заново искали по восьми ближним городам и трём видам (24 поиска с копией всех
+// результатов) — на Render это секунда на каждое место (01.10.2026: «долго грузится»).
+// Эти поиски одинаковы для всех мест одного города, поэтому помним их. Города делят
+// каталог между собой, так что вся память — один каталог, около десяти мегабайт.
+const ЖИЛЬЁ_ГОРОДА = new Map();     // «область|город|вид» → { at, items }
+const ЖИЛЬЁ_ГОРОДА_ЖДУТ = new Map();
+const ЖИЛЬЁ_ГОРОДА_СРОК = 10 * 60 * 1000;
+function жильёГорода(g, t){
+  const ключ = g.region + '|' + g.town + '|' + t;
+  const был = ЖИЛЬЁ_ГОРОДА.get(ключ);
+  if(был && Date.now() - был.at < (был.items.length ? ЖИЛЬЁ_ГОРОДА_СРОК : EMPTY_TTL)) return Promise.resolve(был.items);
+  if(ЖИЛЬЁ_ГОРОДА_ЖДУТ.has(ключ)) return ЖИЛЬЁ_ГОРОДА_ЖДУТ.get(ключ);
+  const ждёт = runSearchQuery(new URLSearchParams({ region:g.region, city:g.town, type:t,
+      rooms:'', guests:'', max:'', source:'both' }))
+    .then(d => (d.items||[]).map(x => Object.assign({}, x, { vid: t, reg: g.region })))
+    .catch(()=>[])
+    .then(items => {
+      if(ЖИЛЬЁ_ГОРОДА.size > 400) ЖИЛЬЁ_ГОРОДА.clear();
+      ЖИЛЬЁ_ГОРОДА.set(ключ, { at: Date.now(), items });
+      ЖИЛЬЁ_ГОРОДА_ЖДУТ.delete(ключ);
+      return items;
+    });
+  ЖИЛЬЁ_ГОРОДА_ЖДУТ.set(ключ, ждёт);
+  return ждёт;
+}
 async function stayNearPoint(lat, lng, r, вид){
   if(!lat || !lng) return { items: [], region: '' };
   let items = [], region = '';
@@ -5031,11 +5057,7 @@ async function stayNearPoint(lat, lng, r, вид){
     const рядом = townsNear(lat, lng, 75, 8);
     const пары = [];
     рядом.forEach(g => виды.forEach(t => пары.push({ g, t })));
-    const ещё = await Promise.all(пары.map(({ g, t }) =>
-      runSearchQuery(new URLSearchParams({ region:g.region, city:g.town, type:t,
-        rooms:'', guests:'', max:'', source:'both' }))
-        .then(d => (d.items||[]).map(x => Object.assign({}, x, { vid: t, reg: g.region })))
-        .catch(()=>[])));
+    const ещё = await Promise.all(пары.map(({ g, t }) => жильёГорода(g, t)));
     части.push([].concat(...ещё));
 
     // Дальние отсеиваем до копирования: в списке семь тысяч объявлений, а рядом
@@ -6302,6 +6324,7 @@ const isEmpty = d => Array.isArray(d) ? d.length === 0
 // досок они отношения не имеют, а их повторный сбор стоит секунды.
 function сброситьВыдачуЖилья(иИндекс){
   let сколько = 0;
+  if(иИндекс !== false){ сколько += ЖИЛЬЁ_ГОРОДА.size; ЖИЛЬЁ_ГОРОДА.clear(); }
   for(const к of [...SEARCH_CACHE.keys()]){
     if(к.startsWith('/api/search?') || (иИндекс !== false && к.startsWith('idx|'))){ SEARCH_CACHE.delete(к); сколько++; }
   }
@@ -15167,6 +15190,18 @@ function warmUp(сИндексом){
       .then(function(d){ console.log('Прогрев ' + uu.searchParams.get('source') + ': ' + d.total); })
       .catch(function(e){ console.log('Прогрев не удался:', e.message); });
   });
+  // «Жильё рядом» у мест: первый посетитель района платил за поиск по восьми ближним
+  // городам. Греем его для областных центров (города делят кэш с соседями), по одному,
+  // с передышкой — на бесплатном Render это секунды процессора.
+  if(сИндексом !== false){
+    (async function(){
+      for(const [la, lo] of [[53.9023, 27.5619], [52.0976, 23.7341], [53.6884, 23.8258],
+                             [52.4345, 30.9754], [55.1904, 30.2049], [53.9007, 30.3313]]){
+        try{ await stayNearPoint(la, lo, 30, ''); }catch(e){}
+        await new Promise(r => setTimeout(r, 400));
+      }
+    })();
+  }
   // Отели России греем отдельно: 101hotels отвечает две с лишним секунды,
   // и первый зашедший на вкладку столько и ждал. Греем ровно тот запрос,
   // который страница делает при переключении: город по умолчанию и цена
