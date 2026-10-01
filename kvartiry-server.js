@@ -5030,11 +5030,14 @@ async function stayIndex(){
 const ЖИЛЬЁ_ГОРОДА = new Map();     // «область|город|вид» → { at, items }
 const ЖИЛЬЁ_ГОРОДА_ЖДУТ = new Map();
 const ЖИЛЬЁ_ГОРОДА_СРОК = 10 * 60 * 1000;
-function жильёГорода(g, t){
+function жильёГорода(g, t, максЖдать){
   const ключ = g.region + '|' + g.town + '|' + t;
   const был = ЖИЛЬЁ_ГОРОДА.get(ключ);
   if(был && Date.now() - был.at < (был.items.length ? ЖИЛЬЁ_ГОРОДА_СРОК : EMPTY_TTL)) return Promise.resolve(был.items);
-  if(ЖИЛЬЁ_ГОРОДА_ЖДУТ.has(ключ)) return ЖИЛЬЁ_ГОРОДА_ЖДУТ.get(ключ);
+  // максЖдать — для страницы места: если живой поиск по городу медленный, не держим человека,
+  // показываем то, что уже собрано (индекс «рядом» покрывает область), а поиск доделается в фоне
+  const сДедлайном = p => !максЖдать ? p : Promise.race([p, new Promise(r => { const т = setTimeout(() => r([]), максЖдать); if(т.unref) т.unref(); })]);
+  if(ЖИЛЬЁ_ГОРОДА_ЖДУТ.has(ключ)) return сДедлайном(ЖИЛЬЁ_ГОРОДА_ЖДУТ.get(ключ));
   const ждёт = runSearchQuery(new URLSearchParams({ region:g.region, city:g.town, type:t,
       rooms:'', guests:'', max:'', source:'both' }))
     .then(d => (d.items||[]).map(x => Object.assign({}, x, { vid: t, reg: g.region })))
@@ -5046,9 +5049,9 @@ function жильёГорода(g, t){
       return items;
     });
   ЖИЛЬЁ_ГОРОДА_ЖДУТ.set(ключ, ждёт);
-  return ждёт;
+  return сДедлайном(ждёт);
 }
-async function stayNearPoint(lat, lng, r, вид){
+async function stayNearPoint(lat, lng, r, вид, максЖдать){
   if(!lat || !lng) return { items: [], region: '' };
   let items = [], region = '';
   try{
@@ -5057,7 +5060,7 @@ async function stayNearPoint(lat, lng, r, вид){
     const рядом = townsNear(lat, lng, 75, 8);
     const пары = [];
     рядом.forEach(g => виды.forEach(t => пары.push({ g, t })));
-    const ещё = await Promise.all(пары.map(({ g, t }) => жильёГорода(g, t)));
+    const ещё = await Promise.all(пары.map(({ g, t }) => жильёГорода(g, t, максЖдать)));
     части.push([].concat(...ещё));
 
     // Дальние отсеиваем до копирования: в списке семь тысяч объявлений, а рядом
@@ -6289,7 +6292,7 @@ async function placeDetail(id){
 // ── Кэш результатов поиска ────────────────────────────────────────────────
 // Одинаковые запросы в течение 8 минут отдаём из памяти: и быстрее, и источники
 // не получают шквал обращений, если на сайт разом придёт много людей.
-const CACHE_TTL = 8 * 60 * 1000;
+const CACHE_TTL = +process.env.CACHE_TTL_MS || 8 * 60 * 1000;   // CACHE_TTL_MS — только для проверок кэша
 const CACHE_MAX = 300;
 const SEARCH_CACHE = new Map();   // ключ -> { at, data }
 const INFLIGHT = new Map();       // ключ -> Promise (чтобы не считать одно и то же дважды)
@@ -6333,13 +6336,19 @@ function сброситьВыдачуЖилья(иИндекс){
 
 // моложе — для прогрева: освежить запись, если ей уже столько мс, хотя она ещё жива.
 // Живую запись при этом не убираем — посетители берут её, пока идёт новый запрос.
+// Протухший, но непустой ответ (не старше четырёх сроков жизни) отдаём сразу, а
+// площадки опрашиваем в фоне: человек не ждёт живых запросов к Kufar/Realt/Flatbook
+// после каждых восьми минут тишины (замеры 01.10.2026: холодная страница места,
+// поиск и «дома для корпоратива» — по 2–4 секунды на Render).
 async function cached(key, fn, ttl, моложе){
   const life = ttl || CACHE_TTL;
   const hit = SEARCH_CACHE.get(key);
-  const жива = hit && Date.now() - hit.at <= (isEmpty(hit.data) ? Math.min(пауза(key), life) : life);
-  if(жива && !(моложе && Date.now() - hit.at >= моложе)) return hit.data;
-  if(hit && !жива) SEARCH_CACHE.delete(key);
-  if(INFLIGHT.has(key)) return INFLIGHT.get(key);
+  const возраст = hit ? Date.now() - hit.at : 0;
+  const жива = hit && возраст <= (isEmpty(hit.data) ? Math.min(пауза(key), life) : life);
+  if(жива && !(моложе && возраст >= моложе)) return hit.data;
+  const устарел = !!hit && !жива && !isEmpty(hit.data) && возраст <= life * 4;
+  if(hit && !жива && !устарел) SEARCH_CACHE.delete(key);
+  if(INFLIGHT.has(key)) return устарел ? hit.data : INFLIGHT.get(key);
   const p = (async ()=>{
     try{
       const data = await fn();
@@ -6356,6 +6365,7 @@ async function cached(key, fn, ttl, моложе){
     } finally { INFLIGHT.delete(key); }
   })();
   INFLIGHT.set(key, p);
+  if(устарел){ p.catch(function(){}); return hit.data; }
   return p;
 }
 
@@ -7018,7 +7028,7 @@ async function mestoPageBuild(id){
   // ждала их по очереди и открывалась вдвое дольше.
   const [d, рядом] = await Promise.all([
     placeDetail(id).catch(() => ({ text:'', years:'', pics:[], more: KUDIN + '/?point=' + id })),
-    stayNearPoint(p.lat, p.lng, 30, ''),
+    stayNearPoint(p.lat, p.lng, 30, '', 800),
   ]);
   const своё = своиМеста().find(x => String(x.id) === String(id));
   const текст = (своё && своё.text) || d.text || '';
@@ -14967,7 +14977,7 @@ http.createServer(async (req,res)=>{
   if(u.pathname === '/api/places/stay'){
     const lat = +u.searchParams.get('lat'), lng = +u.searchParams.get('lng');
     const r = +(u.searchParams.get('r') || 30);
-    const d = await stayNearPoint(lat, lng, r, u.searchParams.get('type') || '');
+    const d = await stayNearPoint(lat, lng, r, u.searchParams.get('type') || '', 800);
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
     res.end(JSON.stringify({ total: d.items.length, region: d.region, items: d.items.slice(0, 12) })); return;
   }

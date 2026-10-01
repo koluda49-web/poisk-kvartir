@@ -90,8 +90,7 @@ if (карт) {
   check('второй снимок подгружен заранее, до нажатия', !!(await js(`window.__pre && window.__pre[${JSON.stringify(карт.ph[1])}]`)));
   await js(`document.querySelector('#im${карт.i}').parentNode.querySelector('.nav.next').click(); 1`);
   check('счётчик сразу показывает 2', (await js(`document.getElementById('cnt${карт.i}').textContent`)).startsWith('2/'));
-  await sleep(1500);
-  check('показан второй снимок', (await js(`document.getElementById('im${карт.i}').src`)) === карт.ph[1]);
+  check('показан второй снимок', await ждать(`document.getElementById('im${карт.i}').src === ${JSON.stringify(карт.ph[1])}`, 8));
   check('третий снимок уже запрошен', !!(await js(`window.__pre && window.__pre[${JSON.stringify(карт.ph[2])}]`)));
   // медленная сеть: берём карточку внизу страницы — её снимки ещё не трогали, в кэше их нет
   const дальняя = JSON.parse(await js(`JSON.stringify((function(){ var a=window.__items||[]; for(var i=Math.min(a.length,24)-1;i>${карт.i};i--){ if((a[i].photos||[]).length>=3 && !(window.__pre||{})[a[i].photos[1]]) return {i:i, ph:a[i].photos.slice(0,3)}; } return null; })())`) || 'null');
