@@ -52,6 +52,22 @@ await js(`document.getElementById('viewMap').click(); 1`);
 check('жильё на карте', await ждать(`window.__view === 'map' && !!window.__map && document.querySelectorAll('.price-pin').length > 0`, 60),
       await js(`'view=' + window.__view + ' map=' + !!window.__map`));
 
+console.log('\n=== точка со страницы места не пропадает, когда список мест дозагрузился ===');
+// на настоящем сервере ответ списка приходит позже первой отрисовки карты и перерисовывает её
+await send('Page.navigate', { url: SITE + '/?country=places&view=map&place=910089&cb=' + Date.now() });
+check('окошко точки открылось', await ждать(`!!document.querySelector('.leaflet-popup .mp-pl') && /ратуша/i.test(document.querySelector('.leaflet-popup').textContent)`, 40));
+const до = JSON.parse(await js(`JSON.stringify([window.__map.getCenter().lat, window.__map.getCenter().lng, window.__map.getZoom()])`));
+await js(`runPlaces(); 1`);
+await sleep(4000);
+check('после дозагрузки списка окошко на месте', await js(`!!document.querySelector('.leaflet-popup .mp-pl') && /ратуша/i.test(document.querySelector('.leaflet-popup').textContent)`));
+const после = JSON.parse(await js(`JSON.stringify([window.__map.getCenter().lat, window.__map.getCenter().lng, window.__map.getZoom()])`));
+check('и карта не уехала', Math.abs(до[0] - после[0]) < 0.001 && Math.abs(до[1] - после[1]) < 0.001 && до[2] === после[2], JSON.stringify(до) + ' → ' + JSON.stringify(после));
+await js(`document.querySelector('.leaflet-popup-close-button').click(); 1`);
+await sleep(300);
+await js(`runPlaces(); 1`);
+await sleep(3000);
+check('закрытое человеком окошко само не открывается', await js(`!document.querySelector('.leaflet-popup .mp-pl')`));
+
 console.log('\n=== форма «Предложить место» строит карту ===');
 await send('Page.navigate', { url: SITE + '/?country=places' });
 await ждать(`!!document.getElementById('plBtn')`, 20);

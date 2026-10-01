@@ -13428,7 +13428,13 @@ async function plotPlaces(){
       window.__plMap = all; window.__plMapKey = key;
     }catch(e){}
   }
+  // Перерисовка (список мест дозагрузился позже первой отрисовки) сносит все метки вместе
+  // с открытым окошком. Запоминаем, какое окошко было открыто, и после перерисовки
+  // возвращаем его, не двигая карту: иначе точка со страницы места мигала и пропадала.
+  const былоОткрыто = window.__плОткрыта || 0;
+  window.__плПерерисовка = true;
   window.__mlayer.clearLayers();
+  window.__плПерерисовка = false;
   window.__plMarkers = {};
   const pts = [];
   all.forEach(function(p, i){
@@ -13460,7 +13466,8 @@ async function plotPlaces(){
       { maxWidth:300, minWidth:240 });
     // Описание тянем только когда окошко открыли: на карте бывает под тысячу
     // точек, грузить их описания заранее — тысяча лишних запросов.
-    mk.on('popupopen', function(){ loadMapText(p.id, i); syncPins(); });
+    mk.on('popupopen', function(){ window.__плОткрыта = p.id; loadMapText(p.id, i); syncPins(); });
+    mk.on('popupclose', function(){ if(!window.__плПерерисовка && window.__плОткрыта === p.id) window.__плОткрыта = 0; });
     window.__mlayer.addLayer(mk);
     window.__plMarkers[p.id] = mk;
     pts.push([p.lat, p.lng]);
@@ -13470,6 +13477,11 @@ async function plotPlaces(){
     if(токен !== window.__plТокен) return;
     window.__map.invalidateSize();
     if(window.__плФокус && window.__plMarkers[window.__плФокус]) открытьМестоНаКарте();
+    else if(былоОткрыто && window.__plMarkers[былоОткрыто]){
+      const mk = window.__plMarkers[былоОткрыто];
+      if(window.__mlayer && typeof window.__mlayer.zoomToShowLayer === 'function') window.__mlayer.zoomToShowLayer(mk, function(){ mk.openPopup(); });
+      else mk.openPopup();
+    }
     else if(pts.length) window.__map.fitBounds(pts, { padding:[45,45], maxZoom:13 });
   }, 60);
 }
