@@ -2,7 +2,7 @@
 //
 // Зачем. unpkg.com стоял в <head> как блокирующий скрипт: на телефоне главная ждала внешний
 // сервер, прежде чем показать хоть что-то. Теперь Leaflet и скопления меток грузятся
-// следом: через секунду после полной загрузки страницы либо сразу, если человек открыл карту.
+// по требованию: когда человек открыл карту или потянулся к кнопке «Карта».
 //
 //   node проверки/карта-позже.mjs http://127.0.0.1:8241
 import { запуститьChrome } from './_браузер.mjs';
@@ -34,11 +34,14 @@ const html = await (await fetch(SITE + '/')).text();
 const шапка = html.slice(0, html.indexOf('</head>'));
 check('в <head> нет скриптов и стилей unpkg.com', !/unpkg\.com/.test(шапка));
 
-console.log('\n=== первый кадр без карты, потом она подгружается ===');
+console.log('\n=== первый кадр без карты, грузится по требованию ===');
 await send('Page.navigate', { url: SITE + '/' });
 await ждать(`document.readyState !== 'loading' && !!document.getElementById('grid')`, 15);
 check('в начале Leaflet ещё не подключён', await js(`typeof L === 'undefined'`));
-check('через пару секунд после загрузки карта подгрузилась сама', await ждать(`typeof L !== 'undefined' && typeof L.markerClusterGroup === 'function'`, 20));
+await sleep(4000);
+check('сама по себе, без обращения к карте, она не грузится', await js(`typeof L === 'undefined'`));
+await js(`document.getElementById('viewMap').dispatchEvent(new Event('pointerenter')); 1`);
+check('рука потянулась к кнопке «Карта» — начинается загрузка', await ждать(`typeof L !== 'undefined' && typeof L.markerClusterGroup === 'function'`, 20));
 check('таблицы стилей карты добавлены', await js(`!!document.querySelector('link[href*="leaflet.css"]') && !!document.querySelector('link[href*="MarkerCluster.css"]')`));
 
 console.log('\n=== карта открывается сразу, не дожидаясь подгрузки ===');
