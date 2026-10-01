@@ -10802,10 +10802,6 @@ ${ГОЛОВА_ГЛАВНОЙ.by}
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icon-192.png">
 <meta name="apple-mobile-web-app-title" content="Жильё на сутки">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
-<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <script type="application/ld+json">
 {"@context":"https://schema.org","@graph":[
 {"@type":"WebSite","@id":"https://nochy.by/#sajt",
@@ -12523,8 +12519,49 @@ function окошкоЛистать(кн, шаг){
   подогнатьСнимки(к);
 }
 
+// Карта (Leaflet + скопления меток) подгружается после первого кадра, а не в шапке:
+// на телефоне внешний сервер раньше держал показ всей страницы. Открывают карту раньше —
+// грузим сразу; иначе стартуем через секунду после полной загрузки страницы.
+// Состояние держим в объекте, который создаётся при первом обращении: так порядок
+// вызовов в скрипте страницы не важен.
+function картаСостояние(){ return window.__картаЗагрузка || (window.__картаЗагрузка = { статус: '', ждут: [] }); }
+function картаГотова(){ return typeof L !== 'undefined' && картаСостояние().статус !== 'грузится'; }
+function загрузитьКарту(потом){
+  var с = картаСостояние();
+  if(картаГотова()){ if(потом) потом(); return; }
+  if(потом) с.ждут.push(потом);
+  if(с.статус === 'грузится') return;
+  с.статус = 'грузится';
+  var база = 'https://unpkg.com/';
+  var финиш = function(ок){
+    с.статус = ок ? 'есть' : 'не вышло';
+    var очередь = с.ждут; с.ждут = [];
+    очередь.forEach(function(ф){ try{ ф(); }catch(e){} });
+  };
+  var стиль = function(адрес){ var l = document.createElement('link'); l.rel = 'stylesheet'; l.href = база + адрес; document.head.appendChild(l); };
+  var скрипт = function(адрес, готово, ошибка){
+    var т = document.createElement('script'); т.src = база + адрес; т.async = false;
+    т.onload = готово; т.onerror = ошибка; document.head.appendChild(т);
+  };
+  стиль('leaflet@1.9.4/dist/leaflet.css');
+  стиль('leaflet.markercluster@1.5.3/dist/MarkerCluster.css');
+  скрипт('leaflet@1.9.4/dist/leaflet.js', function(){
+    // скопления — украшение: без них карта работает с обычным слоем
+    скрипт('leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js', function(){ финиш(true); }, function(){ финиш(true); });
+  }, function(){ финиш(false); });
+}
+window.addEventListener('load', function(){ setTimeout(function(){ загрузитьКарту(); }, 1200); });
+
 function plotMap(fit){
-  if(typeof L==='undefined'){ $('#map').innerHTML='<div style="padding:24px;color:var(--txt-2)">Карта не загрузилась (нет связи с картографическим сервисом).</div>'; return; }
+  if(!картаГотова()){
+    $('#map').innerHTML='<div id="mapWait" style="padding:24px;color:var(--txt-2)">Загружаю карту…</div>';
+    загрузитьКарту(function(){
+      if(!картаГотова()){ $('#map').innerHTML='<div style="padding:24px;color:var(--txt-2)">Карта не загрузилась (нет связи с картографическим сервисом).</div>'; return; }
+      if(window.__view === 'map' && window.__mode !== 'places') plotMap(fit);
+    });
+    return;
+  }
+  var ждёт = document.getElementById('mapWait'); if(ждёт) ждёт.remove();
   if(!window.__map){
     window.__map=L.map('map',{scrollWheelZoom:true}).setView([53.70,27.95],6);
     window.__map.attributionControl.setPrefix('');
@@ -13003,12 +13040,18 @@ $('#plBtn').addEventListener('click', function(){
   if(!открыть) return;
   if(window.__T) window.__T('place_suggest', {});
   // Карту строим, когда форма уже видна: у скрытого блока нет размера.
-  if(!window.__plMap && typeof L !== 'undefined'){
-    window.__plMap = L.map('plMap', { scrollWheelZoom: false }).setView([53.7, 27.95], 6);
-    window.__plMap.attributionControl.setPrefix('');
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(window.__plMap);
-    window.__plMap.on('click', function(e){ plPin(e.latlng.lat, e.latlng.lng, true); });
-  } else if(window.__plMap) window.__plMap.invalidateSize();
+  // Карту строим, когда форма уже видна: у скрытого блока нет размера. Сама карта
+  // подгружается позже страницы, поэтому, если её ещё нет, дожидаемся её здесь.
+  var построить = function(){
+    if(!картаГотова() || $('#plForm').style.display === 'none') return;
+    if(!window.__plMap){
+      window.__plMap = L.map('plMap', { scrollWheelZoom: false }).setView([53.7, 27.95], 6);
+      window.__plMap.attributionControl.setPrefix('');
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(window.__plMap);
+      window.__plMap.on('click', function(e){ plPin(e.latlng.lat, e.latlng.lng, true); });
+    } else window.__plMap.invalidateSize();
+  };
+  загрузитьКарту(построить);
   setTimeout(function(){ $('#plName').focus(); }, 50);
 });
 $('#plCoord').addEventListener('input', function(){
@@ -13362,7 +13405,15 @@ async function stayNear(i){
 }
 
 async function plotPlaces(){
-  if(typeof L === 'undefined') return;
+  if(!картаГотова()){
+    $('#map').innerHTML='<div id="mapWait" style="padding:24px;color:var(--txt-2)">Загружаю карту…</div>';
+    загрузитьКарту(function(){
+      if(!картаГотова()){ $('#map').innerHTML='<div style="padding:24px;color:var(--txt-2)">Карта не загрузилась (нет связи с картографическим сервисом).</div>'; return; }
+      if(window.__view === 'map' && window.__mode === 'places') plotPlaces();
+    });
+    return;
+  }
+  var ждёт = document.getElementById('mapWait'); if(ждёт) ждёт.remove();
   if(!window.__map){ plotMap(false); }
   const токен = window.__plТокен = (window.__plТокен || 0) + 1;   // новее отрисовка — старая молчит
   // В списке лежат первые триста точек, а на карте должны быть все.
