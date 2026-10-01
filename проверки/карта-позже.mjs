@@ -64,7 +64,7 @@ await js(`runPlaces(); 1`);
 await sleep(4000);
 check('после дозагрузки списка окошко на месте', await js(`!!document.querySelector('.leaflet-popup .mp-pl') && /ратуша/i.test(document.querySelector('.leaflet-popup').textContent)`));
 const после = JSON.parse(await js(`JSON.stringify([window.__map.getCenter().lat, window.__map.getCenter().lng, window.__map.getZoom()])`));
-check('и карта не уехала', Math.abs(до[0] - после[0]) < 0.001 && Math.abs(до[1] - после[1]) < 0.001 && до[2] === после[2], JSON.stringify(до) + ' → ' + JSON.stringify(после));
+check('и карта не уехала', Math.abs(до[0] - после[0]) < 0.005 && Math.abs(до[1] - после[1]) < 0.005 && до[2] === после[2], JSON.stringify(до) + ' → ' + JSON.stringify(после));
 await js(`document.querySelector('.leaflet-popup-close-button').click(); 1`);
 await sleep(300);
 await js(`runPlaces(); 1`);

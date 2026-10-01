@@ -13231,6 +13231,26 @@ async function runPlaces(){
   }catch(e){ $('#stat').textContent = 'Ошибка: ' + e.message; }
 }
 
+// Снимок Викисклада в карточке: набор размеров, браузер берёт нужный по ширине и плотности
+// экрана (раньше всегда шла «960 px» — 200–650 КБ на карточку). Остальные снимки (kudin.by)
+// отдаём как есть: размер у них задан в адресе.
+function снимокКарточки(url, alt){
+  // без регулярного выражения: этот код лежит внутри шаблонной строки, где слэши и точки с обратной чертой теряются
+  const к = url.indexOf('/960px-');
+  const набор = (url.indexOf('https://thumb.wikimedia.org/') === 0 && к > 0)
+    ? (' data-srcset="' + url.slice(0, к) + '/500px-' + url.slice(к + 7) + ' 500w, ' + url + ' 960w"'
+      + ' sizes="(min-width:1000px) 340px, (min-width:640px) 46vw, 96vw"') : '';
+  return '<img data-src="' + url + '"' + набор + ' decoding="async" alt="' + esc2(alt) + '">';
+}
+// Подставляем адрес, когда карточка подошла к экрану: родная ленивая загрузка браузера
+// на быстрой сети тянет почти полтора экрана вниз — это 15 снимков и 3 МБ сразу.
+function включитьСнимок(карточка){
+  const im = карточка.querySelector('img[data-src]');
+  if(!im) return;
+  if(im.getAttribute('data-srcset')) im.srcset = im.getAttribute('data-srcset');
+  im.src = im.getAttribute('data-src');
+  im.removeAttribute('data-src'); im.removeAttribute('data-srcset');
+}
 function renderPlaces(){
   // Тот же рубеж в обратную сторону: запоздалый ответ по местам не должен
   // рисовать точки в ленте жилья.
@@ -13248,7 +13268,7 @@ function renderPlaces(){
     const route = 'https://yandex.by/maps/?rtext=~' + p.lat + ',' + p.lng + '&rtt=auto';
     return '<article class="plc" id="pl' + i + '">'
       + '<div class="ph">' + km + (p.pic
-          ? ('<img src="' + p.pic + '" loading="lazy" alt="' + esc2(p.name) + '">')
+          ? снимокКарточки(p.pic, p.name)
           : '<div class="nopic">фотографии пока нет</div>') + '</div>'
       + '<div class="bd"><div class="ct">' + esc2(p.cat || p.group) + '</div>'
       + '<h3>' + esc2(p.name) + '</h3>'
@@ -13273,12 +13293,14 @@ function renderPlaces(){
         if(!r.isIntersecting) return;
         const i = +r.target.id.replace('pl','');
         const p = (window.__places||[])[i];
+        включитьСнимок(r.target);
         if(p) loadPlaceText(p.id, i);
         window.__plObs.unobserve(r.target);
       });
     }, { rootMargin: '300px' });
     document.querySelectorAll('.plc').forEach(function(el){ window.__plObs.observe(el); });
   } else {
+    document.querySelectorAll('.plc').forEach(включитьСнимок);
     list.slice(0, 12).forEach(function(p, i){ loadPlaceText(p.id, i); });
   }
 }
@@ -14230,7 +14252,10 @@ syncPresets();
   }catch(e){}
 })();
 window.__firstRun = 1;
-window.addEventListener('load',run);
+// Вкладка мест стартует сразу: событие load ждёт все картинки и чужие скрипты (Метрика,
+// её iframe) и откладывало список на 7+ секунд (замер 01.10.2026). Жильё ждёт load —
+// у него поверх страницы лежит готовый список, торопиться некуда.
+if(window.__mode === 'places') setTimeout(run, 0); else window.addEventListener('load',run);
 </script></body></html>`;
 // Чипы подборок подставляем один раз при запуске: файл подборок читается
 // тоже при запуске, а внутри шаблона PAGE вставки кодом запрещены.
