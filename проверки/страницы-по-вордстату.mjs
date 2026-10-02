@@ -136,5 +136,28 @@ for (const [п, где, чужие] of [['/grodno-odnokomnatnye', 'в Гродн
 for (const п of ['/grodno-odnokomnatnye', '/brest-odnokomnatnye', '/gomel-odnokomnatnye', '/doma-s-bassejnom'])
   check(п + ' в карте сайта', карта.includes(п + '</loc>'));
 
+// Нарочь и Браслав (02.10): «сниму нарочь» 541 (квартиру 198, домик 74),
+// «браслав снять» 313 (квартиру 72, дом 38) — заголовки так, как ищут; адреса прежние
+for (const [п, заг, первый] of [['/naroch', 'Снять квартиру или домик на Нарочи посуточно', 'Снять квартиру или домик на Нарочи'],
+                                 ['/braslav', 'Снять квартиру или дом в Браславе на сутки', 'Снять квартиру или дом в Браславе']]) {
+  const { код, html } = await стр(п);
+  check(п + ' открывается с title «' + заг + '» (≤ 60)', код === 200 && заголовок(html) === заг && заг.length <= 60, код + ' ' + заголовок(html));
+  check(п + ': h1 «' + первый + '»', h1(html) === первый, h1(html));
+  const desc = ((html.match(/<meta name="description" content="([^"]*)"/) || [])[1] || '').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+  check(п + ': description 120–160 и начинается с «' + первый + '»', desc.length >= 120 && desc.length <= 160 && desc.startsWith(первый), desc.length + ' ' + desc);
+  check(п + ' в карте сайта', карта.includes(п + '</loc>'));
+}
+
+// «Что посмотреть» в Витебске, Могилёве, Гомеле и Полоцке не заводили: мест с фото
+// и описанием вокруг меньше восьми (02.10: 1, 2, 4 и 4 в 15 км). Пока так — страниц
+// нет, в карте сайта их нет и города на них не ссылаются (битая ссылка хуже никакой).
+for (const [п, город] of [['/chto-posmotret-vitebsk', '/vitebsk'], ['/chto-posmotret-mogilev', '/mogilev'],
+                          ['/chto-posmotret-gomel', '/gomel'], ['/chto-posmotret-polotsk', '/polotsk']]) {
+  const { код } = await стр(п);
+  const сГорода = (await стр(город)).html;
+  check(п + ': страницы нет, в карте сайта и на ' + город + ' ссылки нет',
+        код === 404 && !карта.includes(п + '</loc>') && !сГорода.includes('href="' + п + '"'), 'код ' + код);
+}
+
 console.log('\nПройдено ' + passed + ', падает ' + failed);
 process.exit(failed ? 1 : 0);
