@@ -56,10 +56,22 @@ for (const [slug, что] of [['gde-ostanovitsya-minsk', 'гид'], ['minsk-uruc
   const r = await fetch(САЙТ + '/' + slug, { signal: AbortSignal.timeout(90000) });
   check(что + ' /' + slug + ' без вариантов отдаёт 404', r.status === 404, 'код ' + r.status);
 }
+// Страница, на которую ведёт кнопка главной, не 404: ссылка там вшита.
+// Сбой площадок — 503 с понятным текстом (поисковик придёт позже и живую не выкинет).
+const ГЛАВНАЯ_СПРОС = 'novogodnij-korporativ-brest';
+{
+  const r = await fetch(САЙТ + '/' + ГЛАВНАЯ_СПРОС, { signal: AbortSignal.timeout(90000) });
+  const h = await r.text();
+  check('/' + ГЛАВНАЯ_СПРОС + ' (ссылка с главной) при сбое — 503, не 404', r.status === 503, 'код ' + r.status);
+  check('  с «Retry-After»', !!r.headers.get('retry-after'));
+  check('  честный текст про сбой и кнопка полного поиска', /ответили не все/.test(h) && h.includes('href="/?region=brest&type=cottage"'));
+  check('  есть ссылки на соседние подборки', /<h2>Другие подборки<\/h2><div class="others"><a href="\//.test(h));
+}
 const п1 = await пометки();
 check('ни одна не помечена пустой — сбой площадок не повод', Object.keys(п1.пометки).length === 0, JSON.stringify(п1.пометки));
 const к1 = await вКарте();
 check('все три по-прежнему в sitemap', ['gde-ostanovitsya-minsk', 'minsk-uruchie', 'braslav'].every(s => к1.has(s)));
+check('и страница с главной тоже', к1.has(ГЛАВНАЯ_СПРОС));
 
 console.log('\n=== площадки ответили, а вариантов мало: страница помечена и выпала из sitemap ===');
 // Выключаем Kufar и Realt переключателем /istochnik: выключенная площадка
@@ -72,8 +84,19 @@ for (const slug of ['gde-ostanovitsya-minsk', 'minsk-uruchie', 'braslav']) {
 }
 const п0 = await пометки();
 check('все три помечены пустыми', ['gde-ostanovitsya-minsk', 'minsk-uruchie', 'braslav'].every(s => s in п0.пометки), JSON.stringify(п0.пометки));
+{
+  // та же страница с главной, когда площадки ответили и вариантов ноль
+  const r = await fetch(САЙТ + '/' + ГЛАВНАЯ_СПРОС, { signal: AbortSignal.timeout(90000) });
+  const h = await r.text();
+  check('/' + ГЛАВНАЯ_СПРОС + ' без вариантов — 200, не 404', r.status === 200, 'код ' + r.status);
+  check('  закрыта от поиска: noindex и в метатеге, и в заголовке', /<meta name="robots" content="noindex/.test(h) && /noindex/.test(r.headers.get('x-robots-tag') || ''));
+  check('  говорит, что сейчас ничего не сдаётся, и ведёт в полный поиск', /ничего не сдаётся/.test(h) && h.includes('href="/?region=brest&type=cottage"'));
+  check('  ссылки на соседние подборки', (h.split('<h2>Другие подборки</h2>')[1] || '').includes('<a href="/'));
+  check('  h1 прежний', h.includes('<h1>Новогодний корпоратив в Бресте</h1>'));
+}
 const к0 = await вКарте();
 check('и в sitemap их нет', ['gde-ostanovitsya-minsk', 'minsk-uruchie', 'braslav'].every(s => !к0.has(s)));
+check('пустая страница с главной помечена и тоже выпала из sitemap', ГЛАВНАЯ_СПРОС in (await пометки()).пометки && !к0.has(ГЛАВНАЯ_СПРОС));
 
 console.log('\n=== пометка живёт час ===');
 check('пометке отведён час', п1.живёт === 60 * 60 * 1000, String(п1.живёт));

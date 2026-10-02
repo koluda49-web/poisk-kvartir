@@ -121,6 +121,7 @@ let r = await строки();
 check('в чистом профиле ' + N + ' точек в порядке файла', JSON.stringify(r) === JSON.stringify(имена), r.join(' | ') + '  ждали: ' + имена.join(' | '));
 check('номера меток на карте 1..' + N, await js(`JSON.stringify([...document.querySelectorAll('#rmap .pin')].map(function(e){return +e.textContent;}).sort(function(a,b){return a-b;})) === ${JSON.stringify(JSON.stringify(Array.from({ length: N }, (_, i) => i + 1)))}`));
 check('заголовок и вступление на странице', await js(`document.querySelector('h1').textContent === ${JSON.stringify(м.title)} && document.querySelector('.intro').textContent === ${JSON.stringify(м.intro)}`));
+check('у маршрута из видео фразы «Держите эту страницу открытой…» не видно', await js(`(function(){ var к=document.getElementById('rHowKeep'); return !!к && к.offsetParent === null; })()`));
 let х = await хранилище();
 check('до правки в хранилище ничего не записано', х.route === null && х.order === null, JSON.stringify(х));
 check('адрес остался /m/lida-voronovo', (await js(`location.pathname`)) === '/m/lida-voronovo', await js(`location.href`));
@@ -173,6 +174,8 @@ check('storage: заголовок стал «Маршрут на день»', (
 check('storage: вступление скрыто', await js(`!document.querySelector('.intro') || document.querySelector('.intro').offsetParent === null`));
 check('storage: title страницы — обычный маршрут', /^Маршрут на день/.test(await js(`document.title`)) && !(await js(`document.title`)).includes(м.title), await js(`document.title`));
 check('storage: текст про рекомендуемый порядок убран', !(await js(`document.querySelector('.how').textContent`)).includes('рекомендуемом порядке'));
+// у обычного «Маршрута на день» есть фраза «Держите эту страницу открытой…» — теперь и здесь
+check('storage: появилась фраза «Держите эту страницу открытой…»', await js(`(function(){ var к=document.getElementById('rHowKeep'); return !!к && к.offsetParent !== null && /Держите эту страницу открытой/.test(к.textContent); })()`));
 check('storage: адрес стал /marshrut', (await js(`location.pathname`)) === '/marshrut', await js(`location.pathname`));
 
 // то же через возврат на страницу

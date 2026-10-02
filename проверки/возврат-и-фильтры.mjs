@@ -165,6 +165,44 @@ try {
           'в поле осталось: «' + имя + '»');
   }
 
+  console.log('\n=== незнакомое значение в ссылке не оставляет выбор пустым ===');
+  {
+    await открыть('/?region=xyz&type=flat');
+    const о = JSON.parse(await js(`JSON.stringify({ r: $('#region').value, i: $('#region').selectedIndex, t: $('#type').value })`));
+    check('?region=xyz — область по умолчанию (Минск), а не пустой выбор', о.r === 'minsk' && о.i >= 0 && о.t === 'flat', JSON.stringify(о));
+    await открыть('/?region=brest&city=%D0%9D%D0%B8%D0%B3%D0%B4%D0%B5%D0%B1%D1%83%D1%80%D0%B3&sort=xyz');
+    const г = JSON.parse(await js(`JSON.stringify({ r: $('#region').value, c: $('#city').value, ci: $('#city').selectedIndex, s: $('#sort').value, si: $('#sort').selectedIndex })`));
+    check('незнакомый город — «любой», незнакомая сортировка — по умолчанию', г.r === 'brest' && г.c === '' && г.ci >= 0 && г.si >= 0 && г.s !== '', JSON.stringify(г));
+  }
+
+  console.log('\n=== даты поездки переживают переход со страницы маршрута ===');
+  {
+    const дата = n => { const d = new Date(); d.setDate(d.getDate() + n);
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+    const заезд = дата(20), выезд = дата(22);
+    await открыть('/?region=brest');
+    await js(`$('#from').value=${JSON.stringify(заезд)}; $('#to').value=${JSON.stringify(выезд)}; syncUrl(); 1`);
+    await send('Page.navigate', { url: SITE + '/marshrut?p=244' });
+    for (let i = 0; i < 40; i++) { if (await js(`/region=/.test((document.getElementById('rStay')||{}).href||'')`)) break; await sleep(500); }
+    const ссылка = await js(`(document.getElementById('rStay')||{}).getAttribute('href')`);
+    check('на странице маршрута ссылка «Искать жильё в городе …»', /region=/.test(ссылка || ''), ссылка);
+    await js(`document.getElementById('rStay').click(); 1`);
+    for (let i = 0; i < 60; i++) { if (await js(`location.pathname === '/' && !!document.querySelector('#from')`)) break; await sleep(500); }
+    await sleep(2500);
+    const д = JSON.parse(await js(`JSON.stringify({ f: $('#from').value, t: $('#to').value, s: location.search })`));
+    check('заезд и выезд с главной на месте', д.f === заезд && д.t === выезд, JSON.stringify(д) + ' ждали ' + заезд + '…' + выезд);
+    check('и попали в адрес', д.s.includes('from=' + заезд) && д.s.includes('to=' + выезд), д.s);
+    // прошедшие даты не подставляем
+    await js(`localStorage.setItem('backTo', '/?region=brest&from=2020-01-01&to=2020-01-03'); localStorage.removeItem('byFilters'); 1`);
+    await send('Page.navigate', { url: SITE + '/marshrut?p=244' });
+    for (let i = 0; i < 40; i++) { if (await js(`/region=/.test((document.getElementById('rStay')||{}).href||'')`)) break; await sleep(500); }
+    await js(`document.getElementById('rStay').click(); 1`);
+    for (let i = 0; i < 60; i++) { if (await js(`location.pathname === '/' && !!document.querySelector('#from')`)) break; await sleep(500); }
+    await sleep(2500);
+    const п = await js(`$('#from').value + '|' + $('#to').value`);
+    check('прошедший заезд из прошлого поиска не подставлен', п === '|', п);
+  }
+
   console.log('\n=== фотографии в карточке на карте ===');
   {
     await открыть('/?region=minsk&type=flat');
