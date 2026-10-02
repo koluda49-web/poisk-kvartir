@@ -5051,6 +5051,28 @@ function жильёГорода(g, t, максЖдать){
   ЖИЛЬЁ_ГОРОДА_ЖДУТ.set(ключ, ждёт);
   return сДедлайном(ждёт);
 }
+// Внутри одной полосы цены — по одному объявлению от каждой площадки по очереди;
+// свой порядок у каждой площадки сохраняется, и полосы не смешиваются: койко-место
+// вперёд обычной квартиры не выйдет, даже если у площадки больше ничего нет.
+function источникиПоОчереди(список, м){
+  const итог = [];
+  let i = 0;
+  while(i < список.length){
+    const п = полосаЦены(список[i], м);
+    let j = i;
+    while(j < список.length && полосаЦены(список[j], м) === п) j++;
+    const очереди = new Map();
+    for(let k = i; k < j; k++){
+      const x = список[k];
+      if(!очереди.has(x.src)) очереди.set(x.src, []);
+      очереди.get(x.src).push(x);
+    }
+    const все = [...очереди.values()];
+    for(let шаг = 0; итог.length < j; шаг++) все.forEach(о => { if(шаг < о.length) итог.push(о[шаг]); });
+    i = j;
+  }
+  return итог;
+}
 async function stayNearPoint(lat, lng, r, вид, максЖдать){
   if(!lat || !lng) return { items: [], region: '' };
   let items = [], region = '';
@@ -5081,7 +5103,12 @@ async function stayNearPoint(lat, lng, r, вид, максЖдать){
     }
     // Как на главной: сначала обычные варианты по типичной цене, а не самые
     // дешёвые (владелец 01.10.2026: «выведены самые дешёвые, а надо средние»).
-    items = рекомендуемыйПорядок(найденные);
+    // И источники по очереди: по одной цене — ровно по медиане — у Kufar и Flatbook
+    // десятки объявлений, а у Realt цена дробная (77, 82.5) и в точности с медианой
+    // не совпадает никогда. Все восемь мест блока «Жильё рядом» доставались двум
+    // площадкам, Realt не показывался ни у одного места (02.10.2026).
+    const м = медианаЦены(найденные);
+    items = источникиПоОчереди(рекомендуемыйПорядок(найденные, м), м);
 
     // Куда вести кнопку «Показать все варианты в области»: туда, где это
     // жильё и стоит. Считаем по тридцати ближайшим — дальние могут быть уже
@@ -5482,18 +5509,20 @@ function медианаЦены(список){
     .map(function(x){ return x.price; }).sort(function(a, b){ return a - b; });
   return ц.length ? ц[Math.floor(ц.length / 2)] : 0;
 }
+// Полоса цены: 0 — обычная для выдачи, 1 — заметно дешевле или дороже,
+// 2 — далеко от обычной или без цены, 3 — похоже на койко-место.
+function полосаЦены(x, м){
+  if(похожеНаМесто(x)) return 3;
+  if(!м || !(x.price > 0)) return 2;
+  var к = x.price / м;
+  if(к >= 0.75 && к <= 1.35) return 0;
+  if(к >= 0.5 && к <= 2.5) return 1;
+  return 2;
+}
 function рекомендуемыйПорядок(список, медиана){
   var м = медиана > 0 ? медиана : медианаЦены(список);
-  function полоса(x){
-    if(похожеНаМесто(x)) return 3;
-    if(!м || !(x.price > 0)) return 2;
-    var к = x.price / м;
-    if(к >= 0.75 && к <= 1.35) return 0;
-    if(к >= 0.5 && к <= 2.5) return 1;
-    return 2;
-  }
   return (список || []).map(function(x){
-    return { x: x, п: полоса(x), д: (м && x.price > 0) ? Math.abs(Math.log(x.price / м)) : x.price || 0 };
+    return { x: x, п: полосаЦены(x, м), д: (м && x.price > 0) ? Math.abs(Math.log(x.price / м)) : x.price || 0 };
   }).sort(function(a, b){
     return a.п - b.п || a.д - b.д || ((a.x.km || 0) - (b.x.km || 0)) || (a.x.link < b.x.link ? -1 : a.x.link > b.x.link ? 1 : 0);
   }).map(function(o){ return o.x; });
@@ -12814,9 +12843,14 @@ $('#fbSend').addEventListener('click', async function(){
     .then(function(j){ (String(j.success)==='true') ? ok() : fail(); })
     .catch(function(){ fail(); });
 });
+${датаИзАдреса.toString()}
+${меткаИзАдреса.toString()}
 // ── своя статистика: ничего не уходит на сторонние сервисы ─────────────────
 (function(){
   try{
+    // метка ссылки: /?from=tiktok-post1 — сразу видно, какой ролик привёл.
+    // Читаем сразу, а не на load: к тому времени syncUrl мог переписать адрес.
+    var mark = меткаИзАдреса(new URLSearchParams(location.search));
     var vid = localStorage.getItem('pk_vid'), isNew = 0;
     if(!vid){ vid = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('pk_vid', vid); isNew = 1; }
     var sid = Math.random().toString(36).slice(2);
@@ -12834,9 +12868,6 @@ $('#fbSend').addEventListener('click', async function(){
         var n = (performance.getEntriesByType('navigation')||[])[0];
         var load = n ? Math.round(n.loadEventEnd || n.duration || 0) : 0;
         if(!load) load = Math.round(performance.now());
-        // метка ссылки: /?from=tiktok-post1 — сразу видно, какой ролик привёл
-      var q = new URLSearchParams(location.search);
-      var mark = (q.get('from') || q.get('utm_source') || '').slice(0, 40);
       window.__T('view', { r: document.referrer||'', n: isNew, w: innerWidth,
                            ttfb: n ? Math.round(n.responseStart) : 0, load: load, from: mark });
       }, 0);
@@ -13939,6 +13970,7 @@ ${перетаскиваниеСтрок.toString()}
 
 ${похожеНаМесто.toString()}
 ${медианаЦены.toString()}
+${полосаЦены.toString()}
 ${рекомендуемыйПорядок.toString()}
 
 ${кодСсылки.toString()}
@@ -14131,8 +14163,10 @@ function applyUrl(){
       // а незнакомое значение не трогает выбор (иначе список не совпал бы с подписью)
       if(q.get('r') && $('#plRadius').querySelector('option[value="' + (+q.get('r')) + '"]')) $('#plRadius').value = String(+q.get('r'));
       if(q.get('q'))     $('#plQ').value = q.get('q');
-      if(q.get('from')){ $('#from').value = q.get('from'); $('#plFrom').value = q.get('from'); }
-      if(q.get('to')){   $('#to').value   = q.get('to');   $('#plTo').value   = q.get('to'); }
+      // даты — только ГГГГ-ММ-ДД: from=tiktok-0110 — метка ссылки, а не заезд
+      const заезд = датаИзАдреса(q.get('from')), выезд = датаИзАдреса(q.get('to'));
+      if(заезд){ $('#from').value = заезд; $('#plFrom').value = заезд; }
+      if(выезд){ $('#to').value   = выезд; $('#plTo').value   = выезд; }
       window.__plGroup = q.get('group') || '';
       setCountry('places', true);
       // со страницы места: сразу карта, и на ней — эта точка
@@ -14162,8 +14196,8 @@ function applyUrl(){
     fillCities();                                  // список городов зависит от области
     if(q.get('city')) set('city', q.get('city'));
     if(q.get('name')) set('qname', q.get('name'));
-    if(q.get('from')) set('from', q.get('from'));
-    if(q.get('to'))   set('to',   q.get('to'));
+    if(датаИзАдреса(q.get('from'))) set('from', q.get('from'));
+    if(датаИзАдреса(q.get('to')))   set('to',   q.get('to'));
     if(q.get('photo')==='1') $('#onlyPhoto').checked = true;
     const am=(q.get('amen')||'').split(',').filter(Boolean);
     document.querySelectorAll('#bar .rb-amen-cb').forEach(function(cb){ cb.checked = am.indexOf(cb.value)>=0; });
@@ -14229,8 +14263,8 @@ function applyUrl(){
       const v = q.get(k), el = $('#'+k); if(v !== null && el) el.value = v;
     });
     if(q.get('name')) $('#qname').value = q.get('name');
-    if(q.get('from')) $('#from').value = q.get('from');
-    if(q.get('to'))   $('#to').value   = q.get('to');
+    if(датаИзАдреса(q.get('from'))) $('#from').value = q.get('from');
+    if(датаИзАдреса(q.get('to')))   $('#to').value   = q.get('to');
     if(q.get('photo') === '1') $('#onlyPhoto').checked = true;
     (q.get('amen')||'').split(',').filter(Boolean).forEach(function(v){
       const cb = document.querySelector('#bar .rb-amen-cb[value="'+v+'"]'); if(cb) cb.checked = true;
@@ -14530,7 +14564,26 @@ process.on('unhandledRejection', e => console.log('Необработанный 
 // собирает десяток функций, поэтому код вставляется не в каждую, а в сам
 // ответ — на стыке </head><body>: новые страницы получают его без правок.
 // METRIKA_OFF=1 — для проверок, чтобы прогоны не слали визиты (на Render её нет).
-const МЕТРИКА_ГОЛОВА = '<script>(function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};m[i].l=1*new Date();for(var j=0;j<document.scripts.length;j++){if(document.scripts[j].src===r){return;}}k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})(window,document,"script","https://mc.yandex.ru/metrika/tag.js","ym");ym(112722670,"init",{clickmap:true,trackLinks:true,accurateTrackBounce:true,webvisor:true});</script>';
+// Дата из адреса — только вида ГГГГ-ММ-ДД. Тем же «from» в ссылках из ТикТока
+// приходит метка поста (?from=tiktok-0110), и в поля заезда она попадать не должна.
+// Обе функции идут и в скрипты страниц (.toString()) — без стрелок и без «\».
+function датаИзАдреса(v){
+  v = String(v || '');
+  return /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(v) ? v : '';
+}
+// Метка ссылки: from, если это не дата заезда, иначе utm_source.
+function меткаИзАдреса(q){
+  var f = q.get('from') || '';
+  if(датаИзАдреса(f)) f = '';
+  return (f || q.get('utm_source') || '').slice(0, 40);
+}
+// Метка — параметром визита: в отчёте «Параметры визитов» видно, какой пост
+// привёл людей. Отдельным скриптом сразу за счётчиком: адрес читается до того,
+// как скрипт главной перепишет его (history.replaceState) и метка пропадёт.
+const МЕТКА_В_МЕТРИКУ = '<script>(function(){' + датаИзАдреса.toString() + меткаИзАдреса.toString()
+  + 'try{var f=меткаИзАдреса(new URLSearchParams(location.search));if(f)ym(112722670,"params",{from:f});}catch(e){}})();</script>';
+const МЕТРИКА_ГОЛОВА = '<script>(function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};m[i].l=1*new Date();for(var j=0;j<document.scripts.length;j++){if(document.scripts[j].src===r){return;}}k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})(window,document,"script","https://mc.yandex.ru/metrika/tag.js","ym");ym(112722670,"init",{clickmap:true,trackLinks:true,accurateTrackBounce:true,webvisor:true});</script>'
+  + МЕТКА_В_МЕТРИКУ;
 const МЕТРИКА_ТЕЛО = '<noscript><div><img src="https://mc.yandex.ru/watch/112722670" style="position:absolute;left:-9999px" alt=""></div></noscript>';
 const МЕТРИКА_ВКЛ = process.env.METRIKA_OFF !== '1';
 // Личные страницы владельца: его заходы не должны попадать в статистику сайта.
