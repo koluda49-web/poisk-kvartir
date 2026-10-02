@@ -12560,8 +12560,11 @@ function загрузитьКарту(потом){
 
 function plotMap(fit){
   if(!картаГотова()){
+    if(window.__картаЖдётЖильё) return;   // одна отрисовка в очереди, как у мест
+    window.__картаЖдётЖильё = true;
     $('#map').innerHTML='<div id="mapWait" style="padding:24px;color:var(--txt-2)">Загружаю карту…</div>';
     загрузитьКарту(function(){
+      window.__картаЖдётЖильё = false;
       if(!картаГотова()){ $('#map').innerHTML='<div style="padding:24px;color:var(--txt-2)">Карта не загрузилась (нет связи с картографическим сервисом).</div>'; return; }
       if(window.__view === 'map' && window.__mode !== 'places') plotMap(fit);
     });
@@ -13234,7 +13237,13 @@ async function runPlaces(){
 // Снимок Викисклада в карточке: набор размеров, браузер берёт нужный по ширине и плотности
 // экрана (раньше всегда шла «960 px» — 200–650 КБ на карточку). Остальные снимки (kudin.by)
 // отдаём как есть: размер у них задан в адресе.
+function миниСнимок(url){
+  return (typeof url === 'string' && url.indexOf('/фото-точек/') === 0 && url.indexOf('/фото-точек/мини/') !== 0)
+    ? '/фото-точек/мини/' + url.slice('/фото-точек/'.length) : url;
+}
 function снимокКарточки(url, alt){
+  // свой снимок (960×1280, до 390 КБ) — уменьшенной копией 520 px
+  if(url.indexOf('/фото-точек/') === 0) return '<img data-src="' + esc2(миниСнимок(url)) + '" decoding="async" alt="' + esc2(alt) + '">';
   // без регулярного выражения: этот код лежит внутри шаблонной строки, где слэши и точки с обратной чертой теряются
   const к = url.indexOf('/960px-');
   const набор = (url.indexOf('https://thumb.wikimedia.org/') === 0 && к > 0)
@@ -13341,7 +13350,7 @@ function показатьПопулярное(){
   if(!list.children.length){
     list.innerHTML = items.map(function(p, i){
       return '<div class="pop-c">'
-        + (p.pic ? ('<img src="' + esc2(p.pic) + '" loading="lazy" alt="' + esc2(p.name) + '">') : '<div class="pop-ni"></div>')
+        + (p.pic ? ('<img src="' + esc2(миниСнимок(p.pic)) + '" loading="lazy" alt="' + esc2(p.name) + '">') : '<div class="pop-ni"></div>')
         + '<a class="pop-n" href="/mesto/' + p.id + '-' + esc2(slugRu(p.name)) + '" title="' + esc2(p.name) + '">' + esc2(p.name) + '</a>'
         + '<div class="pop-a">' + esc2(p.addr || '') + '</div>'
         + '<button class="pop-b" type="button" data-i="' + i + '">+ в маршрут</button></div>';
@@ -13434,8 +13443,14 @@ async function stayNear(i){
 
 async function plotPlaces(){
   if(!картаГотова()){
+    // Пока карта грузится, просить её нарисовать могут дважды (кнопка «Карта» и пришедший
+    // список мест). Ставим в очередь одну отрисовку: вторая снесла бы метки вместе с только
+    // что открытым окошком.
+    if(window.__plЖдётКарту) return;
+    window.__plЖдётКарту = true;
     $('#map').innerHTML='<div id="mapWait" style="padding:24px;color:var(--txt-2)">Загружаю карту…</div>';
     загрузитьКарту(function(){
+      window.__plЖдётКарту = false;
       if(!картаГотова()){ $('#map').innerHTML='<div style="padding:24px;color:var(--txt-2)">Карта не загрузилась (нет связи с картографическим сервисом).</div>'; return; }
       if(window.__view === 'map' && window.__mode === 'places') plotPlaces();
     });
@@ -14265,6 +14280,11 @@ const ГЛАВНАЯ = PAGE.replace('<!--ПОДБОРКИ-->', () => чипыП�
 // запуске, а снимки первых точек — только когда справочник загрузится,
 // поэтому до того лента без снимков, а потом пересобирается один раз.
 // Страница получает её готовой разметкой: лишнего запроса нет.
+// Свой снимок точки в маленькой рамке — уменьшенной копией (обложки, «Чаще всего добавляют»)
+function миниСнимок(url){
+  return (typeof url === 'string' && url.indexOf('/фото-точек/') === 0 && url.indexOf('/фото-точек/мини/') !== 0)
+    ? '/фото-точек/мини/' + url.slice('/фото-точек/'.length) : url;
+}
 function лентаМаршрутов(все){
   if(!ВИДЕО_МАРШРУТЫ.length) return '';
   return '<section class="pl-rec" id="plRec" hidden aria-labelledby="plRecH">'
@@ -14275,7 +14295,7 @@ function лентаМаршрутов(все){
         const n = (все && все.length) ? т.length : точкиВидео(м).length;
         const сФото = т.filter(function(p){ return p.pic; })[0];
         return '<a class="rec-c" href="/m/' + м.slug + '">'
-          + (сФото ? ('<img data-src="' + esc(сФото.pic) + '" alt="' + esc(сФото.name) + '">') : '<div class="rec-ni"></div>')
+          + (сФото ? ('<img data-src="' + esc(миниСнимок(сФото.pic)) + '" alt="' + esc(сФото.name) + '">') : '<div class="rec-ni"></div>')
           + '<span class="rec-b"><span class="rec-t">' + esc(м.title) + '</span>'
           + (м.note ? ('<span class="rec-n">' + esc(м.note) + '</span>') : '')
           + '<span class="rec-k">' + (м.days === 2 ? '2 дня · ' : '') + n + ' ' + скл(n, 'место', 'места', 'мест') + '</span></span></a>';
@@ -14910,6 +14930,16 @@ http.createServer(async (req,res)=>{
     if(name.indexOf('..') >= 0 || /[\\/:*?"<>|]/.test(name)
        || !/^[0-9A-Za-zА-Яа-яЁё _.()-]+\.(jpg|jpeg|png|webp)$/.test(name)){
       res.writeHead(404); res.end(); return;
+    }
+    // /фото-точек/мини/… — уменьшенная копия для карточек (инструменты/мини-снимки.py);
+    // копии нет — отдаём оригинал, картинка не должна пропасть из-за забытого шага
+    const мини = decodeURIComponent(u.pathname).indexOf('/фото-точек/мини/') === 0;
+    if(мини){
+      try{
+        const buf = fs.readFileSync(__dirname + '/фото-точек/мини/' + name.replace(/\.[^.]+$/, '.jpg'));
+        res.writeHead(200, {'Content-Type': 'image/jpeg', 'Content-Length': buf.length, 'Cache-Control':'public, max-age=604800'});
+        res.end(buf); return;
+      }catch(e){}
     }
     try{
       const buf = fs.readFileSync(__dirname + '/фото-точек/' + name);
