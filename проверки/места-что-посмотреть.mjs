@@ -75,6 +75,20 @@ for (let id = ПЕРВЫЙ; id <= ПОСЛЕДНИЙ; id++) {
         стр.код === 200 && !!p.cred && стр.html.includes(p.cred.lic), 'код ' + стр.код);
 }
 
+console.log('\n=== без флагов в кадре ===');
+// На снимке ратуши City_hall_in_Vitebsk_-_001.jpg у входа висит флаг — правило
+// сайта «без флагов». Взят снимок 2013 года, где флагов нет ни у входа, ни на башне.
+{
+  const p = await json('/api/place?id=910121');
+  const снимок = (p.pics || [])[0] || '';
+  check('910121 «Витебская ратуша»: не прежний снимок с флагом', !/City_hall_in_Vitebsk_-_001/.test(снимок) && !/City_hall_in_Vitebsk_-_001/.test((p.cred || {}).src || ''), снимок);
+  check('910121: снимок Jurasikt, CC BY 3.0, 960 px',
+        /VICIEBSK\._Town_hall\.\.jpg\/960px-/.test(снимок) && (p.cred || {}).author === 'Jurasikt' && (p.cred || {}).lic === 'CC BY 3.0',
+        снимок.slice(-60) + ' ' + JSON.stringify(p.cred || {}));
+  const r = await fetch(снимок, { headers: { 'User-Agent': 'nochy-proverka/1.0' } }).catch(() => null);
+  check('910121: снимок открывается', !!r && r.ok && /image/.test(r.headers.get('content-type') || ''), r ? r.status : 'нет ответа');
+}
+
 console.log('\n=== поиск находит новые места ===');
 for (const [запрос, id] of [['Шагала', 910127], ['Марков', 910132], ['Бялыницкого', 910141], ['Печерский', 910143],
                              ['Охотничий домик', 910147], ['Борисов камень', 910156], ['Домик Петра', 910157]]) {

@@ -147,6 +147,24 @@ try {
     check('«любой» после возврата остаётся «любым»', тип3 === 'any', 'тип: ' + тип3 + ', адрес был ' + адрес2);
   }
 
+  console.log('\n=== город другой области переживает возврат со страницы места ===');
+  {
+    // Запомненные настройки ставили область, но не пересобирали список городов:
+    // в нём оставались города Минской области, и Пинск молча терялся.
+    await открыть('/?region=brest&city=%D0%9F%D0%B8%D0%BD%D1%81%D0%BA');
+    await js(`syncUrl(); 1`);
+    const было = JSON.parse(await js(`JSON.stringify({ r: $('#region').value, c: $('#city').value })`));
+    check('открыта Брестская область, город Пинск', было.r === 'brest' && было.c === 'Пинск', JSON.stringify(было));
+    await send('Page.navigate', { url: SITE + '/mesto/244-nesvizhskij-zamok' });
+    await sleep(3000);
+    // на главную без настроек в адресе — их подставляет byFilters
+    await js(`(function(){ var a=document.createElement('a'); a.href='/'; document.body.appendChild(a); a.click(); })(); 1`);
+    for (let i = 0; i < 60; i++) { if (await js(`location.pathname === '/' && !!document.querySelector('#city')`)) break; await sleep(500); }
+    await sleep(2500);
+    const стало = JSON.parse(await js(`JSON.stringify({ r: $('#region').value, c: $('#city').value, s: location.search })`));
+    check('вернулись — по-прежнему Брестская область и Пинск', стало.r === 'brest' && стало.c === 'Пинск', JSON.stringify(стало));
+  }
+
   console.log('\n=== пришли из жилья через «Что посмотреть рядом» ===');
   {
     await открыть('/?region=brest&name=%D0%B8%D0%B2%D0%B0%D1%86%D0%B5%D0%B2%D0%B8%D1%87%D0%B8');

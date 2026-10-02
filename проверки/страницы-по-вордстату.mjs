@@ -177,6 +177,44 @@ for (const [п, город, где, первый, последний, главн
   check(п + ': все новые места города (' + первый + '–' + последний + ') на странице', нет.length === 0, 'нет: ' + нет.join(', '));
   check(п + ' в карте сайта', карта.includes(п + '</loc>'));
   check('с ' + город + ' есть ссылка на «' + заг + '»', (await стр(город)).html.includes('href="' + п + '"'));
+  // «Квартиры на сутки в …» ведёт на живую страницу города или в поиск по городу, но не в 404
+  const жильё = (html.match(/<div class="others"><a href="([^"]+)">Квартиры на сутки /) || [])[1] || '';
+  const куда = жильё.startsWith('/?') ? { код: 200 } : await стр(жильё);
+  check(п + ': «Квартиры на сутки ' + где + '» ведёт на живую страницу (' + жильё + ')', !!жильё && куда.код === 200, 'код ' + куда.код);
+}
+
+// /polotsk — страница спроса: вариантов меньше пяти — 404. Тогда «Что посмотреть
+// в Полоцке» ведёт не на неё, а в поиск по Полоцку (нужен DATA_TEST=1:
+// /api/_empty-test?slug=…&limit=n оставляет странице не больше n вариантов).
+const служебный = async (запрос) => { try { const r = await fetch(SITE + '/api/_empty-test?' + запрос, { method: 'POST' }); return r.ok && !!(await r.json()).pid; } catch { return false; } };
+if (!(await служебный('slug=polotsk&limit=2'))) {
+  console.log('  (сервер без DATA_TEST=1 — пункты про пустую /polotsk и соседние подборки пропущены)');
+} else {
+  try {
+    check('/polotsk с двумя вариантами — 404', (await стр('/polotsk')).код === 404);
+    const { html } = await стр('/chto-posmotret-polotsk');
+    const жильё = (html.match(/<div class="others"><a href="([^"]+)">Квартиры на сутки /) || [])[1] || '';
+    check('/chto-posmotret-polotsk при пустой /polotsk ведёт в поиск по Полоцку',
+          жильё === '/?region=vitebsk&city=' + encodeURIComponent('Полоцк'), жильё);
+  } finally { await служебный('slug=polotsk&limit=-1'); }
+  if ((await стр('/polotsk')).код === 200) {
+    const { html } = await стр('/chto-posmotret-polotsk');
+    check('предел снят — снова ссылка на /polotsk', html.includes('<div class="others"><a href="/polotsk">Квартиры на сутки '));
+  }
+
+  // соседние подборки внизу страницы спроса не ведут на пустые (404) страницы
+  const соседи = h => [...((h.split('<div class="others">').pop() || '').matchAll(/<a href="\/([a-z0-9-]+)">/g))].map(м => м[1]);
+  const было = соседи((await стр('/naroch')).html);
+  const пустая = было[0];
+  check('/naroch: внизу есть соседние подборки', !!пустая, было.join(', '));
+  if (пустая) {
+    try {
+      await служебный('slug=' + пустая + '&age=0');   // помечена пустой — отвечает 404
+      const стало = соседи((await стр('/naroch')).html);
+      check('/naroch: пустую /' + пустая + ' не предлагает', !стало.includes(пустая) && стало.length > 0, стало.join(', '));
+    } finally { await служебный('slug=' + пустая + '&age=' + (2 * 60 * 60 * 1000)); }   // просроченная пометка стирается
+    check('пометка снята — /' + пустая + ' снова среди соседей', соседи((await стр('/naroch')).html).includes(пустая));
+  }
 }
 
 console.log('\nПройдено ' + passed + ', падает ' + failed);

@@ -6,8 +6,9 @@
 // главной вела в никуда (у корпоратива в Бресте 02.10.2026 было 6–12 домов,
 // на грани). Теперь: мало вариантов — показываем всё, что есть, с честной
 // фразой и кнопкой полного поиска; ни одного — страница с пояснением,
-// закрытая от поиска (её проверяет пустые-страницы.mjs). Прочие страницы
-// спроса — как раньше: меньше пяти — 404.
+// закрытая от поиска (её проверяет пустые-страницы.mjs). Мало вариантов, но
+// площадки ответили не все — фраза «часть площадок не ответила», noindex и
+// no-cache. Прочие страницы спроса — как раньше: меньше пяти — 404.
 //
 // Сервер должен быть запущен. Часть про «мало вариантов» требует DATA_TEST=1
 // (служебный вход /api/_empty-test?slug=…&limit=n оставляет не больше n
@@ -30,9 +31,9 @@ for (const slug of адреса) {
 
 console.log('\n=== вариантов меньше пяти ===');
 const slug = 'novogodnij-korporativ-brest';
-const предел = async (s, n) => {
+const предел = async (s, n, ещё = '') => {
   try {
-    const r = await fetch(SITE + '/api/_empty-test?slug=' + s + '&limit=' + n, { method: 'POST' });
+    const r = await fetch(SITE + '/api/_empty-test?slug=' + s + '&limit=' + n + ещё, { method: 'POST' });
     return r.ok && !!(await r.json()).pid;
   } catch { return false; }
 };
@@ -50,6 +51,26 @@ if (!(await предел(slug, 2))) {
     check('  не помечена пустой', !(slug in пометки.пометки), JSON.stringify(пометки.пометки));
     const карта = await (await fetch(SITE + '/sitemap.xml')).text();
     check('  осталась в sitemap', карта.includes('/' + slug + '</loc>'));
+
+    // Те же два варианта, но площадки ответили не все: «подходит всего 2»
+    // было бы неправдой — список просто не дособран. Страница честно об этом
+    // говорит и на это время закрыта от поиска и от кэша.
+    if (await предел(slug, 2, '&polnyj=0')) {
+      const н = await открыть('/' + slug);
+      check('/' + slug + ' с двумя вариантами при неполном ответе площадок — 200', н.код === 200, 'код ' + н.код);
+      check('  показаны оба варианта', карточек(н.html) === 2, 'карточек ' + карточек(н.html));
+      check('  фраза «часть площадок не ответила», а не «подходит всего 2»',
+            /Часть площадок сейчас не ответила — показываем, что успело прийти/.test(н.html) && !/подходит всего/.test(н.html));
+      check('  кнопка полного поиска', н.html.includes('<a class="cta" href="/?region=brest&type=cottage">'));
+      check('  закрыта от поиска: noindex и в метатеге, и в заголовке',
+            /<meta name="robots" content="noindex/.test(н.html) && /noindex/.test(н.r.headers.get('x-robots-tag') || ''));
+      check('  без canonical и без «index,follow»', !/rel="canonical"/.test(н.html) && !/content="index,follow"/.test(н.html));
+      check('  не кэшируется (no-cache)', /no-cache/.test(н.r.headers.get('cache-control') || ''), н.r.headers.get('cache-control'));
+      await предел(slug, 2);   // площадки снова «ответили все»
+      const п = await открыть('/' + slug);
+      check('  ответили все — снова «подходит всего 2» и открыта для поиска',
+            /подходит всего 2 варианта/.test(п.html) && !/noindex/.test(п.html) && !/noindex/.test(п.r.headers.get('x-robots-tag') || ''));
+    }
 
     // прочие страницы спроса — как раньше
     const другая = 'minsk-odnokomnatnye';

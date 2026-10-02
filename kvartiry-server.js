@@ -3401,11 +3401,11 @@ const EXTRA_PLACES = [
   "alt": "ратуша, краеведческий музей",
   "cat": "ратуша",
   "group": "Из маршрутов",
-  "pic": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/aa/City_hall_in_Vitebsk_-_001.jpg/960px-City_hall_in_Vitebsk_-_001.jpg",
+  "pic": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0e/%D0%92%D0%86%D0%A6%D0%95%D0%91%D0%A1%D0%9A._%D0%A0%D0%B0%D1%82%D1%83%D1%88%D0%B0_-_VICIEBSK._Town_hall..jpg/960px-%D0%92%D0%86%D0%A6%D0%95%D0%91%D0%A1%D0%9A._%D0%A0%D0%B0%D1%82%D1%83%D1%88%D0%B0_-_VICIEBSK._Town_hall..jpg",
   "text": "Одна из немногих сохранившихся в Беларуси городских ратуш. Первое здание появилось в 1597 году, когда Витебск получил магдебургское право; нынешнее барочное с башней построено в 1775-м, а третий этаж надстроили в 1911 году. Сейчас здесь областной краеведческий музей.",
-  "author": "Mikra72",
-  "lic": "CC0",
-  "src": "https://commons.wikimedia.org/wiki/File:City_hall_in_Vitebsk_-_001.jpg"
+  "author": "Jurasikt",
+  "lic": "CC BY 3.0",
+  "src": "https://commons.wikimedia.org/wiki/File:%D0%92%D0%86%D0%A6%D0%95%D0%91%D0%A1%D0%9A._%D0%A0%D0%B0%D1%82%D1%83%D1%88%D0%B0_-_VICIEBSK._Town_hall..jpg"
  },
  {
   "id": 910122,
@@ -7387,12 +7387,15 @@ function ogТеги(о){
 
 // Метатеги индексируемой страницы. путь — от корня сайта («/mesto/1-zamok»),
 // снимок — абсолютный адрес или путь к нашему файлу; без снимка — шапка главной.
+// закрыта — страница на время закрыта от поиска: noindex и без canonical,
+// как у служебных (см. проверки/seo.mjs).
 function метаСтраницы(о){
   const адрес = SITE_URL + о.путь;
   return '<title>' + esc(о.title) + '</title>'
     + '<meta name="description" content="' + esc(о.desc) + '">'
-    + '<meta name="robots" content="index,follow">'
-    + '<link rel="canonical" href="' + esc(адрес) + '">'
+    + (о.закрыта ? '<meta name="robots" content="noindex,follow">'
+                 : ('<meta name="robots" content="index,follow">'
+                    + '<link rel="canonical" href="' + esc(адрес) + '">'))
     + ogТеги(Object.assign({}, о, { адрес: адрес }));
 }
 // Значение в код скрипта страницы. JSON сам по себе экранирует кавычки и
@@ -10933,18 +10936,34 @@ function этоДом(x){
   return ДОМ_В_АДРЕСЕ.test(String((x && x.link) || '')) || ДОМ_В_ЗАГОЛОВКЕ.test(t.toLowerCase());
 }
 
+// Данные страницы спроса. Для проверки (только DATA_TEST=1): оставить не больше
+// n вариантов — так видно страницу с двумя вариантами, не дожидаясь, пока их
+// правда станет два; и «площадки ответили не все» — не роняя самих площадок.
+async function данныеСпроса(slug){
+  let d = { items: [], total: 0 };
+  try{ d = await спросДанные(СПРОС[slug]); }catch(e){}
+  if(process.env.DATA_TEST === '1' && ПРЕДЕЛ_ПРОВЕРКИ.has(slug)){
+    d = Object.assign({}, d, { items: (d.items || []).slice(0, ПРЕДЕЛ_ПРОВЕРКИ.get(slug)) });
+    d.total = d.items.length;
+    if(НЕПОЛНЫЙ_ПРОВЕРКИ.has(slug)) d.полный = false;
+  }
+  return d;
+}
+
+// Откроется ли страница спроса, а не 404 и не «вариантов нет» — для ссылок
+// на неё с других страниц. Те же условия, что в спросPage; запрос к площадкам
+// обычно уже лежит в кэше поиска.
+async function страницаСпросаЕсть(slug){
+  if(!СПРОС[slug] || пустаяСтраница(slug)) return false;
+  const d = await данныеСпроса(slug);
+  return d.total >= СПРОС_МИНИМУМ || (СПРОС_С_ГЛАВНОЙ.has(slug) && d.total > 0);
+}
+
 // Ответ — { html, код, кэш } или '' (тогда 404).
 async function спросPage(slug){
   const z = СПРОС[slug];
   if(!z) return '';
-  let d = { items: [], total: 0 };
-  try{ d = await спросДанные(z); }catch(e){}
-  // Для проверки (только DATA_TEST=1): оставить не больше n вариантов —
-  // так видно страницу с двумя вариантами, не дожидаясь, пока их правда станет два.
-  if(process.env.DATA_TEST === '1' && ПРЕДЕЛ_ПРОВЕРКИ.has(slug)){
-    d = Object.assign({}, d, { items: (d.items || []).slice(0, ПРЕДЕЛ_ПРОВЕРКИ.get(slug)) });
-    d.total = d.items.length;
-  }
+  const d = await данныеСпроса(slug);
   const сГлавной = СПРОС_С_ГЛАВНОЙ.has(slug);
   // нечем наполнить — страницы нет (и в sitemap её не отдаём, пока снова не наполнится).
   // Кроме тех, куда ведёт сама главная: там ссылка вшита в разметку и стала бы битой.
@@ -10955,6 +10974,10 @@ async function спросPage(slug){
   }
   ПУСТЫЕ_СТРАНИЦЫ.delete(slug);
   const мало = d.total < СПРОС_МИНИМУМ;
+  // Мало вариантов, а площадки ответили не все: это не «подходит всего N»,
+  // а недособранный список. Показываем, что пришло, но в поиск не пускаем
+  // и не кэшируем — через минуту список может быть полным.
+  const недособран = мало && !d.полный;
 
   const что = z.что || 'Квартиры на сутки';
   const items = рекомендуемыйПорядок(d.items || []).slice(0, 30);
@@ -11000,8 +11023,9 @@ async function спросPage(slug){
   const сезон = z.сезон ? Object.keys(СПРОС).filter(function(k){ return k !== slug && СПРОС[k].сезон && !пустаяСтраница(k); })
     .map(function(k){ return '<a href="/' + k + '">' + esc(СПРОС[k].что + ' ' + СПРОС[k].где) + '</a>'; }).join('') : '';
 
-  // сезонные подборки (с пояснением) — первыми: сейчас их ищут больше всего
-  const рядом = Object.keys(СПРОС).filter(function(k){ return k !== slug && !(сезон && СПРОС[k].сезон); })
+  // сезонные подборки (с пояснением) — первыми: сейчас их ищут больше всего;
+  // пустые (они отвечают 404) не предлагаем
+  const рядом = Object.keys(СПРОС).filter(function(k){ return k !== slug && !(сезон && СПРОС[k].сезон) && !пустаяСтраница(k); })
     .sort(function(a, b){ return (СПРОС[b].пояснение ? 1 : 0) - (СПРОС[a].пояснение ? 1 : 0); }).slice(0, 12)
     .map(function(k){ return '<a href="/' + k + '">' + esc((СПРОС[k].что || 'Жильё') + ' ' + СПРОС[k].где) + '</a>'; }).join('');
 
@@ -11015,7 +11039,7 @@ async function спросPage(slug){
 
   const html = '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-    + метаСтраницы(Object.assign({ title: title, desc: desc, путь: '/' + slug }, превьюМест(места)))
+    + метаСтраницы(Object.assign({ title: title, desc: desc, путь: '/' + slug, закрыта: недособран }, превьюМест(места)))
     + '<meta name="theme-color" content="#9a3412">'
     + '<link rel="manifest" href="/manifest.webmanifest">'
     + jsonLD(ld)
@@ -11029,8 +11053,11 @@ async function спросPage(slug){
     +   '. Цены берутся из самих объявлений: у Kufar, Realt и Flatbook — в реальном времени, '
     +   'у Check-in и Kvartirka — с обновлением несколько раз в сутки.</p>'
     + (z.пояснение ? ('<p class="lead">' + esc(z.пояснение) + '</p>') : '')
-    // вариантов меньше пяти (бывает только у страниц с главной) — так и говорим
-    + (мало ? ('<p class="lead">Под эти условия сейчас подходит всего ' + вариантов(d.total) + ' — показываем всё, что нашлось. '
+    // вариантов меньше пяти (бывает только у страниц с главной) — так и говорим;
+    // если площадки ответили не все, «подходит всего N» было бы неправдой
+    + (недособран ? ('<p class="lead">Часть площадок сейчас не ответила — показываем, что успело прийти. '
+        + 'Загляните через несколько минут или откройте полный поиск.</p>')
+      : мало ? ('<p class="lead">Под эти условия сейчас подходит всего ' + вариантов(d.total) + ' — показываем всё, что нашлось. '
         + 'Объявления появляются каждый день. Больше вариантов — в полном поиске: там можно убрать часть условий.</p>') : '')
     + '<a class="cta" href="' + куда + '">Открыть поиск с фильтрами и картой →</a>'
     + блокПлощадок(z.площадки)
@@ -11045,6 +11072,7 @@ async function спросPage(slug){
     +   'предоплату незнакомым людям.</p>'
     +   '<p><a href="/">Все города и карта с ценами →</a></p></footer>'
     + '</div></body></html>';
+  if(недособран) return { html: html, код: 200, кэш: 'no-cache', закрыта: true };
   return { html: html, код: 200, кэш: мало ? 'public, max-age=120' : 'public, max-age=600' };
 }
 
@@ -11368,6 +11396,12 @@ async function чтоПосмотретьPage(slug){
   const всего = цены.length, от = цены[0] || 0, обычно = всего ? цены[Math.floor(всего / 2)] : 0;
   const маршрут = '/marshrut?p=' + места.slice(0, 8).map(p => p.id).join(',');
   const n = места.length, мест = n + ' ' + скл(n, 'место', 'места', 'мест');
+  // Страница города у областных — всегда есть (/vitebsk), а у Полоцка это страница
+  // спроса: вариантов меньше пяти — 404. Тогда ведём в поиск по этому городу.
+  let естьСтраница = !!CITY_PAGES[z.slug];
+  if(!естьСтраница && СПРОС[z.slug]){ try{ естьСтраница = await страницаСпросаЕсть(z.slug); }catch(e){} }
+  const страницаГорода = естьСтраница ? ('/' + z.slug)
+    : ('/?region=' + (z.обл || z.slug) + (z.обл ? ('&city=' + encodeURIComponent(z.город)) : ''));
 
   const title = заголовокСтраницы('Что посмотреть ' + z.где, [': ' + мест + ' с фото и описанием', ' — ' + мест + ' с фото', '']);
   const desc = описаниеСтраницы([
@@ -11422,9 +11456,10 @@ async function чтоПосмотретьPage(slug){
     + '<p class="lead">' + (всего ? ('Сейчас ' + z.где + ' сдаётся <b>' + всего + '</b> ' + скл(всего, 'квартира', 'квартиры', 'квартир')
     +   ' посуточно: от <b>' + от + ' BYN</b>, обычно около <b>' + обычно + ' BYN</b> за сутки. ') : '')
     +   'Объявления частников с Kufar, Realt, Flatbook, Check-in и Kvartirka в одном списке.</p>'
-    + '<div class="others"><a href="/' + z.slug + '">Квартиры на сутки ' + esc(z.где) + '</a>'
+    + '<div class="others"><a href="' + страницаГорода + '">Квартиры на сутки ' + esc(z.где) + '</a>'
     +   (CITY_PAGES[z.slug] ? ('<a href="/' + z.slug + '-nedorogo">Недорого ' + esc(z.где) + '</a>') : '')
-    +   (ГИДЫ['gde-ostanovitsya-' + z.slug] ? ('<a href="/gde-ostanovitsya-' + z.slug + '">Районы и цены</a>') : '') + '</div>'
+    +   (ГИДЫ['gde-ostanovitsya-' + z.slug] && !пустаяСтраница('gde-ostanovitsya-' + z.slug)
+          ? ('<a href="/gde-ostanovitsya-' + z.slug + '">Районы и цены</a>') : '') + '</div>'
     + '<footer><p>Описания — из справочника kudin.by и статей Википедии, каждое сверено с источником. '
     +   'Мы не сдаём жильё и не берём комиссию.</p><p><a href="/?country=places">Все места Беларуси на карте →</a></p></footer>'
     + '</div></body></html>';
@@ -15034,6 +15069,9 @@ function датыИзПрошлогоПоиска(){
     const q = new URLSearchParams(сохр);
     ['region','city','type','rooms','guests','min','max','source','sort'].forEach(function(k){
       const v = q.get(k), el = $('#'+k); if(v !== null && el && естьВыбор(el, v)) el.value = v;
+      // список городов зависит от области: без него Пинска нет среди
+      // городов Минской области, и город молча терялся
+      if(k === 'region') fillCities();
     });
     if(q.get('name')) $('#qname').value = q.get('name');
     // даты уже взяты выше (из последнего поиска, вместе с вкладкой мест)
@@ -15088,6 +15126,7 @@ const ГЛАВНАЯ = PAGE.replace('<!--ПОДБОРКИ-->', () => чипыП�
 // вариантов, поэтому такие страницы не отвечают 404 — см. спросPage().
 const СПРОС_С_ГЛАВНОЙ = new Set([...PAGE.matchAll(/href="\/([a-z0-9-]+)"/g)].map(м => м[1]).filter(s => СПРОС[s]));
 const ПРЕДЕЛ_ПРОВЕРКИ = new Map();   // только для проверок, см. /api/_empty-test
+const НЕПОЛНЫЙ_ПРОВЕРКИ = new Set(); // там же: «площадки ответили не все»
 
 // Лента «Рекомендуемые маршруты» для вкладки мест. Маршруты известны при
 // запуске, а снимки первых точек — только когда справочник загрузится,
@@ -15498,10 +15537,12 @@ http.createServer(async (req,res)=>{
   if(process.env.DATA_TEST === '1' && u.pathname === '/api/_empty-test'){
     if(req.method === 'POST'){
       const slug = u.searchParams.get('slug') || '';
-      // ?limit=n — страница спроса покажет не больше n вариантов; limit=-1 — снять
+      // ?limit=n — страница спроса покажет не больше n вариантов; limit=-1 — снять;
+      // &polnyj=0 — вдобавок считать, что площадки ответили не все
       if(СПРОС[slug] && u.searchParams.has('limit')){
         const n = +u.searchParams.get('limit');
         if(n >= 0) ПРЕДЕЛ_ПРОВЕРКИ.set(slug, n); else ПРЕДЕЛ_ПРОВЕРКИ.delete(slug);
+        if(n >= 0 && u.searchParams.get('polnyj') === '0') НЕПОЛНЫЙ_ПРОВЕРКИ.add(slug); else НЕПОЛНЫЙ_ПРОВЕРКИ.delete(slug);
       }
       else if(ГИДЫ[slug] || СПРОС[slug]) ПУСТЫЕ_СТРАНИЦЫ.set(slug, Date.now() - (+u.searchParams.get('age') || 0));
     }
