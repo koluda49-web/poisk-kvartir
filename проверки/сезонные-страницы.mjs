@@ -18,7 +18,9 @@ const мета = (html, имя) => ((html.match(new RegExp('<meta name="' + им
 const СТРАНИЦЫ = [
   { slug: 'doma-na-novyj-god',            h1: 'Снять дом на Новый год под Минском',  гостей: 8,  пояснение: /31 декабря/, обл: 'minsk-obl' },
   { slug: 'gde-vstretit-novyj-god',       h1: 'Где встретить Новый год в Беларуси',  гостей: 8,  пояснение: /31 декабря/, обл: 'any' },
-  { slug: 'doma-dlya-korporativa',        h1: 'Новогодний корпоратив под Минском',   гостей: 12, пояснение: /банкет/,     обл: 'minsk-obl' },
+  // «корпоратив минск» 1 187, «новогодний корпоратив минск» 596 (Вордстат, сентябрь 2026) — с 04.10
+  { slug: 'doma-dlya-korporativa',        h1: 'Корпоратив в Минске и под Минском',   гостей: 12, пояснение: /банкет/,     обл: 'minsk-obl',
+    title: 'Корпоратив в Минске: дома и усадьбы, новогодний корпоратив' },
   { slug: 'novogodnij-korporativ-brest',  h1: 'Новогодний корпоратив в Бресте',      гостей: 10, пояснение: /банкет/,     обл: 'brest' },
   { slug: 'novogodnij-korporativ-grodno', h1: 'Новогодний корпоратив в Гродно',      гостей: 12, пояснение: /банкет/,     обл: 'grodno' },
 ];
@@ -32,7 +34,7 @@ for (const с of СТРАНИЦЫ) {
   if (r.status !== 200) continue;
   check('заголовок h1 «' + с.h1 + '»', html.includes('<h1>' + с.h1 + '</h1>'));
   const title = (html.match(/<title>([^<]*)/) || [])[1] || '';
-  check('title про то же и не длиннее 60', title.indexOf(с.h1) === 0 && title.length <= 60, title + ' (' + title.length + ')');
+  check('title ' + (с.title ? ('«' + с.title + '»') : 'про то же') + ' и не длиннее 60', (с.title ? title === с.title : title.indexOf(с.h1) === 0) && title.length <= 60, title + ' (' + title.length + ')');
   const desc = мета(html, 'description');
   check('description 120–160 знаков', desc.length >= 120 && desc.length <= 160, desc.length + ': ' + desc);
   check('есть пояснение про цену и даты', с.пояснение.test(текст(html)) && /уточняйте у хозяина/.test(текст(html)));
