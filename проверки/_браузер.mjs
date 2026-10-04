@@ -407,25 +407,101 @@ export function временнаяПапка(префикс) {
   return папка;
 }
 
+// Яндекс.Метрика в браузере проверки. Проверки по живому сайту (замеры-скорости.mjs,
+// браузерные проверки с адресом https://nochy.by) открывали страницы со счётчиком,
+// и в Метрике копились визиты «ПК/смартфон из Минска» — это мы сами. Поэтому для
+// любого адреса проверки, кроме своего (localhost, 127.0.0.1, [::1]), запросы
+// к mc.yandex.ru в Chrome блокируются (Network.setBlockedURLs): счётчик не
+// грузится и ничего не шлёт.
+// Как. setBlockedURLs действует в той сессии отладки, где его вызвали, а сессии
+// к вкладкам заводит каждая проверка своя. Поэтому у Chrome держим ещё одну,
+// свою сессию на весь браузер: автоподключение ко всем вкладкам, фреймам и
+// воркерам с паузой на старте (waitForDebuggerOnStart) — каждому ставим
+// блокировку, потом отпускаем. Chrome запускается без начальной вкладки
+// (--no-startup-window), а первую вкладку открываем сами, когда блокировка уже
+// стоит: проверка ждёт вкладку в /json/list и раньше неё ничего открыть не успеет.
+// Подмена DNS (--host-resolver-rules) не годится: на этой машине системный
+// прокси, и имя разрешает он, а не Chrome.
+// Адрес проверки — первый аргумент вида http(s)://…; его нет — у проверки адрес
+// по умолчанию, и он может быть живым сайтом (замеры-скорости), поэтому тоже
+// блокируем. Свой сервер проверки запускают с METRIKA_OFF=1, а где нужен
+// счётчик (метрика.mjs, метка-из-тиктока.mjs), его смотрят без отправки.
+export const БЕЗ_МЕТРИКИ = ['*mc.yandex.ru*'];
+export function адресПроверки(argv = process.argv) {
+  return argv.slice(2).find(a => /^https?:\/\//i.test(String(a))) || '';
+}
+export function свойАдрес(адрес) {
+  let хост = '';
+  try { хост = new URL(адрес).hostname.toLowerCase(); } catch { return false; }
+  return хост === 'localhost' || хост === '127.0.0.1' || хост === '[::1]' || хост === '::1';
+}
+// Своя сессия на весь браузер: блокировка в каждой цели. Возвращает обещание —
+// исполнится, когда первая вкладка открыта уже с блокировкой (или с ошибкой).
+async function поставитьБлокировку(chrome, порт, адреса) {
+  let в = null;
+  for (let i = 0; i < 120 && !в && живой(chrome); i++) {
+    try { в = await (await fetch(`http://127.0.0.1:${порт}/json/version`)).json(); } catch {}
+    if (!в) await спать(100);
+  }
+  if (!в) throw new Error('Chrome не открыл порт отладки');
+  const ws = new WebSocket(в.webSocketDebuggerUrl);
+  await new Promise((r, о) => { ws.addEventListener('open', r); ws.addEventListener('error', () => о(new Error('нет связи с Chrome'))); });
+  let id = 0; const ждут = new Map();
+  const send = (method, params = {}, sessionId) => new Promise((res, rej) => {
+    const n = ++id; ждут.set(n, { res, rej });
+    ws.send(JSON.stringify(sessionId ? { id: n, method, params, sessionId } : { id: n, method, params }));
+  });
+  ws.addEventListener('message', async e => {
+    const m = JSON.parse(e.data);
+    if (m.id && ждут.has(m.id)) { const п = ждут.get(m.id); ждут.delete(m.id); m.error ? п.rej(new Error(m.error.message)) : п.res(m.result); return; }
+    if (m.method !== 'Target.attachedToTarget') return;
+    const с = m.params.sessionId, тип = m.params.targetInfo.type;
+    // У каждой цели — своя блокировка; у вкладок и фреймов — ещё автоподключение
+    // к их фреймам из других процессов. Ошибку (у цели нет домена Network)
+    // проглатываем: цель всё равно надо отпустить, иначе она так и висит на паузе.
+    try {
+      await send('Network.enable', {}, с);
+      await send('Network.setBlockedURLs', { urls: адреса }, с);
+      if (тип === 'page' || тип === 'iframe')
+        await send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, с);
+    } catch {}
+    if (m.params.waitingForDebugger) send('Runtime.runIfWaitingForDebugger', {}, с).catch(() => {});
+  });
+  ws.addEventListener('close', () => { for (const п of ждут.values()) п.rej(new Error('связь с Chrome закрыта')); ждут.clear(); });
+  await send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
+  // Первая вкладка — та, которую проверка найдёт в /json/list
+  await send('Target.createTarget', { url: 'about:blank' });
+  return ws;
+}
+
 // Запустить Chrome на порту отладки. имя — часть имени профиля: cdp-<имя>-<pid>.
 // доп — флаги сверх обычных (например, --user-agent=…).
 // ловитьОшибки — повесить обработчики unhandledRejection/uncaughtException:
 // сообщить, закрыть Chrome с уборкой профиля и выйти с кодом 1. Проверки со
 // своими обработчиками передают false и сами зовут закрыть().
-export function запуститьChrome(порт, имя, { доп = [], ловитьОшибки = true } = {}) {
+// адрес — что проверяем (по умолчанию из аргументов): не свой — без Метрики.
+// безМетрики в ответе — обещание: исполнилось — блокировка стоит (null — не нужна).
+export function запуститьChrome(порт, имя, { доп = [], ловитьОшибки = true, адрес = адресПроверки() } = {}) {
   // имя попадает в путь профиля, который потом удаляется: только буквы, цифры, «_» и «-»
   if (!/^[\p{L}\p{N}_-]+$/u.test(String(имя))) throw new Error('запуститьChrome: недопустимое имя профиля «' + имя + '»');
   const profile = join(ВРЕМЕННЫЕ, 'cdp-' + имя + '-' + process.pid);
   проверитьПрофиль(profile, 'запуститьChrome');
   убратьОстатки();   // профили прошлых прогонов, чья проверка уже не жива
+  const блокировать = !свойАдрес(адрес);
   const chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${порт}`, '--disable-gpu',
     '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
     // без отчётов о падениях: crashpad — ещё один процесс, который держит профиль
     '--disable-breakpad', '--disable-crash-reporter', '--no-crash-upload', ...доп,
-    '--user-data-dir=' + profile, 'about:blank'], { stdio: 'ignore' });
+    '--user-data-dir=' + profile, ...(блокировать ? ['--no-startup-window'] : ['about:blank'])], { stdio: 'ignore' });
+  let сессия = null;
+  const безМетрики = блокировать
+    ? поставитьБлокировку(chrome, порт, БЕЗ_МЕТРИКИ).then(ws => { сессия = ws; return true; },
+        e => { console.log('Блокировка Метрики не встала: ' + e.message); return false; })
+    : Promise.resolve(null);
   let закрытие = null, закрыто = false;
   // Можно звать сколько угодно раз — закроет и уберёт один раз.
-  const закрыть = () => закрытие || (закрытие = закрытьChrome(chrome, profile, { порт }).then(() => { закрыто = true; }));
+  const закрыть = () => закрытие || (закрытие = закрытьChrome(chrome, profile, { порт })
+    .then(() => { закрыто = true; try { if (сессия) сессия.close(); } catch {} }));
   // Страховка на выход через process.exit без закрыть() (или до его конца):
   // то же синхронно — ждать обещаний здесь нельзя.
   process.on('exit', () => {
@@ -441,5 +517,5 @@ export function запуститьChrome(порт, имя, { доп = [], лов
     process.on('unhandledRejection', упали);
     process.on('uncaughtException', упали);
   }
-  return { chrome, profile, закрыть };
+  return { chrome, profile, закрыть, безМетрики };
 }
