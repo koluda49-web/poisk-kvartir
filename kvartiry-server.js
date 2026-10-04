@@ -7838,6 +7838,8 @@ async function mestoPageBuild(id){
     + '<div class="facts">'
     +   '<a href="' + route + '" target="_blank" rel="noopener">Проложить маршрут →</a>'
     +   '<span>' + p.lat.toFixed(6) + ', ' + p.lng.toFixed(6) + '</span>'
+    // место в городе со своей страницей — «Квартиры на сутки в …» и «Что посмотреть в …»
+    +   городаМеста(p.lat, p.lng).map(г => '<a class="gor" href="' + г.путь + '">' + esc(г.текст) + ' →</a>').join('')
     + '</div>'
     + (жильё.length
         ? ('<h2>Где переночевать рядом</h2>'
@@ -11226,6 +11228,8 @@ async function спросPage(slug){
     + (ЧТО_ПОСМОТРЕТЬ['chto-posmotret-' + slug] ? ('<p><a class="pr-route" href="/chto-posmotret-' + slug + '">Что посмотреть ' + esc(z.где) + ': все места с описанием →</a></p>') : '')
     + (сезон ? ('<h2>Новый год и корпоративы</h2><div class="others">' + сезон + '</div>') : '')
     + ссылкиХаба(z)
+    // у районного города (Пинск, Лида…) — его «где остановиться» и «что посмотреть»
+    + ((z.город && !z.слово && !z.тип && !z.хаб) ? ещёПоГороду(slug, z.город, '/' + slug) : '')
     + '<div class="others">' + рядом + '</div>'
     + '<footer><p>Мы не сдаём жильё сами и не берём комиссию: показываем объявления с Kufar, Realt '
     +   'и Flatbook и отправляем напрямую к хозяину. Перед оплатой проверяйте условия и не переводите '
@@ -11668,7 +11672,8 @@ async function чтоПосмотретьPage(slug){
     +   (ГИДЫ['gde-ostanovitsya-' + z.slug] && !пустаяСтраница('gde-ostanovitsya-' + z.slug)
           ? ('<a href="/gde-ostanovitsya-' + z.slug + '">Районы и цены</a>') : '') + '</div>'
     + '<footer><p>Описания — из справочника kudin.by и статей Википедии, каждое сверено с источником. '
-    +   'Мы не сдаём жильё и не берём комиссию.</p><p><a href="/?country=places">Все места Беларуси на карте →</a></p></footer>'
+    +   'Мы не сдаём жильё и не берём комиссию.</p><p><a href="/dostoprimechatelnosti-belarusi">Достопримечательности Беларуси: города, подборки, маршруты →</a></p>'
+    +   '<p><a href="/?country=places">Все места Беларуси на карте →</a></p></footer>'
     + '</div></body></html>';
 }
 
@@ -11691,6 +11696,61 @@ function строкиГородов(){
       пояснение: 'Здесь считаются и квартиры, и дома с усадьбами — всё, что сдаётся в радиусе 12–25 км.' },
   ];
 }
+// ── «Ещё по городу»: все наши страницы одного города ──────────────────────
+// Недорого, однокомнатные, усадьбы и дома, районы Минска, без посредников,
+// «где остановиться», «что посмотреть» — только те, что сейчас откроются
+// (пустые и помеченные пустыми не предлагаем). slug — адрес города (minsk,
+// lida…), город — его название, текущий — путь этой страницы (её не ставим).
+function ещёПоГороду(slug, город, текущий){
+  const ссылки = [];
+  const добавить = function(путь, текст){
+    if(путь !== текущий && !ссылки.some(с => с[0] === путь)) ссылки.push([путь, текст]);
+  };
+  const c = CITY_PAGES[slug];
+  if(c){
+    добавить('/' + slug, c.what + ' ' + c.where);
+    Object.keys(PAGE_KINDS).filter(x => x && !ПЕРЕЕХАЛИ[slug + '-' + x]).forEach(function(x){
+      добавить('/' + slug + '-' + x, c[x] ? c[x].ссылка
+        : (PAGE_KINDS[x].what + ' ' + ((PAGE_KINDS[x].областью && c.обл_где) ? c.обл_где : c.where)));
+    });
+  }
+  const свои = Object.keys(СПРОС).filter(k => k !== slug && !СПРОС[k].хаб && !СПРОС[k].сезон && !СПРОС[k].точка
+    && (k.indexOf(slug + '-') === 0 || (город && СПРОС[k].город === город)));
+  // дома под Минском — и для Минска, и для области
+  if(slug === 'minsk' || slug === 'minsk-obl') свои.push('doma-na-sutki-pod-minskom');
+  свои.filter(спросОткроется).forEach(k => добавить('/' + k, (СПРОС[k].что || 'Квартиры на сутки') + ' ' + СПРОС[k].где));
+  const гид = 'gde-ostanovitsya-' + slug;
+  if(ГИДЫ[гид] && !пустаяСтраница(гид)) добавить('/' + гид, 'Где остановиться ' + ГИДЫ[гид].где);
+  const чп = 'chto-posmotret-' + slug;
+  if(ЧТО_ПОСМОТРЕТЬ[чп]){
+    const с = сводкаСтраницы('/' + чп);
+    if(!с || с.всего) добавить('/' + чп, 'Что посмотреть ' + ЧТО_ПОСМОТРЕТЬ[чп].где);
+  }
+  if(!ссылки.length) return '';
+  return '<h2>Ещё по городу</h2><div class="others">'
+    + ссылки.map(с => '<a href="' + с[0] + '">' + esc(с[1]) + '</a>').join('') + '</div>';
+}
+
+// Для страницы места: ближайший город со своей страницей жилья (до 15 км от его
+// центра) и «что посмотреть», в радиус которого место попадает. Только страницы,
+// которые сейчас откроются.
+function городаМеста(lat, lng){
+  const города = Object.keys(CITY_PAGES).filter(k => TOWN_CENTERS[CITY_PAGES[k].city])
+    .map(k => ({ путь: '/' + k, текст: 'Квартиры на сутки ' + CITY_PAGES[k].where, центр: TOWN_CENTERS[CITY_PAGES[k].city] }))
+    .concat(Object.keys(СПРОС).filter(k => СПРОС[k].город && !СПРОС[k].слово && !СПРОС[k].тип && !СПРОС[k].хаб && спросОткроется(k))
+      .map(k => ({ путь: '/' + k, текст: 'Квартиры на сутки ' + СПРОС[k].где, центр: СПРОС[k].центр || TOWN_CENTERS[СПРОС[k].город] })))
+    .filter(к => к.центр)
+    .map(к => Object.assign(к, { км: distKm(lat, lng, к.центр[0], к.центр[1]) }))
+    .filter(к => к.км <= 15).sort((a, b) => a.км - b.км);
+  const чп = Object.keys(ЧТО_ПОСМОТРЕТЬ).map(function(k){
+      const z = ЧТО_ПОСМОТРЕТЬ[k], ц = z.точка || TOWN_CENTERS[z.город];
+      return { путь: '/' + k, текст: 'Что посмотреть ' + z.где, км: ц ? distKm(lat, lng, ц[0], ц[1]) : Infinity, радиус: z.радиус };
+    })
+    .filter(к => к.км <= к.радиус && (сводкаСтраницы(к.путь) || { всего: 1 }).всего)
+    .sort((a, b) => a.км - b.км);
+  return [города[0], чп[0]].filter(Boolean);
+}
+
 // Внизу главной — все города и курорты со своей страницей и хабы. Собирается на
 // каждый запрос (это только ссылки, без поиска): страницы спроса, которые сейчас
 // не откроются (мало вариантов), в него не попадают. Вставляется в готовую
@@ -11917,11 +11977,10 @@ async function cityPage(slug, kind){
       + '</div></article>';
   }).join('');
 
+  // уточнения этого города (недорого, усадьбы, районы…) — в блоке «Ещё по городу», здесь другие города
   const others = Object.keys(CITY_PAGES).filter(function(x){ return x !== slug || kind; })
     .map(function(x){ return '<a href="/' + x + '">' + esc(CITY_PAGES[x].city) + '</a>'; }).join('')
-    + Object.keys(PAGE_KINDS).filter(function(x){ return x && x !== (kind || '') && !ПЕРЕЕХАЛИ[slug + '-' + x]; })
-      .map(function(x){ return '<a href="/' + slug + '-' + x + '">' + (c[x] ? esc(c[x].ссылка)
-        : (esc(PAGE_KINDS[x].what) + ' ' + esc((PAGE_KINDS[x].областью && c.обл_где) ? c.обл_где : c.where))) + '</a>'; }).join('');
+    + '<a href="/goroda">Все города с ценами</a>';
 
   const ld = {
     '@context':'https://schema.org', '@type':'ItemList',
@@ -11954,6 +12013,7 @@ async function cityPage(slug, kind){
     + ((!kind && ЧТО_ПОСМОТРЕТЬ['chto-posmotret-' + slug]) ? ('<p><a class="pr-route" href="/chto-posmotret-' + slug + '">Что посмотреть ' + esc(c.where) + ': все места с описанием →</a></p>') : '')
     + (!kind ? Object.keys(СПРОС).filter(function(x){ return СПРОС[x].городСтраницы === slug && !пустаяСтраница(x); })
         .map(function(x){ return '<p><a class="pr-route" href="/' + x + '">' + esc(СПРОС[x].что + ' ' + СПРОС[x].где) + ': дома и усадьбы на компанию →</a></p>'; }).join('') : '')
+    + ещёПоГороду(slug, c.city, путь)
     + '<div class="others">' + others + '</div>'
     + '<footer><p>Мы не сдаём жильё сами и не берём комиссию: показываем объявления с Kufar, Realt, Flatbook, Check-in и Kvartirka '
     +   'и отправляем напрямую к хозяину. Перед оплатой проверяйте условия и не переводите предоплату незнакомым людям.</p>'
@@ -16544,8 +16604,15 @@ http.createServer(async (req,res)=>{
              + '<changefreq>weekly</changefreq><priority>0.7</priority></url>';
       });
     }catch(e){}
+    // lastmod: у страниц с выдачей (changefreq daily) — день последнего обновления
+    // каталогов досок, у остальных (места, маршруты, подборки, «что посмотреть») —
+    // день запуска сервера, то есть выкладки. Точнее мы не знаем и не выдумываем.
+    const день = t => new Date(t).toISOString().slice(0, 10);
+    const каталоги = Math.max(КАТАЛОГ_ОБНОВЛЁН.CheckIn || 0, КАТАЛОГ_ОБНОВЛЁН.Kvartirka || 0);
+    const сДатой = u => u.replace('</loc>', '</loc><lastmod>'
+      + (/<changefreq>daily</.test(u) && каталоги ? день(каталоги) : день(ЗАПУЩЕН)) + '</lastmod>');
     res.end('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
-      + urls.concat(места).join('') + '</urlset>'); return;
+      + urls.concat(места).map(сДатой).join('') + '</urlset>'); return;
   }
   // Всё, что не разобрали выше, — не наш адрес. Раньше сюда попадал любой
   // мусор и получал главную страницу с кодом «200».
