@@ -6960,6 +6960,8 @@ const isEmpty = d => Array.isArray(d) ? d.length === 0
 // досок они отношения не имеют, а их повторный сбор стоит секунды.
 function сброситьВыдачуЖилья(иИндекс){
   let сколько = 0;
+  // цифры хабов посчитаны по старой выдаче — показываем их, пока не досчитаны заново
+  СВОДКА.forEach(function(с){ с.свежая = false; });
   if(иИндекс !== false){ сколько += ЖИЛЬЁ_ГОРОДА.size; ЖИЛЬЁ_ГОРОДА.clear(); }
   for(const к of [...SEARCH_CACHE.keys()]){
     if(к.startsWith('/api/search?') || (иИндекс !== false && к.startsWith('idx|'))){ SEARCH_CACHE.delete(к); сколько++; }
@@ -10541,6 +10543,83 @@ function ответПолный(d){
   if(ИСТОЧНИКИ.kvartirka && !КАТАЛОГ_ОБНОВЛЁН.Kvartirka) return false;
   return true;
 }
+// ── Сводка страниц: сколько на странице вариантов (мест) и цена «от» ──────
+// Хабы (/goroda, /dostoprimechatelnosti-belarusi) и блоки ссылок показывают те
+// же цифры, что на самих страницах. Пересчитывать их на каждый запрос — это
+// десятки поисков разом, а сервер на бесплатном Render (~0,1 ядра). Поэтому
+// страница, когда собирается, оставляет здесь свои цифры, а недостающие
+// досчитываются в фоне по одной, с передышкой — как прогрев. Цифры с отказом
+// площадок (ответ неполный и вариантов мало) не запоминаем: это не «ноль».
+const СВОДКА = new Map();                      // путь → { всего, от, at }
+const СВОДКА_СВЕЖАЯ = 20 * 60 * 1000;          // старше — досчитать заново
+const СВОДКА_ЖИВЁТ = 2 * 60 * 60 * 1000;       // старше — не показывать вовсе
+function запомнитьСводку(путь, всего, от){
+  СВОДКА.set(путь, { всего: всего || 0, от: от || 0, at: Date.now() });
+}
+function сводкаСтраницы(путь){
+  const с = СВОДКА.get(путь);
+  return с && Date.now() - с.at < СВОДКА_ЖИВЁТ ? с : null;
+}
+function ценаОт(items){
+  const ц = (items || []).map(x => x.price).filter(p => p > 0).sort((a, b) => a - b);
+  return ц[0] || 0;
+}
+const ОЧЕРЕДЬ_СВОДКИ = new Map();   // путь → обещание, пока считается
+let сводкаИдёт = Promise.resolve();
+// Досчитать то, чего нет или что устарело, — по одной странице за раз.
+// Обещание исполнится, когда посчитаны все; ждать его целиком не обязательно.
+function досчитатьСводку(пути){
+  return Promise.all(пути.map(function(путь){
+    const с = СВОДКА.get(путь);
+    if(с && с.свежая !== false && Date.now() - с.at < СВОДКА_СВЕЖАЯ) return Promise.resolve(с);
+    if(ОЧЕРЕДЬ_СВОДКИ.has(путь)) return ОЧЕРЕДЬ_СВОДКИ.get(путь);
+    const п = сводкаИдёт = сводкаИдёт.then(async function(){
+      try{ await посчитатьСводку(путь); }catch(e){}
+      await new Promise(r => setTimeout(r, 300));
+      ОЧЕРЕДЬ_СВОДКИ.delete(путь);
+    });
+    ОЧЕРЕДЬ_СВОДКИ.set(путь, п);
+    return п;
+  }));
+}
+// Теми же функциями, что собирают сами страницы — цифры не разъедутся.
+async function посчитатьСводку(путь){
+  const slug = путь.slice(1);
+  if(ЧТО_ПОСМОТРЕТЬ[slug]){
+    const м = await чтоПосмотретьДанные(ЧТО_ПОСМОТРЕТЬ[slug]);
+    запомнитьСводку(путь, м.length >= ЧТО_ПОСМОТРЕТЬ_МИНИМУМ ? м.length : 0, 0);
+    return;
+  }
+  if(СПРОС[slug]){
+    const d = await данныеСпроса(slug);
+    if(d.полный || d.total >= СПРОС_МИНИМУМ) запомнитьСводку(путь, d.total, ценаОт(d.items));
+    return;
+  }
+  const г = parseCitySlug(slug);
+  if(г){
+    const { data } = await данныеГорода(г.city, г.kind);
+    if(data.total > 0 || ответПолный(data)) запомнитьСводку(путь, data.total, ценаОт(data.items));
+  }
+}
+// Откроется ли страница спроса (не 404) — по уже известным цифрам, без поиска.
+// Не знаем — считаем, что откроется, если она не помечена пустой.
+function спросОткроется(slug){
+  if(!СПРОС[slug] || пустаяСтраница(slug)) return false;
+  const с = сводкаСтраницы('/' + slug);
+  return !с || с.всего >= СПРОС_МИНИМУМ || (СПРОС_С_ГЛАВНОЙ.has(slug) && с.всего > 0);
+}
+
+// Таблица цифр — у гидов и хабов одна
+const СТИЛЬ_ТАБЛИЦЫ = '.t{width:100%;border-collapse:collapse;margin:0 0 22px;font-size:15px;background:#fff;'
+  +   'border:1px solid #e2e5ea;border-radius:14px;overflow:hidden}'
+  + '.t th{text-align:left;font-size:12.5px;text-transform:uppercase;letter-spacing:.04em;'
+  +   'color:#8b93a3;font-weight:600;padding:10px 14px;background:#f7f8fa}'
+  + '.t td{padding:10px 14px;border-top:1px solid #eef0f4}'
+  + '.t a{color:#9a3412;text-decoration:none;font-weight:600}'
+  + '@media (max-width:600px){.t{font-size:14px}.t th,.t td{padding:8px 9px}}'
+  + '@media (prefers-color-scheme:dark){.t{background:#1d1916;border-color:#332c25}'
+  +   '.t th{background:#241f1a;color:#c2b7ab}.t td{border-color:#332c25}.t a{color:#e2703a}}';
+
 async function гидPage(slug){
   const z = ГИДЫ[slug];
   if(!z) return '';
@@ -10843,23 +10922,45 @@ const СПРОС = {
                               + 'за компанию, банкет и праздничные даты хозяева считают отдельно. '
                               + 'Можно ли шуметь, есть ли зал и сколько выйдет на ваших людей, уточняйте у хозяина.' },
 
+  // Хабы (04.10, по Вордстату, Беларусь, сентябрь 2026): «дом на сутки» 4 685,
+  // «снять дом на сутки» 3 024, «дом посуточно» 925; «недорогие квартиры на сутки» 2 909.
+  // Ссылки на них стоят на главной, поэтому при малом числе вариантов они не 404,
+  // а честно говорят, сколько есть (как страницы с кнопок главной).
+  'doma-na-sutki':        { обл:Object.keys(REGIONS), тип:'any', дома:true, хаб:true, поОбластям:'kottedzhi',
+                            что:'Дома на сутки', где:'в Беларуси',
+                            заголовок:'Дома на сутки в Беларуси — снять дом посуточно',
+                            поиск:'/?region=any&type=cottage',
+                            пояснение:'Дома, коттеджи и усадьбы целиком по всем областям — объявления, где сдаётся дом, а не квартира. '
+                              + 'Сколько человек помещается, есть ли баня и что входит в цену, уточняйте у хозяина.',
+                            ссылки:['dom-s-banej', 'doma-s-bassejnom', 'doma-na-sutki-pod-minskom', 'doma-na-novyj-god'] },
+  // Тот же порог, что у /minsk-nedorogo и других /<город>-nedorogo: до 70 рублей за сутки,
+  // и те же семь страниц (областные центры и Минская область) одним списком.
+  'kvartiry-nedorogo':    { обл:Object.keys(CITY_PAGES), тип:'flat', макс:PAGE_KINDS.nedorogo.max, хаб:true, поОбластям:'nedorogo',
+                            дешёвыеСверху:true,
+                            что:'Недорогие квартиры на сутки', где:'в Беларуси',
+                            заголовок:'Недорогие квартиры на сутки в Беларуси — по городам',
+                            поиск:'/?region=any&type=flat&max=' + PAGE_KINDS.nedorogo.max,
+                            пояснение:'Квартиры до ' + PAGE_KINDS.nedorogo.max + ' рублей за сутки в Минске, областных центрах и Минской области — '
+                              + 'тот же порог, что на страницах «недорого» по городам. Самые дешёвые — сверху: '
+                              + 'среди них бывают комнаты, это видно по описанию объявления.' },
+
   // курортные места: тут ищут «снять домик», а не «жильё рядом с объектом»
-  'braslav':      { точка:[55.6333, 27.05],  радиус:25,
+  'braslav':      { точка:[55.6333, 27.05],  радиус:25, имя:'Браслав',
                     что:'Снять квартиру или дом', где:'в Браславе',
                     // «браслав снять» 313, «… квартиру» 72, «… дом» 38 (Вордстат, 09.2026);
                     // адрес прежний, а выдача по-прежнему — всё в 25 км, с озёрами
                     заголовок:'Снять квартиру или дом в Браславе на сутки' },
-  'naroch':       { точка:[54.8833, 26.75],  радиус:25,
+  'naroch':       { точка:[54.8833, 26.75],  радиус:25, имя:'Нарочь',
                     что:'Снять квартиру или домик', где:'на Нарочи',
                     // «сниму нарочь» 541: «… квартиру» 198, «… домик» 74 (Вордстат, 09.2026)
                     заголовок:'Снять квартиру или домик на Нарочи посуточно' },
-  'minskoe-more': { точка:[54.0167, 27.40],  радиус:12,
+  'minskoe-more': { точка:[54.0167, 27.40],  радиус:12, имя:'Минское море',
                     что:'Домики и квартиры на сутки', где:'на Минском море' },
-  'logoisk':      { точка:[54.2000, 27.85],  радиус:12,
+  'logoisk':      { точка:[54.2000, 27.85],  радиус:12, имя:'Логойск',
                     что:'Жильё на сутки', где:'в Логойске' },
-  'svityaz':      { точка:[53.5333, 25.8833], радиус:25,
+  'svityaz':      { точка:[53.5333, 25.8833], радиус:25, имя:'Озеро Свитязь',
                     что:'Домики на сутки', где:'на озере Свитязь' },
-  'golubye-ozera':{ точка:[55.0500, 26.60],  радиус:25,
+  'golubye-ozera':{ точка:[55.0500, 26.60],  радиус:25, имя:'Голубые озёра',
                     что:'Жильё на сутки', где:'у Голубых озёр' },
 };
 
@@ -10885,27 +10986,60 @@ async function спросДанные(z){
                       '&type=' + (z.тип || 'any') + '&source=both', 'http://localhost');
     return runSearchQuery(п.searchParams);
   }));
+  // Отбор — одной функцией: им же считаются и строки хаба по областям
+  const отобрать = function(items){
+    if(z.дома) items = items.filter(этоДом);
+    // порог цены — как у /<город>-nedorogo (там его ставит сам поиск, max=70)
+    if(z.макс) items = items.filter(function(x){ return x.price > 0 && x.price <= z.макс; });
+    if(z.гостей) items = items.filter(function(x){ return (parseInt(x.capacity, 10) || 0) >= z.гостей; });
+    if(z.комнат) items = items.filter(function(x){ return (parseInt(x.rooms, 10) || 0) === z.комнат; });
+    if(z.отМинска) items = items.filter(function(x){
+      return x.lat && x.lng && !x.approx && distKm(53.9023, 27.5619, +x.lat, +x.lng) <= z.отМинска;
+    });
+    if(z.отГорода) items = items.filter(function(x){
+      return x.lat && x.lng && !x.approx && distKm(z.отГорода.точка[0], z.отГорода.точка[1], +x.lat, +x.lng) <= z.отГорода.км;
+    });
+    if(z.слово){
+      // Название района в объявлении пишут по-разному: то в заголовке, то
+      // в поле города. Смотрим оба, ё приравниваем к е.
+      const rx = new RegExp(z.слово, 'i');
+      const мягко = t => String(t || '').toLowerCase().replace(/ё/g, 'е');
+      items = items.filter(x => rx.test(мягко(x.title)) || rx.test(мягко(x.area)));
+    }
+    return items;
+  };
   const было = new Set();
-  let items = [].concat.apply([], ответы.map(function(d){ return d.items || []; }))
-    .filter(function(x){ return x && x.link && !было.has(x.link) && было.add(x.link); });
-  if(z.дома) items = items.filter(этоДом);
-  if(z.гостей) items = items.filter(function(x){ return (parseInt(x.capacity, 10) || 0) >= z.гостей; });
-  if(z.комнат) items = items.filter(function(x){ return (parseInt(x.rooms, 10) || 0) === z.комнат; });
-  if(z.отМинска) items = items.filter(function(x){
-    return x.lat && x.lng && !x.approx && distKm(53.9023, 27.5619, +x.lat, +x.lng) <= z.отМинска;
-  });
-  if(z.отГорода) items = items.filter(function(x){
-    return x.lat && x.lng && !x.approx && distKm(z.отГорода.точка[0], z.отГорода.точка[1], +x.lat, +x.lng) <= z.отГорода.км;
-  });
-  if(z.слово){
-    // Название района в объявлении пишут по-разному: то в заголовке, то
-    // в поле города. Смотрим оба, ё приравниваем к е.
-    const rx = new RegExp(z.слово, 'i');
-    const мягко = t => String(t || '').toLowerCase().replace(/ё/g, 'е');
-    items = items.filter(x => rx.test(мягко(x.title)) || rx.test(мягко(x.area)));
+  const items = отобрать([].concat.apply([], ответы.map(function(d){ return d.items || []; }))
+    .filter(function(x){ return x && x.link && !было.has(x.link) && было.add(x.link); }));
+  // По областям (хабы): у каждой области — её собственный ответ с тем же отбором,
+  // то есть ровно то, что на странице этой области. Ответы пересекаются (у Минской
+  // области Realt и Flatbook отдают и Минск), поэтому строки в сумме могут быть
+  // больше общего числа — один вариант попадает в две строки.
+  let поОбл = null;
+  if(z.поОбластям){
+    поОбл = {};
+    ответы.forEach(function(d, i){
+      const свои = отобрать(d.items || []);
+      поОбл[области[i]] = { всего: свои.length, от: ценаОт(свои) };
+    });
   }
   // полнота — по ответу до отбора по слову: в Уручье четыре варианта, а в Минске сотни
-  return { items: items, total: items.length, полный: ответы.every(ответПолный) };
+  return { items: items, total: items.length, полный: ответы.every(ответПолный), поОбл: поОбл };
+}
+// Широкие страницы (вся страна, несколько областей) склеивают и перебирают
+// тысячи объявлений — на каждый запрос это секунды процессора на Render.
+// Держим готовый отбор в кэше поиска пять минут (ключ с /api/search?, чтобы
+// его сбрасывало вместе с выдачами при обновлении каталогов); неполный ответ
+// площадок — не дольше 30 секунд, чтобы недособранный список не застревал.
+function спросШирокий(z){
+  return z.обл === 'any' || (Array.isArray(z.обл) && z.обл.length > 2);
+}
+function спросДанныеКэш(slug, z){
+  if(!спросШирокий(z)) return спросДанные(z);
+  const ключ = '/api/search?страница=' + slug;
+  const было = SEARCH_CACHE.get(ключ);
+  return cached(ключ, function(){ return спросДанные(z); }, 5 * 60 * 1000,
+                было && было.data && !было.data.полный ? 30 * 1000 : undefined);
 }
 
 // Загородные комплексы с залами — для корпоративов на десятки и сотни
@@ -10941,7 +11075,7 @@ function этоДом(x){
 // правда станет два; и «площадки ответили не все» — не роняя самих площадок.
 async function данныеСпроса(slug){
   let d = { items: [], total: 0 };
-  try{ d = await спросДанные(СПРОС[slug]); }catch(e){}
+  try{ d = await спросДанныеКэш(slug, СПРОС[slug]); }catch(e){}
   if(process.env.DATA_TEST === '1' && ПРЕДЕЛ_ПРОВЕРКИ.has(slug)){
     d = Object.assign({}, d, { items: (d.items || []).slice(0, ПРЕДЕЛ_ПРОВЕРКИ.get(slug)) });
     d.total = d.items.length;
@@ -10965,6 +11099,8 @@ async function спросPage(slug){
   if(!z) return '';
   const d = await данныеСпроса(slug);
   const сГлавной = СПРОС_С_ГЛАВНОЙ.has(slug);
+  // цифры страницы — в сводку (для /goroda и блоков ссылок); отказ площадок — не цифры
+  if(d.полный || d.total >= СПРОС_МИНИМУМ) запомнитьСводку('/' + slug, d.total, ценаОт(d.items));
   // нечем наполнить — страницы нет (и в sitemap её не отдаём, пока снова не наполнится).
   // Кроме тех, куда ведёт сама главная: там ссылка вшита в разметку и стала бы битой.
   if(d.total < СПРОС_МИНИМУМ && !(сГлавной && d.total > 0)){
@@ -10980,7 +11116,9 @@ async function спросPage(slug){
   const недособран = мало && !d.полный;
 
   const что = z.что || 'Квартиры на сутки';
-  const items = рекомендуемыйПорядок(d.items || []).slice(0, 30);
+  // «недорого» — дешёвые сверху, как на /<город>-nedorogo: за ними и приходят
+  const items = (z.дешёвыеСверху ? (d.items || []).slice().sort((a, b) => a.price - b.price)
+                                 : рекомендуемыйПорядок(d.items || [])).slice(0, 30);
   const цены = (d.items || []).map(x => x.price).filter(p => p > 0).sort((a, b) => a - b);
   const мин = цены.length ? цены[0] : 0;
   const сред = цены.length ? цены[Math.floor(цены.length / 2)] : 0;
@@ -11044,7 +11182,7 @@ async function спросPage(slug){
     + '<link rel="manifest" href="/manifest.webmanifest">'
     + jsonLD(ld)
     + крошки([['Главная', '/'], z.крошка || ['Жильё на сутки', '/minsk'], [что + ' ' + z.где]])
-    + '<style>' + СТИЛЬ_СПИСКА + '</style></head><body><div class="w">'
+    + '<style>' + СТИЛЬ_СПИСКА + (d.поОбл ? СТИЛЬ_ТАБЛИЦЫ : '') + '</style></head><body><div class="w">'
     + '<h1>' + esc(что) + ' ' + esc(z.где) + '</h1>'
     + '<p class="lead">Объявления частников с <b>Kufar</b>, <b>Realt</b>, <b>Flatbook</b>, <b>Check-in</b> и <b>Kvartirka</b> в одном списке. '
     +   'Сейчас доступно <b>' + d.total + '</b> ' + скл(d.total, 'вариант', 'варианта', 'вариантов')
@@ -11060,12 +11198,14 @@ async function спросPage(slug){
       : мало ? ('<p class="lead">Под эти условия сейчас подходит всего ' + вариантов(d.total) + ' — показываем всё, что нашлось. '
         + 'Объявления появляются каждый день. Больше вариантов — в полном поиске: там можно убрать часть условий.</p>') : '')
     + '<a class="cta" href="' + куда + '">Открыть поиск с фильтрами и картой →</a>'
+    + таблицаОбластей(z, d.поОбл, d.total)
     + блокПлощадок(z.площадки)
     + (z.площадки ? '<h2>Дома и усадьбы целиком</h2>' : '')
     + '<div class="grid">' + карточки + '</div>'
     + блокМестРядом(места, маршрут)
     + (ЧТО_ПОСМОТРЕТЬ['chto-posmotret-' + slug] ? ('<p><a class="pr-route" href="/chto-posmotret-' + slug + '">Что посмотреть ' + esc(z.где) + ': все места с описанием →</a></p>') : '')
     + (сезон ? ('<h2>Новый год и корпоративы</h2><div class="others">' + сезон + '</div>') : '')
+    + ссылкиХаба(z)
     + '<div class="others">' + рядом + '</div>'
     + '<footer><p>Мы не сдаём жильё сами и не берём комиссию: показываем объявления с Kufar, Realt '
     +   'и Flatbook и отправляем напрямую к хозяину. Перед оплатой проверяйте условия и не переводите '
@@ -11074,6 +11214,42 @@ async function спросPage(slug){
     + '</div></body></html>';
   if(недособран) return { html: html, код: 200, кэш: 'no-cache', закрыта: true };
   return { html: html, код: 200, кэш: мало ? 'public, max-age=120' : 'public, max-age=600' };
+}
+
+// Хабы: сколько вариантов в каждой области (или в каждом городе) и откуда
+// они — со ссылкой на страницу этой области. Цифры — из того же списка, что
+// карточки на странице, поэтому складываются в общее число.
+function таблицаОбластей(z, поОбл, всего){
+  if(!поОбл) return '';
+  const строки = Object.keys(поОбл).filter(о => поОбл[о].всего > 0)
+    .sort((a, b) => поОбл[b].всего - поОбл[a].всего).map(function(о){
+      const б = поОбл[о];
+      let имя, адрес = '';
+      if(z.поОбластям === 'nedorogo'){
+        имя = CITY_PAGES[о] ? CITY_PAGES[о].city : о;
+        if(CITY_PAGES[о]) адрес = '/' + о + '-nedorogo';
+      } else {
+        имя = REGIONS[о] ? REGIONS[о].oblast : о;
+        const своя = о + '-' + z.поОбластям;
+        адрес = ПЕРЕЕХАЛИ[своя] || (CITY_PAGES[о] ? ('/' + своя) : '');
+      }
+      return '<tr><td>' + (адрес ? ('<a href="' + адрес + '">' + esc(имя) + '</a>') : esc(имя)) + '</td><td><b>' + б.всего
+        + '</b></td><td>' + (б.от ? (б.от + ' BYN') : '—') + '</td></tr>';
+    }).join('');
+  if(!строки) return '';
+  const поГородам = z.поОбластям === 'nedorogo';
+  const сумма = Object.keys(поОбл).reduce((n, о) => n + поОбл[о].всего, 0);
+  return '<h2>' + (поГородам ? 'По городам' : 'По областям') + '</h2>'
+    + '<table class="t"><thead><tr><th>' + (поГородам ? 'Город' : 'Область') + '</th><th>Вариантов</th><th>От</th></tr></thead>'
+    + '<tbody>' + строки + '</tbody></table>'
+    + (сумма > всего ? ('<p class="lead">В строках — столько же, сколько на странице ' + (поГородам ? 'города' : 'области')
+        + '. Один вариант бывает в двух строках: Realt и Flatbook отдают минские объявления и в Минскую область, '
+        + 'поэтому в сумме строк больше, чем всего на этой странице.</p>') : '');
+}
+function ссылкиХаба(z){
+  const ссылки = (z.ссылки || []).filter(спросОткроется)
+    .map(k => '<a href="/' + k + '">' + esc((СПРОС[k].что || 'Жильё') + ' ' + СПРОС[k].где) + '</a>').join('');
+  return ссылки ? ('<h2>Ещё подборки домов</h2><div class="others">' + ссылки + '</div>') : '';
 }
 
 // Страница с главной, под которую сейчас ничего не нашлось. Не 404: человек
@@ -11386,6 +11562,7 @@ async function чтоПосмотретьPage(slug){
   if(!z) return '';
   let места = [];
   try{ места = await чтоПосмотретьДанные(z); }catch(e){ return ''; }
+  запомнитьСводку('/' + slug, места.length >= ЧТО_ПОСМОТРЕТЬ_МИНИМУМ ? места.length : 0, 0);
   if(места.length < ЧТО_ПОСМОТРЕТЬ_МИНИМУМ) return '';
 
   // где остановиться — сводка по квартирам города из той же выдачи, что /<город>
@@ -11465,13 +11642,177 @@ async function чтоПосмотретьPage(slug){
     + '</div></body></html>';
 }
 
+// ── Хаб «Квартиры на сутки по городам» (/goroda) ─────────────────────────
+// «квартиры посуточно» 16 832 в месяц, и по городам: Барановичи 1 066, Лида 989,
+// Кобрин 759, Бобруйск 725, Пинск 671 (Вордстат, Беларусь, сентябрь 2026).
+// Одна страница со всеми городами и курортами, где у нас есть своя страница:
+// сколько там вариантов и цена «от» — те же цифры, что на самих страницах
+// (берутся из сводки, недостающие досчитываются в фоне по одной).
+function строкиГородов(){
+  const районы = Object.keys(СПРОС).filter(k => СПРОС[k].город && !СПРОС[k].слово && !СПРОС[k].тип && !СПРОС[k].хаб)
+    .map(k => ({ путь: '/' + k, имя: СПРОС[k].город, спрос: k }));
+  const курорты = Object.keys(СПРОС).filter(k => СПРОС[k].точка)
+    .map(k => ({ путь: '/' + k, имя: СПРОС[k].имя || СПРОС[k].где, спрос: k, радиус: СПРОС[k].радиус || 25 }));
+  const поИмени = (a, b) => a.имя.localeCompare(b.имя, 'ru');
+  return [
+    { заголовок: 'Минск, областные центры и Минская область', строки: Object.keys(CITY_PAGES).map(k => ({ путь: '/' + k, имя: CITY_PAGES[k].city })) },
+    { заголовок: 'Районные города', строки: районы.sort(поИмени) },
+    { заголовок: 'Озёра и курорты', строки: курорты.sort(поИмени),
+      пояснение: 'Здесь считаются и квартиры, и дома с усадьбами — всё, что сдаётся в радиусе 12–25 км.' },
+  ];
+}
+async function городаPage(){
+  const группы = строкиГородов();
+  const все = [].concat.apply([], группы.map(г => г.строки));
+  // недостающие цифры — досчитываем, но ждём не дольше восьми секунд: остальное
+  // будет к следующему заходу (страница тогда и кэшируется короче)
+  await Promise.race([досчитатьСводку(все.map(с => с.путь)), new Promise(r => setTimeout(r, 8000))]);
+  let неполная = false;
+  const показаны = [];
+  const таблицы = группы.map(function(г){
+    const строки = г.строки.map(function(с){
+      // страница спроса, которая сейчас не откроется (мало вариантов), — без строки
+      if(с.спрос && !спросОткроется(с.спрос)) return '';
+      const ц = сводкаСтраницы(с.путь);
+      if(!ц) неполная = true;
+      показаны.push(с);
+      return '<tr><td><a href="' + с.путь + '">' + esc(с.имя) + '</a></td><td>' + (ц ? ('<b>' + ц.всего + '</b>') : '…')
+        + '</td><td>' + (ц && ц.от ? (ц.от + ' BYN') : '—') + '</td></tr>';
+    }).join('');
+    if(!строки) return '';
+    return '<h2>' + esc(г.заголовок) + '</h2>' + (г.пояснение ? ('<p class="lead">' + esc(г.пояснение) + '</p>') : '')
+      + '<table class="t"><thead><tr><th>' + (г.строки[0] && г.строки[0].радиус ? 'Где' : 'Город') + '</th><th>Вариантов</th><th>От</th></tr></thead>'
+      + '<tbody>' + строки + '</tbody></table>';
+  }).join('');
+  const цены = показаны.map(с => (сводкаСтраницы(с.путь) || {}).от).filter(p => p > 0).sort((a, b) => a - b);
+  const title = 'Квартиры на сутки по городам Беларуси — посуточно';
+  const desc = описаниеСтраницы([
+    'Квартиры на сутки по городам Беларуси: городов и курортов — ' + показаны.length + ', все на одной странице.',
+    ['Минск, Брест, Гродно, Барановичи, Лида, Бобруйск, Нарочь и другие.', 'Минск, Брест, Гродно, Барановичи, Лида и другие.'],
+    'Сколько вариантов посуточно и цена «от» — по каждому городу' + (цены.length ? (', от ' + цены[0] + ' BYN за сутки') : '') + '.',
+    'Объявления Kufar, Realt, Flatbook, Check-in и Kvartirka.',
+  ]);
+  const хабы = ['doma-na-sutki', 'kvartiry-nedorogo'].filter(спросОткроется)
+    .map(k => '<a href="/' + k + '">' + esc(СПРОС[k].что + ' ' + СПРОС[k].где) + '</a>').join('')
+    + '<a href="/dostoprimechatelnosti-belarusi">Достопримечательности Беларуси</a>';
+  const ld = { '@context':'https://schema.org', '@type':'ItemList', name: title, numberOfItems: показаны.length,
+    itemListElement: показаны.map((с, i) => ({ '@type':'ListItem', position: i + 1, name: 'Квартиры на сутки: ' + с.имя, url: SITE_URL + с.путь })) };
+  const html = '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    + метаСтраницы({ title: title, desc: desc, путь: '/goroda' })
+    + '<meta name="theme-color" content="#9a3412">'
+    + '<link rel="manifest" href="/manifest.webmanifest">'
+    + jsonLD(ld)
+    + крошки([['Главная', '/'], ['Квартиры на сутки по городам']])
+    + '<style>' + СТИЛЬ_СПИСКА + СТИЛЬ_ТАБЛИЦЫ + '</style></head><body><div class="w">'
+    + '<h1>Квартиры на сутки по городам Беларуси</h1>'
+    + '<p class="lead">Все города и курорты, где у нас есть своя страница с жильём посуточно. '
+    +   '«Вариантов» и «от» — те же цифры, что на странице города: они считаются из живой выдачи Kufar, Realt, Flatbook, '
+    +   'Check-in и Kvartirka и меняются вместе с ней. У областного центра в число входит и область.'
+    +   (неполная ? ' Где стоит «…», цифры ещё собираются — загляните через пару минут.' : '') + '</p>'
+    + '<a class="cta" href="/">Открыть поиск с фильтрами и картой →</a>'
+    + таблицы
+    + '<h2>Ещё</h2><div class="others">' + хабы + '</div>'
+    + '<footer><p>Мы не сдаём жильё сами и не берём комиссию: показываем объявления с Kufar, Realt, Flatbook, Check-in и Kvartirka '
+    +   'и отправляем напрямую к хозяину.</p><p><a href="/">Все города и карта с ценами →</a></p></footer>'
+    + '</div></body></html>';
+  return { html: html, кэш: неполная ? 'public, max-age=120' : 'public, max-age=600' };
+}
+
+// ── Хаб «Достопримечательности Беларуси» (/dostoprimechatelnosti-belarusi) ──
+// «достопримечательности беларуси» 4 613, «что посмотреть в беларуси» 915,
+// «куда поехать в беларуси» 580 (Вордстат, сентябрь 2026). Страница-оглавление:
+// «что посмотреть» по городам, подборки, готовые маршруты и крупные группы мест.
+// Вкладка /?country=places остаётся как есть — это приложение; отсюда туда
+// ведёт кнопка «Все места на карте».
+// Группы — те же, что в фильтре карты (ссылка «на карте» открывает её с этим
+// фильтром). Военных мест, мемориалов и кладбищ здесь нет — правило сайта.
+const ГРУППЫ_ДОСТОПРИМЕЧАТЕЛЬНОСТЕЙ = [
+  { группа:'Укрепления',       имя:'Замки и крепости' },
+  { группа:'Дворцы и усадьбы', имя:'Дворцы и усадьбы' },
+  { группа:'Храмы',            имя:'Костёлы, церкви, часовни и синагоги' },
+  { группа:'Строения',         имя:'Мельницы, брамы, мосты и старые постройки' },
+  { группа:'Ландшафтные',      имя:'Валуны, карьеры, экотропы и земляные валы' },
+];
+async function достопримечательностиPage(){
+  const все = await placesRaw();
+  const чп = Object.keys(ЧТО_ПОСМОТРЕТЬ);
+  await Promise.race([досчитатьСводку(чп.map(k => '/' + k)), new Promise(r => setTimeout(r, 8000))]);
+  let неполная = false;
+  const города = чп.map(function(k){
+    const с = сводкаСтраницы('/' + k);
+    if(!с) неполная = true;
+    if(с && !с.всего) return '';   // страница сейчас не открывается (мало мест с описанием)
+    return '<a href="/' + k + '">Что посмотреть ' + esc(ЧТО_ПОСМОТРЕТЬ[k].где)
+      + (с ? (' <small>' + с.всего + ' ' + скл(с.всего, 'место', 'места', 'мест') + '</small>') : '') + '</a>';
+  }).join('');
+  const поНомеру = new Set(все.map(p => String(p.id)));
+  const подборки = ПОДБОРКИ.map(function(п){
+    const n = п.ids.filter(id => поНомеру.has(id)).length;
+    return '<a href="/podborka/' + п.slug + '">' + esc(п.title) + ' <small>' + n + ' ' + скл(n, 'место', 'места', 'мест') + '</small></a>';
+  }).join('');
+  const маршруты = ВИДЕО_МАРШРУТЫ.map(м => '<a href="/m/' + м.slug + '">' + esc(м.title) + '</a>').join('')
+    + Object.keys(МАРШРУТ_ПО).map(k => '<a href="/' + k + '">' + esc(МАРШРУТ_ПО[k].заголовок) + '</a>').join('')
+    + '<a href="/m">Все маршруты →</a>';
+  const группы = ГРУППЫ_ДОСТОПРИМЕЧАТЕЛЬНОСТЕЙ.map(function(г){
+    const места = все.filter(p => p.group === г.группа);
+    if(!места.length) return '';
+    const лучшие = места.slice().sort((a, b) => (b.pic ? 1 : 0) - (a.pic ? 1 : 0) || (b.rating || 0) - (a.rating || 0)).slice(0, 8);
+    return '<h2>' + esc(г.имя) + '</h2>'
+      + '<p class="lead">' + места.length + ' ' + скл(места.length, 'место', 'места', 'мест') + ' в справочнике. '
+      +   '<a href="/?country=places&amp;group=' + encodeURIComponent(г.группа) + '">Все на карте →</a></p>'
+      + '<div class="places">' + лучшие.map(function(p){
+          const img = p.pic ? '<img src="' + esc(p.pic) + '" loading="lazy" alt="' + esc(p.name) + '">' : '<span class="noimg">без фото</span>';
+          return '<a class="pc" href="/mesto/' + p.id + '-' + slugify(p.name) + '">' + img + '<b>' + esc(p.name) + '</b>'
+            + (p.cat ? '<span class="pcat">' + esc(p.cat) + '</span>' : '') + '</a>';
+        }).join('') + '</div>';
+  }).join('');
+  const n = все.length, сотни = Math.floor(n / 100) * 100, сФото = все.filter(p => p.pic).length;
+  const title = заголовокСтраницы('Достопримечательности Беларуси: что посмотреть' + (сотни ? (', ' + сотни + '+ мест') : ''), []);
+  const desc = описаниеСтраницы([
+    'Достопримечательности Беларуси: ' + n + ' ' + скл(n, 'место', 'места', 'мест') + ' — замки, дворцы и усадьбы, костёлы и церкви, мельницы.',
+    'Что посмотреть в ' + чп.length + ' городах, подборки и готовые маршруты.',
+    'Фото, описание и жильё рядом.',
+  ]);
+  const ld = { '@context':'https://schema.org', '@type':'ItemList', name: title, numberOfItems: чп.length + ПОДБОРКИ.length,
+    itemListElement: чп.map(k => ({ name: 'Что посмотреть ' + ЧТО_ПОСМОТРЕТЬ[k].где, url: SITE_URL + '/' + k }))
+      .concat(ПОДБОРКИ.map(п => ({ name: п.title, url: SITE_URL + '/podborka/' + п.slug })))
+      .map((x, i) => Object.assign({ '@type':'ListItem', position: i + 1 }, x)) };
+  const html = '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    + метаСтраницы(Object.assign({ title: title, desc: desc, путь: '/dostoprimechatelnosti-belarusi', тип: 'article' },
+        превьюМест(все.filter(p => p.group === 'Укрепления' || p.group === 'Дворцы и усадьбы')
+          .sort((a, b) => (b.rating || 0) - (a.rating || 0)))))
+    + '<meta name="theme-color" content="#9a3412">'
+    + '<link rel="manifest" href="/manifest.webmanifest">'
+    + jsonLD(ld)
+    + крошки([['Главная', '/'], ['Что посетить', '/?country=places'], ['Достопримечательности Беларуси']])
+    + '<style>' + СТИЛЬ_СПИСКА + '.others small{color:#8b93a3;font-size:12.5px;margin-left:4px}.lead a{color:#9a3412}</style></head><body><div class="w">'
+    + '<h1>Достопримечательности Беларуси</h1>'
+    + '<p class="lead">Что посмотреть в Беларуси и куда поехать: в нашем справочнике <b>' + n + '</b> '
+    +   скл(n, 'место', 'места', 'мест') + ' — замки, дворцы и усадьбы, костёлы и церкви, мельницы, брамы и валуны. '
+    +   'У каждого своя страница с координатами, маршрутом на машине и жильём рядом; с фото — ' + сФото + '.</p>'
+    + '<a class="cta" href="/?country=places">Все места на карте →</a>'
+    + (города ? ('<h2>Что посмотреть в городах</h2><div class="others">' + города + '</div>') : '')
+    + (подборки ? ('<h2>Подборки: куда поехать</h2><div class="others">' + подборки + '</div>') : '')
+    + '<h2>Готовые маршруты</h2><div class="others">' + маршруты + '</div>'
+    + группы
+    + '<footer><p>Справочник — из kudin.by и наших поездок; описания сверены с источниками. '
+    +   'Жильё рядом с местами — объявления Kufar, Realt, Flatbook, Check-in и Kvartirka, комиссию мы не берём.</p>'
+    +   '<p><a href="/?country=places">Все места на карте →</a></p></footer>'
+    + '</div></body></html>';
+  return { html: html, кэш: неполная ? 'public, max-age=120' : 'public, max-age=600' };
+}
+
 function фразаОМестах(места, маршрут){
   if(места.length < 3) return '';
   return 'Что посмотреть рядом: ' + места.length + ' ' + скл(места.length, 'место', 'места', 'мест')
     + (маршрут ? ' и маршрут.' : '.');
 }
 
-async function cityPage(slug, kind){
+// Выдача городской страницы — отдельно от разметки: те же цифры нужны
+// сводке для /goroda и /kvartiry-nedorogo.
+async function данныеГорода(slug, kind){
   const c = CITY_PAGES[slug];
   const base = PAGE_KINDS[kind || ''];
   // у области своё название раздела: там не только квартиры
@@ -11481,6 +11822,12 @@ async function cityPage(slug, kind){
   let data = { items: [], total: 0 };
   try{ data = await runSearchQuery(uu.searchParams); }catch(e){}
   if(k.дома){ const дома = (data.items || []).filter(этоДом); data = Object.assign({}, data, { items: дома, total: дома.length }); }
+  return { c: c, k: k, data: data };
+}
+
+async function cityPage(slug, kind){
+  const { c, k, data } = await данныеГорода(slug, kind);
+  if(data.total > 0 || ответПолный(data)) запомнитьСводку('/' + slug + (kind ? ('-' + kind) : ''), data.total, ценаОт(data.items));
   // у усадеб и коттеджей данные по всей области — и название по области
   const где = (k.областью && c.обл_где) ? c.обл_где : c.where;
 
@@ -15124,7 +15471,9 @@ const ГЛАВНАЯ = PAGE.replace('<!--ПОДБОРКИ-->', () => чипыП�
 // Страницы спроса, на которые ведёт сама главная (кнопки «Дома на Новый год →»,
 // «Корпоратив в Бресте →»). Ссылки вшиты в разметку и не знают, сколько сейчас
 // вариантов, поэтому такие страницы не отвечают 404 — см. спросPage().
-const СПРОС_С_ГЛАВНОЙ = new Set([...PAGE.matchAll(/href="\/([a-z0-9-]+)"/g)].map(м => м[1]).filter(s => СПРОС[s]));
+// Хабы (/doma-na-sutki, /kvartiry-nedorogo) — тоже: на них ведёт блок ссылок внизу главной.
+const СПРОС_С_ГЛАВНОЙ = new Set([...PAGE.matchAll(/href="\/([a-z0-9-]+)"/g)].map(м => м[1]).filter(s => СПРОС[s])
+  .concat(Object.keys(СПРОС).filter(s => СПРОС[s].хаб)));
 const ПРЕДЕЛ_ПРОВЕРКИ = new Map();   // только для проверок, см. /api/_empty-test
 const НЕПОЛНЫЙ_ПРОВЕРКИ = new Set(); // там же: «площадки ответили не все»
 
@@ -15761,6 +16110,18 @@ http.createServer(async (req,res)=>{
     res.writeHead(200, {'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'no-cache', 'X-Robots-Tag':'noindex'});
     res.end(html); return;
   }
+  // Хабы: все города с ценами и оглавление достопримечательностей
+  if(u.pathname === '/goroda' || u.pathname === '/dostoprimechatelnosti-belarusi'){
+    let стр = null;
+    try{ стр = u.pathname === '/goroda' ? await городаPage() : await достопримечательностиPage(); }
+    catch(e){ console.error('хаб ' + u.pathname + ':', e.message); }
+    if(стр){
+      res.writeHead(200, {'Content-Type':'text/html; charset=utf-8', 'Cache-Control': стр.кэш});
+      res.end(стр.html); return;
+    }
+    res.writeHead(503, {'Content-Type':'text/plain; charset=utf-8', 'Retry-After':'60', 'X-Robots-Tag':'noindex'});
+    res.end('Страница собирается, загляните через минуту'); return;
+  }
   // «Что посмотреть в Гродно / Минске»
   if(ЧТО_ПОСМОТРЕТЬ[u.pathname.slice(1)]){
     let html = '';
@@ -16117,6 +16478,9 @@ http.createServer(async (req,res)=>{
     urls.push.apply(urls, Object.keys(ЧТО_ПОСМОТРЕТЬ).map(function(k){
       return '<url><loc>'+SITE_URL+'/'+k+'</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>';
     }));
+    // хабы: все города с ценами и оглавление достопримечательностей
+    urls.push('<url><loc>'+SITE_URL+'/goroda</loc><changefreq>daily</changefreq><priority>0.8</priority></url>',
+              '<url><loc>'+SITE_URL+'/dostoprimechatelnosti-belarusi</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>');
     // Страницы под живой спрос — в карту сайта наравне с городскими.
     urls.push.apply(urls, Object.keys(СПРОС).filter(k => !пустаяСтраница(k)).map(function(k){
       return '<url><loc>'+SITE_URL+'/'+k+'</loc><changefreq>daily</changefreq><priority>0.7</priority></url>';
