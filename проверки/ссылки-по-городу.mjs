@@ -22,11 +22,14 @@ const открывается = async а => { if (!открытые.has(а)) от
 
 console.log('\n=== «Ещё по городу» ===');
 for (const [п, нужны] of [
-  ['/minsk', ['/minsk-nedorogo', '/kvartiry-bez-posrednikov', '/minsk-odnokomnatnye', '/minsk-centr', '/minsk-vokzal', '/doma-na-sutki-pod-minskom', '/gde-ostanovitsya-minsk', '/chto-posmotret-minsk']],
+  ['/minsk', ['/minsk-nedorogo', '/kvartiry-bez-posrednikov', '/minsk-odnokomnatnye', '/minsk-centr', '/minsk-vokzal', '/minsk-zavodskoj', '/doma-na-sutki-pod-minskom', '/gde-ostanovitsya-minsk', '/chto-posmotret-minsk']],
+  // однокомнатные 06.10: Могилёв, Витебск, Молодечно
+  ['/mogilev', ['/mogilev-nedorogo', '/mogilev-odnokomnatnye', '/chto-posmotret-mogilev']],
+  ['/vitebsk', ['/vitebsk-nedorogo', '/vitebsk-odnokomnatnye', '/chto-posmotret-vitebsk']],
+  ['/molodechno', ['/molodechno-odnokomnatnye']],
   ['/grodno', ['/grodno-nedorogo', '/grodno-usadby', '/grodno-kottedzhi', '/grodno-odnokomnatnye', '/gde-ostanovitsya-grodno', '/chto-posmotret-grodno']],
   ['/brest-nedorogo', ['/brest', '/brest-usadby', '/brest-kottedzhi', '/brest-odnokomnatnye', '/gde-ostanovitsya-brest', '/chto-posmotret-brest']],
-  ['/minsk-obl', ['/minsk-obl-nedorogo', '/minsk-obl-usadby', '/minsk-obl-kottedzhi', '/doma-na-sutki-pod-minskom']],
-  ['/lida', ['/gde-ostanovitsya-lida']],
+  ['/minsk-obl', ['/minsk-obl-nedorogo', '/minsk-obl-usadby', '/minsk-obl-kottedzhi', '/doma-na-sutki-pod-minskom']],  ['/lida', ['/gde-ostanovitsya-lida']],
 ]) {
   const { код, html } = await стр(п);
   const есть = блокЕщё(html);
@@ -85,7 +88,9 @@ console.log('\n=== sitemap.xml ===');
   check('у каждого адреса lastmod ГГГГ-ММ-ДД (' + адреса.length + ')', адреса.length > 100 && !безДаты.length, безДаты.slice(0, 3).join(' | '));
   const будущее = адреса.filter(а => ((а.match(/<lastmod>([^<]+)/) || [])[1] || '') > сегодня);
   check('lastmod не из будущего', !будущее.length, будущее.slice(0, 2).join(' | '));
-  for (const п of ['/goroda', '/doma-na-sutki', '/kvartiry-nedorogo', '/dostoprimechatelnosti-belarusi'])
+  for (const п of ['/goroda', '/doma-na-sutki', '/kvartiry-nedorogo', '/dostoprimechatelnosti-belarusi',
+                   '/odnokomnatnye', '/mogilev-odnokomnatnye', '/vitebsk-odnokomnatnye', '/molodechno-odnokomnatnye',
+                   '/gorki', '/smorgon', '/rechica', '/bereza', '/minsk-zavodskoj'])
     check(п + ' в карте сайта', карта.includes('https://nochy.by' + п + '</loc>'));
 }
 

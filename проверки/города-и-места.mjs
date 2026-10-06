@@ -57,6 +57,18 @@ const недорого = await (await fetch(SITE + '/grodno-nedorogo')).text();
 check('/grodno-nedorogo: заголовок прежний', /<title>Недорогие квартиры на сутки в Гродно до 70 рублей/.test(недорого));
 const карта = await (await fetch(SITE + '/sitemap.xml')).text();
 check('sitemap: /novogrudok и /nesvizh', карта.includes('/novogrudok</loc>') && карта.includes('/nesvizh</loc>'));
+// малые города (06.10): «квартира на сутки горки» 761, «… сморгонь» 358, «… речица» 259, «… береза» 246
+for (const п of ['/gorki', '/smorgon', '/rechica', '/bereza']) {
+  const r = await fetch(SITE + п);
+  const html = await r.text();
+  check(п + ': 200 и в sitemap', r.status === 200 && карта.includes(п + '</loc>'), r.status);
+  const title = раскрыть((html.match(/<title>([^<]*)<\/title>/) || [])[1] || '');
+  const desc = раскрыть((html.match(/<meta name="description" content="([^"]*)"/) || [])[1] || '');
+  check(п + ': title ≤ 60 и про квартиры на сутки, description 120–160', title.length <= 60 && title.startsWith('Квартиры на сутки ') && desc.length >= 120 && desc.length <= 160, title + ' | ' + desc.length);
+  // блок мест — только из справочника и не дальше 30 км, если он есть
+  const карточки = [...html.matchAll(/<a class="pc" href="\/mesto\/(\d+)-[a-z0-9-]+">[\s\S]*?<b>([^<]*)<\/b>[\s\S]*?<span class="pk">([\d,]+) км от центра<\/span>/g)];
+  check(п + ': места рядом — из справочника, ≤ 30 км (' + карточки.length + ')', карточки.every(к => место(к[1]) && место(к[1]).name === раскрыть(к[2]) && +к[3].replace(',', '.') <= 30));
+}
 
 // телефон: блок мест не распирает страницу
 const { закрыть } = запуститьChrome(PORT, 'city');
