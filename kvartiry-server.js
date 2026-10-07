@@ -7490,14 +7490,19 @@ function ссылкаИзКода(код){
   return '';
 }
 
+// Справочники страниц (ГИДЫ, СПРОС, CITY_PAGES…) — обычные объекты, и по адресу /constructor
+// или /toString «находилось» свойство прототипа: страница собиралась из функции и висела
+// (07.10.2026). Адрес ищем только среди собственных ключей — остальное сразу 404.
+function своё(справочник, ключ){ return Object.prototype.hasOwnProperty.call(справочник, ключ); }
+
 // разбираем адрес вида 'brest-usadby' на город и уточнение
 function parseCitySlug(path){
-  if(CITY_PAGES[path]) return { city: path, kind: '' };
+  if(своё(CITY_PAGES, path)) return { city: path, kind: '' };
   for(const k in PAGE_KINDS){
     if(!k) continue;
     if(path.endsWith('-' + k)){
       const city = path.slice(0, -(k.length + 1));
-      if(CITY_PAGES[city]) return { city: city, kind: k };
+      if(своё(CITY_PAGES, city)) return { city: city, kind: k };
     }
   }
   return null;
@@ -10329,7 +10334,7 @@ async function маршрутPage(slug){
 }
 
 async function маршрутСобрать(slug){
-  const м = МАРШРУТ_ПО[slug];
+  const м = своё(МАРШРУТ_ПО, slug) ? МАРШРУТ_ПО[slug] : null;
   if(!м) return '';
   const точки = await маршрутСМестами(м);
   const ид = точки.filter(function(т){ return т.место; }).map(function(т){ return т.место.id; });
@@ -10746,12 +10751,12 @@ function досчитатьСводку(пути){
 // Теми же функциями, что собирают сами страницы — цифры не разъедутся.
 async function посчитатьСводку(путь){
   const slug = путь.slice(1);
-  if(ЧТО_ПОСМОТРЕТЬ[slug]){
+  if(своё(ЧТО_ПОСМОТРЕТЬ, slug)){
     const м = await чтоПосмотретьДанные(ЧТО_ПОСМОТРЕТЬ[slug]);
     запомнитьСводку(путь, м.length >= ЧТО_ПОСМОТРЕТЬ_МИНИМУМ ? м.length : 0, 0);
     return;
   }
-  if(СПРОС[slug]){
+  if(своё(СПРОС, slug)){
     const d = await данныеСпроса(slug);
     if(d.полный || d.total >= СПРОС_МИНИМУМ) запомнитьСводку(путь, d.total, ценаОт(d.items), ценаОбычно(d.items));
     return;
@@ -10765,7 +10770,7 @@ async function посчитатьСводку(путь){
 // Откроется ли страница спроса (не 404) — по уже известным цифрам, без поиска.
 // Не знаем — считаем, что откроется, если она не помечена пустой.
 function спросОткроется(slug){
-  if(!СПРОС[slug] || пустаяСтраница(slug)) return false;
+  if(!своё(СПРОС, slug) || пустаяСтраница(slug)) return false;
   const с = сводкаСтраницы('/' + slug);
   return !с || с.всего >= СПРОС_МИНИМУМ || (СПРОС_С_ГЛАВНОЙ.has(slug) && с.всего > 0);
 }
@@ -10782,7 +10787,7 @@ const СТИЛЬ_ТАБЛИЦЫ = '.t{width:100%;border-collapse:collapse;margin
   +   '.t th{background:#241f1a;color:#c2b7ab}.t td{border-color:#332c25}.t a{color:#e2703a}}';
 
 async function гидPage(slug){
-  const z = ГИДЫ[slug];
+  const z = своё(ГИДЫ, slug) ? ГИДЫ[slug] : null;
   if(!z) return '';
   let d;
   try{ d = await гидДанные(z); }catch(e){ return ''; }
@@ -11303,14 +11308,14 @@ async function данныеСпроса(slug){
 // на неё с других страниц. Те же условия, что в спросPage; запрос к площадкам
 // обычно уже лежит в кэше поиска.
 async function страницаСпросаЕсть(slug){
-  if(!СПРОС[slug] || пустаяСтраница(slug)) return false;
+  if(!своё(СПРОС, slug) || пустаяСтраница(slug)) return false;
   const d = await данныеСпроса(slug);
   return d.total >= СПРОС_МИНИМУМ || (СПРОС_С_ГЛАВНОЙ.has(slug) && d.total > 0);
 }
 
 // Ответ — { html, код, кэш } или '' (тогда 404).
 async function спросPage(slug){
-  const z = СПРОС[slug];
+  const z = своё(СПРОС, slug) ? СПРОС[slug] : null;
   if(!z) return '';
   const d = await данныеСпроса(slug);
   const сГлавной = СПРОС_С_ГЛАВНОЙ.has(slug);
@@ -11783,7 +11788,7 @@ async function чтоПосмотретьДанные(z){
 }
 
 async function чтоПосмотретьPage(slug){
-  const z = ЧТО_ПОСМОТРЕТЬ[slug];
+  const z = своё(ЧТО_ПОСМОТРЕТЬ, slug) ? ЧТО_ПОСМОТРЕТЬ[slug] : null;
   if(!z) return '';
   let места = [];
   try{ места = await чтоПосмотретьДанные(z); }catch(e){ return ''; }
@@ -16789,12 +16794,12 @@ http.createServer(async (req,res)=>{
       const slug = u.searchParams.get('slug') || '';
       // ?limit=n — страница спроса покажет не больше n вариантов; limit=-1 — снять;
       // &polnyj=0 — вдобавок считать, что площадки ответили не все
-      if(СПРОС[slug] && u.searchParams.has('limit')){
+      if(своё(СПРОС, slug) && u.searchParams.has('limit')){
         const n = +u.searchParams.get('limit');
         if(n >= 0) ПРЕДЕЛ_ПРОВЕРКИ.set(slug, n); else ПРЕДЕЛ_ПРОВЕРКИ.delete(slug);
         if(n >= 0 && u.searchParams.get('polnyj') === '0') НЕПОЛНЫЙ_ПРОВЕРКИ.add(slug); else НЕПОЛНЫЙ_ПРОВЕРКИ.delete(slug);
       }
-      else if(ГИДЫ[slug] || СПРОС[slug]) ПУСТЫЕ_СТРАНИЦЫ.set(slug, Date.now() - (+u.searchParams.get('age') || 0));
+      else if(своё(ГИДЫ, slug) || своё(СПРОС, slug)) ПУСТЫЕ_СТРАНИЦЫ.set(slug, Date.now() - (+u.searchParams.get('age') || 0));
     }
     const пометки = {};
     ПУСТЫЕ_СТРАНИЦЫ.forEach(function(t, k){ пометки[k] = Date.now() - t; });
@@ -16971,7 +16976,7 @@ http.createServer(async (req,res)=>{
   }
   // страницы под поиск: /minsk, /brest, /minsk-nedorogo, /brest-usadby …
   // Готовые маршруты: что посмотреть по дороге.
-  if(МАРШРУТ_ПО[u.pathname.slice(1)]){
+  if(своё(МАРШРУТ_ПО, u.pathname.slice(1))){
     const html = await маршрутPage(u.pathname.slice(1));
     if(html){
       res.writeHead(200, {'Content-Type':'text/html; charset=utf-8',
@@ -16995,7 +17000,7 @@ http.createServer(async (req,res)=>{
     }catch(e){ res.writeHead(404); res.end(); return; }
   }
   // Гиды «где остановиться»: отвечают на вопрос до выбора квартиры.
-  if(ГИДЫ[u.pathname.slice(1)]){
+  if(своё(ГИДЫ, u.pathname.slice(1))){
     const html = await гидPage(u.pathname.slice(1));
     if(html){
       res.writeHead(200, {'Content-Type':'text/html; charset=utf-8',
@@ -17035,7 +17040,7 @@ http.createServer(async (req,res)=>{
     res.end('Страница собирается, загляните через минуту'); return;
   }
   // «Что посмотреть в Гродно / Минске»
-  if(ЧТО_ПОСМОТРЕТЬ[u.pathname.slice(1)]){
+  if(своё(ЧТО_ПОСМОТРЕТЬ, u.pathname.slice(1))){
     let html = '';
     try{ html = await чтоПосмотретьPage(u.pathname.slice(1)); }catch(e){ console.error('что посмотреть:', e.message); }
     if(html){
@@ -17046,7 +17051,7 @@ http.createServer(async (req,res)=>{
   }
   // Страницы под живой поисковый спрос: районные города, районы Минска,
   // курортные места. Отдаём их раньше городских — пересечений по адресам нет.
-  if(СПРОС[u.pathname.slice(1)]){
+  if(своё(СПРОС, u.pathname.slice(1))){
     const стр = await спросPage(u.pathname.slice(1));
     if(стр){
       const заголовки = {'Content-Type':'text/html; charset=utf-8', 'Cache-Control': стр.кэш};
@@ -17058,7 +17063,7 @@ http.createServer(async (req,res)=>{
     // наполнить нечем — пусть будет честное «нет такой страницы»
   }
   // В черте Минска агроусадеб и домов почти нет — эти адреса переехали насовсем
-  if(ПЕРЕЕХАЛИ[u.pathname.slice(1)]){
+  if(своё(ПЕРЕЕХАЛИ, u.pathname.slice(1))){
     res.writeHead(301, { 'Location': ПЕРЕЕХАЛИ[u.pathname.slice(1)] }); res.end(); return;
   }
   const cityHit = parseCitySlug(u.pathname.slice(1));

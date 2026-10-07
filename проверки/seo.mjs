@@ -354,6 +354,19 @@ await служебная('/m/net-takogo', '404 маршрута');
 await служебная('/podborka/net-takoy', '404 подборки');
 await служебная('/izbrannoe?s=k1', 'подборка избранного по ссылке');
 
+// Имена из Object.prototype — не страницы. Справочники страниц — обычные объекты,
+// и /constructor «находился» среди гидов: сборка из функции висела больше двух минут
+// (07.10.2026). Должен быть обычный 404, и сразу.
+for (const путь of ['/constructor', '/toString', '/__proto__', '/hasOwnProperty', '/valueOf',
+                    '/podborka/constructor', '/m/toString', '/constructor-nedorogo']) {
+  проверено++;
+  const начало = Date.now();
+  let код = 0;
+  try { код = (await fetch(SITE + путь, { redirect: 'manual', signal: AbortSignal.timeout(10000) })).status; } catch (e) { код = 0; }
+  const мс = Date.now() - начало;
+  if (код !== 404 || мс > 3000) нарушение(путь, 'имя из Object.prototype: ждали 404 быстрее 3 с, а код ' + код + ' за ' + мс + ' мс');
+}
+
 // ── итог ─────────────────────────────────────────────────────────────────
 const поТипуСчёт = Object.entries(поТипам).map(([т, с]) => т + ' ' + с.length).join(', ');
 console.log('Страниц по типам: ' + поТипуСчёт);
