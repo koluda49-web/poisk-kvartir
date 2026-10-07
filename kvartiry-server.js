@@ -15961,6 +15961,10 @@ http.createServer(async (req,res)=>{
     res.end(); return;
   }
   if(МЕТРИКА_ВКЛ && !БЕЗ_МЕТРИКИ.has(u.pathname)) метрикаВОтвет(res);
+  // Служебные адреса для скриптов страниц: Google находит их в коде (/api/place?id=…)
+  // и записывает в «ошибки 4xx». Закрывать в robots.txt нельзя — тогда робот не увидит
+  // данные при отрисовке страниц; поэтому только просим не индексировать сами ответы.
+  if(u.pathname.indexOf('/api/') === 0) res.setHeader('X-Robots-Tag', 'noindex');
   if(u.pathname === '/api/search'){
     const data = await runSearchQuery(u.searchParams);
     res.writeHead(200, {'Content-Type':'application/json; charset=utf-8'});
