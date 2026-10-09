@@ -22,12 +22,13 @@ const открывается = async а => { if (!открытые.has(а)) от
 
 console.log('\n=== «Ещё по городу» ===');
 for (const [п, нужны] of [
-  ['/minsk', ['/minsk-nedorogo', '/kvartiry-bez-posrednikov', '/minsk-odnokomnatnye', '/minsk-centr', '/minsk-vokzal', '/minsk-zavodskoj', '/doma-na-sutki-pod-minskom', '/gde-ostanovitsya-minsk', '/chto-posmotret-minsk']],
+  ['/minsk', ['/minsk-nedorogo', '/kvartiry-bez-posrednikov', '/minsk-odnokomnatnye', '/minsk-dvuhkomnatnye', '/minsk-centr', '/minsk-vokzal', '/minsk-zavodskoj', '/doma-na-sutki-pod-minskom', '/gde-ostanovitsya-minsk', '/chto-posmotret-minsk']],
   // однокомнатные 06.10: Могилёв, Витебск, Молодечно
-  ['/mogilev', ['/mogilev-nedorogo', '/mogilev-odnokomnatnye', '/chto-posmotret-mogilev']],
+  // двухкомнатные 09.10: Минск, Могилёв, Гродно
+  ['/mogilev', ['/mogilev-nedorogo', '/mogilev-odnokomnatnye', '/mogilev-dvuhkomnatnye', '/chto-posmotret-mogilev']],
   ['/vitebsk', ['/vitebsk-nedorogo', '/vitebsk-odnokomnatnye', '/chto-posmotret-vitebsk']],
   ['/molodechno', ['/molodechno-odnokomnatnye']],
-  ['/grodno', ['/grodno-nedorogo', '/grodno-usadby', '/grodno-kottedzhi', '/grodno-odnokomnatnye', '/gde-ostanovitsya-grodno', '/chto-posmotret-grodno']],
+  ['/grodno', ['/grodno-nedorogo', '/grodno-usadby', '/grodno-kottedzhi', '/grodno-odnokomnatnye', '/grodno-dvuhkomnatnye', '/gde-ostanovitsya-grodno', '/chto-posmotret-grodno']],
   ['/brest-nedorogo', ['/brest', '/brest-usadby', '/brest-kottedzhi', '/brest-odnokomnatnye', '/gde-ostanovitsya-brest', '/chto-posmotret-brest']],
   ['/minsk-obl', ['/minsk-obl-nedorogo', '/minsk-obl-usadby', '/minsk-obl-kottedzhi', '/doma-na-sutki-pod-minskom']],  ['/lida', ['/gde-ostanovitsya-lida']],
 ]) {
@@ -90,7 +91,8 @@ console.log('\n=== sitemap.xml ===');
   check('lastmod не из будущего', !будущее.length, будущее.slice(0, 2).join(' | '));
   for (const п of ['/goroda', '/doma-na-sutki', '/kvartiry-nedorogo', '/dostoprimechatelnosti-belarusi',
                    '/odnokomnatnye', '/mogilev-odnokomnatnye', '/vitebsk-odnokomnatnye', '/molodechno-odnokomnatnye',
-                   '/gorki', '/smorgon', '/rechica', '/bereza', '/minsk-zavodskoj'])
+                   '/gorki', '/smorgon', '/rechica', '/bereza', '/minsk-zavodskoj',
+                   '/dvuhkomnatnye', '/minsk-dvuhkomnatnye', '/mogilev-dvuhkomnatnye', '/grodno-dvuhkomnatnye'])
     check(п + ' в карте сайта', карта.includes('https://nochy.by' + п + '</loc>'));
 }
 
