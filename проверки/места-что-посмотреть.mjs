@@ -20,6 +20,13 @@
 //     обхода (шаг — расстояние по прямой), «пешком» — только если все не дальше 3 км друг от друга;
 //     ссылка «Открыть план на карте» — /marshrut?p=…&o=1 с теми же точками в том же порядке.
 //
+// 11.10.2026, вечер: справочник пополнен для районных городов — свои точки 910161–910213 (описания по
+// ru/be.wikipedia, снимки Викисклада с автором и лицензией, координаты по OSM) и правки 14 точек kudin
+// (имена и тексты). Страницы «что посмотреть» заведены у Лиды, Пинска, Бобруйска, Барановичей, Орши,
+// Несвижа, Новогрудка и Молодечно (8–12 мест); Борисов (5) и Мозырь (7) — по-прежнему 404 и не в sitemap.
+// Проверяем точки (в 15 км от своего города, описание, снимок, источник, не военное, без дублей),
+// правки, страницы (h1, title, description, ≥ 8 мест, sitemap, хаб, страница города, «где остановиться»).
+//
 //   node проверки/места-что-посмотреть.mjs http://127.0.0.1:9676
 import { readFileSync } from 'node:fs';
 
@@ -32,6 +39,24 @@ const ГОРОДА = [
   ['Полоцк',  910153, 910160, [55.4850, 28.7860], 6],
 ];
 const ПЕРВЫЙ = 910121, ПОСЛЕДНИЙ = 910160, ЧИСЛО = ПОСЛЕДНИЙ - ПЕРВЫЙ + 1;
+
+// [город, первый id, последний id, slug, центр, h1 (пусто — страницы нет), достопримечательности, есть /gde-ostanovitsya-, область]
+const РАЙОННЫЕ = [
+  ['Лида',       910161, 910165, 'lida',        [53.8880, 25.2990], 'Что посмотреть в Лиде',            false, true,  'grodnenskaya-oblast'],
+  ['Пинск',      910166, 910170, 'pinsk',       [52.1211, 26.0966], 'Что посмотреть в Пинске',          false, true,  'brestskaya-oblast'],
+  ['Бобруйск',   910171, 910175, 'bobruisk',    [53.1450, 29.2240], 'Достопримечательности Бобруйска',  true,  true,  'mogilevskaya-oblast'],
+  ['Барановичи', 910176, 910179, 'baranovichi', [53.1327, 26.0139], 'Что посмотреть в Барановичах',     false, true,  'brestskaya-oblast'],
+  ['Орша',       910180, 910186, 'orsha',       [54.5090, 30.4250], 'Что посмотреть в Орше',            false, false, 'vitebskaya-oblast'],
+  ['Несвиж',     910187, 910189, 'nesvizh',     [53.2226, 26.6739], 'Что посмотреть в Несвиже',         false, false, 'minskaya-oblast'],
+  ['Новогрудок', 910190, 910195, 'novogrudok',  [53.6000, 25.8280], 'Достопримечательности Новогрудка', true,  false, 'grodnenskaya-oblast'],
+  ['Борисов',    910196, 910200, 'borisov',     [54.2260, 28.5050], '',                                 false, false, 'minskaya-oblast'],
+  ['Мозырь',     910201, 910205, 'mozyr',       [52.0490, 29.2450], '',                                 false, false, 'gomelskaya-oblast'],
+  ['Молодечно',  910206, 910213, 'molodechno',  [54.3120, 26.8490], 'Что посмотреть в Молодечно',       false, false, 'minskaya-oblast'],
+];
+const ПЕРВЫЙ2 = 910161, ПОСЛЕДНИЙ2 = 910213;
+// правки точек kudin с новым текстом: [id, что должно быть в описании]
+const ПРАВКИ2 = [[5029, /Маврос/], [5275, /1875/], [4989, /Плятер/], [312, /1913–1917/], [313, /Мокшицк/],
+                 [4416, /бенедиктинок/], [4987, /Заушье|Рыбоньк/], [5049, /Обуховичей/]];
 
 let failed = 0, passed = 0;
 const check = (n, ok, d) => ok ? (passed++, console.log('  OK   ' + n)) : (failed++, console.log('  ПАДАЕТ ' + n + (d ? '  — ' + d : '')));
@@ -145,7 +170,8 @@ console.log('\n=== /chto-posmotret-zaslavl (11.10) ===');
   check(п + ': ссылка с хаба «Достопримечательности Беларуси»', (await текст('/dostoprimechatelnosti-belarusi')).html.includes('href="' + п + '"'));
   check(п + ': ссылка со страницы жилья /minskoe-more', (await текст('/minskoe-more')).html.includes('href="' + п + '"'));
 }
-for (const г of ['lida', 'pinsk', 'bobruisk', 'baranovichi', 'orsha', 'nesvizh', 'novogrudok', 'borisov', 'mozyr', 'molodechno']) {
+// 11.10, вечер: после пополнения справочника страницы есть у восьми из десяти — см. раздел «районные города»
+for (const г of ['borisov', 'mozyr']) {
   const п = '/chto-posmotret-' + г;
   check(п + ': не заведена (мест меньше восьми) — 404 и не в sitemap', (await текст(п)).код === 404 && !карта.includes(п + '</loc>'));
 }
@@ -187,6 +213,89 @@ for (const [г, где] of [['minsk', 'в Минске'], ['grodno', 'в Гро�
       && /Брестская крепость — в [\d,]+ км от центра/.test(блок));
     // «братская церковь» — храм, а не братская могила: фильтр военного её больше не выкидывает
     check(п + ': в плане Свято-Николаевская братская церковь (910099)', точки.some(x => x.id === '910099'));
+  }
+}
+
+// ── Районные города (11.10): свои точки ПЕРВЫЙ2–ПОСЛЕДНИЙ2, правки точек справочника и страницы ──
+console.log('\n=== районные города: новые точки ' + ПЕРВЫЙ2 + '–' + ПОСЛЕДНИЙ2 + ' ===');
+{
+  const ист2 = JSON.parse(readFileSync(new URL('../источники-описаний.json', import.meta.url), 'utf8'));
+  const все2 = (await json('/api/places?light=1')).items || [];
+  const номера = Array.from({ length: ПОСЛЕДНИЙ2 - ПЕРВЫЙ2 + 1 }, (_, i) => ПЕРВЫЙ2 + i);
+  const новые2 = все2.filter(p => p.id >= ПЕРВЫЙ2 && p.id <= ПОСЛЕДНИЙ2);
+  check('все ' + номера.length + ' точек в списке', новые2.length === номера.length, 'нет: ' + номера.filter(id => !новые2.some(p => p.id === id)).join(', '));
+  check('за ними нет лишних id до 920000', !все2.some(p => p.id > ПОСЛЕДНИЙ2 && p.id < 920000), все2.filter(p => p.id > ПОСЛЕДНИЙ2 && p.id < 920000).map(p => p.id).join(', '));
+  for (const [город, с, по, , центр] of РАЙОННЫЕ) {
+    if (!с) continue;
+    const свои = новые2.filter(p => p.id >= с && p.id <= по);
+    const далеко = свои.filter(p => км(центр, [p.lat, p.lng]) > 15);
+    check(город + ': ' + (по - с + 1) + ' точек, все в 15 км от центра', свои.length === по - с + 1 && !далеко.length,
+          далеко.map(p => p.id + ' ' + км(центр, [p.lat, p.lng]).toFixed(1) + ' км').join('; '));
+  }
+  check('названия не совпадают с другими точками', новые2.every(н => !все2.some(p => p.id !== н.id && p.name.trim().toLowerCase() === н.name.trim().toLowerCase())),
+        новые2.filter(н => все2.some(p => p.id !== н.id && p.name.trim().toLowerCase() === н.name.trim().toLowerCase())).map(p => p.name).join('; '));
+  const рядом2 = новые2.flatMap(н => все2.filter(p => p.id !== н.id && км([н.lat, н.lng], [p.lat, p.lng]) < 0.03).map(p => н.id + '~' + p.id));
+  check('нет другой точки ближе 30 м (дубля)', !рядом2.length, рядом2.join(', '));
+  const безИсточника2 = номера.concat(ПРАВКИ2.map(x => x[0]))
+    .filter(id => !ист2.some(x => x.id === id && /^https:\/\/(ru|be)\.wikipedia\.org\/wiki\/[^%]+$/.test(x.src)));
+  check('у новых точек и правок источник — статья Википедии, адрес кириллицей', !безИсточника2.length, безИсточника2.join(', '));
+  for (const id of номера) {
+    const p = await json('/api/place?id=' + id);
+    const т = p.text || '', имя = id + ' «' + (p.name || '').slice(0, 34) + '»';
+    const pics = p.pics || [];
+    const л = полные.get(String(id));
+    check(имя + ': описание 150+ знаков без «флаг», снимок Викисклада с автором и лицензией, не военное',
+          т.length >= 150 && !/флаг/i.test(т) && /^https:\/\/(thumb|upload)\.wikimedia\.org\//.test(pics[0] || '')
+          && !!(p.cred && p.cred.author && /^(CC|Public domain)/i.test(p.cred.lic || '')) && !военное(л) && !/памятник/i.test((л || {}).cat || ''),
+          'знаков ' + т.length + ' ' + (pics[0] || 'нет снимка').slice(0, 50) + ' ' + JSON.stringify(p.cred || {}));
+    const стр = await текст('/mesto/' + id);
+    check(имя + ': /mesto открывается и подписывает автора снимка', стр.код === 200 && !!p.cred && стр.html.includes(p.cred.lic), 'код ' + стр.код);
+  }
+  for (const [id, вТексте] of ПРАВКИ2) {
+    const p = await json('/api/place?id=' + id);
+    check('правка ' + id + ' «' + (p.name || '').slice(0, 34) + '»: описание из правки, есть снимок', вТексте.test(p.text || '') && (p.pics || []).length > 0,
+          String(p.text || '').slice(0, 70));
+  }
+}
+
+console.log('\n=== «Что посмотреть» в районных городах (11.10) ===');
+const хаб = (await текст('/dostoprimechatelnosti-belarusi')).html;
+for (const [город, , , slug, центр, h1, достоп, гид, область] of РАЙОННЫЕ) {
+  const п = '/chto-posmotret-' + slug;
+  const { код, html } = await текст(п);
+  if (!h1) {
+    check(п + ': не заведена (мест меньше восьми) — 404, не в sitemap и не на хабе', код === 404 && !карта.includes(п + '</loc>') && !хаб.includes('href="' + п + '"'), 'код ' + код);
+    continue;
+  }
+  check(п + ' открывается (200)', код === 200, 'код ' + код);
+  if (код !== 200) continue;
+  const заг = раскрыть((html.match(/<h1>([^<]*)<\/h1>/) || [])[1] || '');
+  check(п + ': h1 «' + h1 + '»', заг === h1, заг);
+  const м = сетка(html), n = м.length;
+  const мест = n + ' ' + (n % 10 === 1 && n % 100 !== 11 ? 'место' : (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20)) ? 'места' : 'мест');
+  const t = раскрыть((html.match(/<title>([^<]*)<\/title>/) || [])[1] || '');
+  check(п + ': title с числом мест (≤ 60)', t.length <= 60 && t.startsWith(h1) && t.includes(мест) && (!достоп || t.includes('что посмотреть')), t);
+  const d = раскрыть((html.match(/<meta name="description" content="([^"]*)"/) || [])[1] || '');
+  check(п + ': description 120–160', d.length >= 120 && d.length <= 160, d.length + ' ' + d);
+  check(п + ': не меньше 8 мест, у всех фото и описание', n >= 8 && (html.match(/<p class="t">[^<]{60,}/g) || []).length === n
+    && html.split('<article class="c">').slice(1).every(к => /<img src="[^"]+"/.test(к)), 'мест ' + n);
+  const далеко = м.filter(x => км(центр, [полные.get(x.id).lat, полные.get(x.id).lng]) > 15.05);
+  check(п + ': все не дальше 15 км от центра', !далеко.length, далеко.map(x => x.имя).join(', '));
+  const плохие = м.filter(x => военное(полные.get(x.id)));
+  check(п + ': нет военных объектов, мемориалов, памятников и кладбищ', !плохие.length, плохие.map(x => x.имя).join(', '));
+  const сВикисклада = (html.match(/<img src="https:\/\/(thumb|upload)\.wikimedia\.org/g) || []).length;
+  check(п + ': у фото с Викисклада подписан автор и лицензия', сВикисклада === (html.match(/class="cr">Фото:/g) || []).length, 'фото ' + сВикисклада);
+  for (const x of [м[0], м[n - 1]].filter(Boolean)) check('  /mesto/' + x.id + ' открывается', (await текст('/mesto/' + x.id)).код === 200);
+  check(п + ' в sitemap', карта.includes('<loc>https://nochy.by' + п + '</loc>'));
+  check(п + ': ссылка с хаба «Достопримечательности Беларуси»', хаб.includes('href="' + п + '"'));
+  check(п + ': ссылка на «Достопримечательности ' + область + '»', html.includes('href="/chto-posmotret-' + область + '"'));
+  const город_ = await текст('/' + slug);
+  check(п + ': ссылка со страницы /' + slug + ' (если она открыта)', город_.код !== 200 || город_.html.includes('href="' + п + '"'), 'код ' + город_.код);
+  const ещё = (город_.html.split('<h2>Ещё по городу</h2>')[1] || '').split('</div>')[0];
+  check(п + ': в «Ещё по городу» на /' + slug, город_.код !== 200 || ещё.includes('href="' + п + '"'), 'код ' + город_.код);
+  if (гид) {
+    const г = await текст('/gde-ostanovitsya-' + slug);
+    check(п + ': ссылка с /gde-ostanovitsya-' + slug, г.код !== 200 || г.html.includes('href="' + п + '"'), 'код ' + г.код);
   }
 }
 

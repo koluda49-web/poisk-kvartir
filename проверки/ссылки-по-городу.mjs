@@ -93,7 +93,9 @@ const факты = h => (h.split('<div class="facts">')[1] || '').split('</div>'
 const ближнее = (ц, r) => места.filter(p => км(ц[0], ц[1], p.lat, p.lng) <= r)[0];
 for (const [город, ц, жильё, гид] of [['Минск', [53.9020, 27.5615], '/minsk', '/chto-posmotret-minsk'],
                                        ['Гродно', [53.6690, 23.8130], '/grodno', '/chto-posmotret-grodno'],
-                                       ['Лида', [53.8880, 25.2990], '/lida', null]]) {
+                                       // 11.10: у Лиды страница «что посмотреть» появилась, у Мозыря (7 мест) её нет
+                                       ['Лида', [53.8880, 25.2990], '/lida', '/chto-posmotret-lida'],
+                                       ['Мозырь', [52.0490, 29.2450], '/mozyr', null]]) {
   const p = ближнее(ц, 2);
   if (!p) { check('есть место в центре: ' + город, false); continue; }
   const { код, html } = await стр('/mesto/' + p.id);

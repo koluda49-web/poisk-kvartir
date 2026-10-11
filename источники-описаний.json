@@ -173,7 +173,7 @@
   },
   {
     "id": 4416,
-    "src": "https://ru.wikipedia.org/wiki/Слуцкая_брама"
+    "src": "https://ru.wikipedia.org/wiki/Костёл_Святой_Евфимии_и_монастырь_бенедиктинок_(Несвиж)"
   },
   {
     "id": 4419,
@@ -417,7 +417,7 @@
   },
   {
     "id": 4989,
-    "src": "https://be.wikipedia.org/wiki/Палацава-паркавы_ансамбль_Плятэраў_(Заполле)"
+    "src": "https://ru.wikipedia.org/wiki/Заполье_(Пинский_район)"
   },
   {
     "id": 4995,
@@ -753,7 +753,7 @@
   },
   {
     "id": 5275,
-    "src": "https://be.wikipedia.org/wiki/Свята-Троіцкая_царква_(Месткавічы)"
+    "src": "https://ru.wikipedia.org/wiki/Местковичи_(Брестская_область)"
   },
   {
     "id": 5276,
@@ -1454,5 +1454,237 @@
   {
     "id": 910160,
     "src": "https://ru.wikipedia.org/wiki/Памятник_Франциску_Скорине_(Полоцк)"
+  },
+  {
+    "id": 910161,
+    "src": "https://ru.wikipedia.org/wiki/Церковь_Воздвижения_Святого_Креста_(Лида)"
+  },
+  {
+    "id": 910162,
+    "src": "https://ru.wikipedia.org/wiki/Михайловский_собор_(Лида)"
+  },
+  {
+    "id": 910163,
+    "src": "https://be.wikipedia.org/wiki/Царква_Усіх_Святых_(Ліда)"
+  },
+  {
+    "id": 910164,
+    "src": "https://be.wikipedia.org/wiki/Касцёл_Беззаганнага_Зачацця_Найсвяцейшай_Дзевы_Марыі_(Ліда)"
+  },
+  {
+    "id": 910165,
+    "src": "https://ru.wikipedia.org/wiki/Тарново_(Гродненская_область)"
+  },
+  {
+    "id": 910166,
+    "src": "https://ru.wikipedia.org/wiki/Дворец_Бутримовича"
+  },
+  {
+    "id": 910167,
+    "src": "https://ru.wikipedia.org/wiki/Свято-Варваринский_собор_(Пинск)"
+  },
+  {
+    "id": 910168,
+    "src": "https://ru.wikipedia.org/wiki/Церковь_Святого_Карла_Борромео_(Пинск)"
+  },
+  {
+    "id": 910169,
+    "src": "https://be.wikipedia.org/wiki/Вуліца_Леніна_(Пінск)"
+  },
+  {
+    "id": 910170,
+    "src": "https://ru.wikipedia.org/wiki/Купятичи"
+  },
+  {
+    "id": 910171,
+    "src": "https://ru.wikipedia.org/wiki/Свято-Никольский_собор_(Бобруйск)"
+  },
+  {
+    "id": 910172,
+    "src": "https://ru.wikipedia.org/wiki/Свято-Георгиевский_храм_(Бобруйск)"
+  },
+  {
+    "id": 910173,
+    "src": "https://ru.wikipedia.org/wiki/Бобруйская_синагога"
+  },
+  {
+    "id": 910174,
+    "src": "https://ru.wikipedia.org/wiki/Храм_Пророка_Илии_(Бобруйск)"
+  },
+  {
+    "id": 910175,
+    "src": "https://ru.wikipedia.org/wiki/Славянская_гимназия"
+  },
+  {
+    "id": 910176,
+    "src": "https://ru.wikipedia.org/wiki/Покровский_собор_(Барановичи)"
+  },
+  {
+    "id": 910177,
+    "src": "https://ru.wikipedia.org/wiki/Крестовоздвиженский_костёл_(Барановичи)"
+  },
+  {
+    "id": 910178,
+    "src": "https://ru.wikipedia.org/wiki/Барановичский_музей_железнодорожной_техники"
+  },
+  {
+    "id": 910179,
+    "src": "https://ru.wikipedia.org/wiki/Преображенская_церковь_(Новая_Мышь)"
+  },
+  {
+    "id": 910180,
+    "src": "https://ru.wikipedia.org/wiki/Богоявленский_Кутеинский_монастырь"
+  },
+  {
+    "id": 910181,
+    "src": "https://ru.wikipedia.org/wiki/Церковь_Святого_Иосифа_Обручника_(Орша)"
+  },
+  {
+    "id": 910182,
+    "src": "https://ru.wikipedia.org/wiki/Ильинская_церковь_(Орша)"
+  },
+  {
+    "id": 910183,
+    "src": "https://ru.wikipedia.org/wiki/Оршанский_детинец"
+  },
+  {
+    "id": 910184,
+    "src": "https://be.wikipedia.org/wiki/Свята-Раства-Багародзіцкая_царква_(Орша)"
+  },
+  {
+    "id": 910185,
+    "src": "https://ru.wikipedia.org/wiki/Музей_Владимира_Короткевича"
+  },
+  {
+    "id": 910186,
+    "src": "https://be.wikipedia.org/wiki/Манастыр_базыльян_(Орша)"
+  },
+  {
+    "id": 910187,
+    "src": "https://ru.wikipedia.org/wiki/Дом_ремесленника_(Несвиж)"
+  },
+  {
+    "id": 910188,
+    "src": "https://ru.wikipedia.org/wiki/Плебания_(Несвиж)"
+  },
+  {
+    "id": 910189,
+    "src": "https://ru.wikipedia.org/wiki/Альба_(Минская_область)"
+  },
+  {
+    "id": 910190,
+    "src": "https://ru.wikipedia.org/wiki/Дом-музей_Адама_Мицкевича"
+  },
+  {
+    "id": 910191,
+    "src": "https://ru.wikipedia.org/wiki/Борисоглебская_церковь_(Новогрудок)"
+  },
+  {
+    "id": 910192,
+    "src": "https://ru.wikipedia.org/wiki/Свято-Никольский_собор_(Новогрудок)"
+  },
+  {
+    "id": 910193,
+    "src": "https://ru.wikipedia.org/wiki/Церковь_Михаила_Архангела_(Новогрудок)"
+  },
+  {
+    "id": 910194,
+    "src": "https://ru.wikipedia.org/wiki/Новогрудская_мечеть"
+  },
+  {
+    "id": 910195,
+    "src": "https://ru.wikipedia.org/wiki/Торговые_ряды_(Новогрудок)"
+  },
+  {
+    "id": 910196,
+    "src": "https://ru.wikipedia.org/wiki/Воскресенский_собор_(Борисов)"
+  },
+  {
+    "id": 910197,
+    "src": "https://ru.wikipedia.org/wiki/Костёл_Рождества_Пресвятой_Девы_Марии_(Борисов)"
+  },
+  {
+    "id": 910198,
+    "src": "https://be.wikipedia.org/wiki/Сінагога_«Хеўрэ_тылім»"
+  },
+  {
+    "id": 910199,
+    "src": "https://be.wikipedia.org/wiki/Будынак_чыгуначнага_вакзала_(Барысаў)"
+  },
+  {
+    "id": 910200,
+    "src": "https://ru.wikipedia.org/wiki/Старо-Борисов"
+  },
+  {
+    "id": 910201,
+    "src": "https://ru.wikipedia.org/wiki/Мозырский_замок"
+  },
+  {
+    "id": 910202,
+    "src": "https://ru.wikipedia.org/wiki/Мозырские_овраги"
+  },
+  {
+    "id": 910203,
+    "src": "https://be.wikipedia.org/wiki/Дом_культуры_(Мазыр)"
+  },
+  {
+    "id": 910204,
+    "src": "https://be.wikipedia.org/wiki/Свята-Мікалаеўская_царква_(Мазыр)"
+  },
+  {
+    "id": 910205,
+    "src": "https://be.wikipedia.org/wiki/Камсамольская_вуліца_(Мазыр)"
+  },
+  {
+    "id": 910206,
+    "src": "https://ru.wikipedia.org/wiki/Свято-Покровская_церковь_(Молодечно)"
+  },
+  {
+    "id": 910207,
+    "src": "https://ru.wikipedia.org/wiki/Молодечно_(станция)"
+  },
+  {
+    "id": 910208,
+    "src": "https://ru.wikipedia.org/wiki/Молодечненский_замок"
+  },
+  {
+    "id": 910209,
+    "src": "https://ru.wikipedia.org/wiki/Минский_областной_краеведческий_музей"
+  },
+  {
+    "id": 910210,
+    "src": "https://be.wikipedia.org/wiki/Свята-Троіцкая_царква_(Лебедзева)"
+  },
+  {
+    "id": 910211,
+    "src": "https://be.wikipedia.org/wiki/Царква_Рызапалажэння_Прасвятой_Багародзіцы_(Груздава)"
+  },
+  {
+    "id": 910212,
+    "src": "https://be.wikipedia.org/wiki/Царква_Раства_Багародзіцы_(Палачаны)"
+  },
+  {
+    "id": 910213,
+    "src": "https://be.wikipedia.org/wiki/Лешна_(крыніца)"
+  },
+  {
+    "id": 5029,
+    "src": "https://ru.wikipedia.org/wiki/Тарново_(Гродненская_область)"
+  },
+  {
+    "id": 312,
+    "src": "https://ru.wikipedia.org/wiki/Высокое_(агрогородок,_Оршанский_район)"
+  },
+  {
+    "id": 313,
+    "src": "https://ru.wikipedia.org/wiki/Высокое_(посёлок,_Оршанский_район)"
+  },
+  {
+    "id": 4987,
+    "src": "https://ru.wikipedia.org/wiki/Заушье_(Минская_область)"
+  },
+  {
+    "id": 5049,
+    "src": "https://ru.wikipedia.org/wiki/Великая_Липа"
   }
 ]

@@ -149,8 +149,12 @@ console.log('\n=== /dostoprimechatelnosti-belarusi ===');
   check(п + ': кнопка «Все места на карте» → /?country=places', html.includes('<a class="cta" href="/?country=places">Все места на карте →</a>'));
   // «что посмотреть» по городам — с тем же числом мест, что на страницах
   const города = [...html.matchAll(/<a href="\/(chto-posmotret-[a-z]+)">Что посмотреть [^<]+ <small>(\d+) мест[аоы]?<\/small><\/a>/g)].map(м => ({ slug: м[1], n: +м[2] }));
-  // 11.10: восьмая — Заславль (у остальных районных городов из плана мест с фото и описанием меньше восьми)
-  check(п + ': все восемь «что посмотреть» с числом мест (с Заславлем)', города.length === 8 && города.some(x => x.slug === 'chto-posmotret-zaslavl'),
+  // 11.10: восьмая — Заславль; вечером справочник пополнили, и добавились Лида, Пинск, Бобруйск, Барановичи,
+  // Орша, Несвиж, Новогрудок и Молодечно — всего шестнадцать. У Борисова и Мозыря мест меньше восьми — их нет.
+  const районные = ['zaslavl', 'lida', 'pinsk', 'bobruisk', 'baranovichi', 'orsha', 'nesvizh', 'novogrudok', 'molodechno'].map(г => 'chto-posmotret-' + г);
+  check(п + ': все шестнадцать «что посмотреть» с числом мест (с Заславлем и районными городами, без Борисова и Мозыря)',
+    города.length === 16 && районные.every(к => города.some(x => x.slug === к))
+    && !города.some(x => /chto-posmotret-(borisov|mozyr)$/.test(x.slug)),
     города.map(x => x.slug).join(', '));
   // 11.10: достопримечательности областей — отдельным разделом, все шесть
   const области = ['minskaya', 'mogilevskaya', 'grodnenskaya', 'vitebskaya', 'brestskaya', 'gomelskaya'].map(о => '/chto-posmotret-' + о + '-oblast');
