@@ -247,8 +247,9 @@ for (const [п, где, город] of [['/gorki', 'в Горках', /Горк/
   check(п + ' открывается с h1 «Квартиры на сутки в Заводском районе Минска»', код === 200 && h1(html) === 'Квартиры на сутки в Заводском районе Минска', код + ' ' + h1(html));
   const t = заголовок(html), d = описаниеСтр(html);
   check(п + ': title ≤ 60, description 120–160', t.length <= 60 && t.startsWith('Квартиры на сутки в Заводском районе Минска') && d.length >= 120 && d.length <= 160, t + ' | ' + d.length);
+  // с 11.10 (вечер) отбор по границам района — проверяется вместе с другими районами Минска ниже
+  check(п + ': title прежний «Квартиры на сутки в Заводском районе Минска посуточно»', t === 'Квартиры на сутки в Заводском районе Минска посуточно', t);
   const к = карточки(html);
-  check(п + ': от 5 вариантов, все — Заводской район (Чижовка, Шабаны, Автозаводская)', к.length >= 5 && к.every(x => /заводск|чижовк|шабан/i.test(x.h3 + ' ' + x.мета.join(' '))), 'карточек ' + к.length);
   check(п + ': только квартиры, без домов и усадеб', к.every(x => !/(^|[^а-яё])(усадьб|коттедж)|^дом/i.test(x.h3)), (к.find(x => /(^|[^а-яё])(усадьб|коттедж)|^дом/i.test(x.h3)) || {}).h3);
   check(п + ' в карте сайта', карта.includes(п + '</loc>'));
   check('с /minsk есть ссылка на ' + п, (await стр('/minsk')).html.includes('href="' + п + '"'));
@@ -501,7 +502,9 @@ for (const п of ['/marina-gorka', '/miory']) check(п + ' не заведена
   const минск = (await стр('/minsk')).html;
   for (const [п, имя, где] of [['/minsk-frunzenskij', 'Фрунзенский', 'во Фрунзенском районе Минска'],
                                ['/minsk-partizanskij', 'Партизанский', 'в Партизанском районе Минска'],
-                               ['/minsk-moskovskij', 'Московский', 'в Московском районе Минска']]) {
+                               ['/minsk-moskovskij', 'Московский', 'в Московском районе Минска'],
+                               // 11.10 (вечер): Заводской — тоже по границам (было по словам, 9 квартир)
+                               ['/minsk-zavodskoj', 'Заводской', 'в Заводском районе Минска']]) {
     const { код, html } = await стр(п);
     check(п + ' открывается с h1 «Квартиры на сутки ' + где + '»', код === 200 && h1(html) === 'Квартиры на сутки ' + где, код + ' ' + h1(html));
     if (код !== 200) continue;
@@ -592,6 +595,59 @@ for (const п of ['/marina-gorka', '/miory']) check(п + ' не заведена
   check('с главной и с /goroda есть ссылка на ' + п, (await стр('/')).html.includes('href="' + п + '"') && города1110.includes('href="' + п + '"'));
   for (const а of ['/kvartiry-nedorogo', '/odnokomnatnye', '/dvuhkomnatnye', '/goroda'])
     check(п + ': есть ссылка на ' + а, html.includes('href="' + а + '"'));
+}
+
+// Большие районные города (11.10 вечер; Вордстат, Беларусь, 05.09–04.10.2026): «недорого» — Барановичи ≈ 69,
+// Бобруйск ≈ 119, Пинск ≈ 94, Лида ≈ 65, Полоцк ≈ 42; «однокомнатные» — Барановичи ≈ 60.
+// Порог «недорого» — как у /<областной центр>-nedorogo (до 70 BYN), дешёвые сверху.
+{
+  const нед = (await стр('/kvartiry-nedorogo')).html, одн = (await стр('/odnokomnatnye')).html;
+  const цены = (await стр('/ceny-kvartir-na-sutki')).html;
+  const ценаКарточки = к => +((к.match(/<div class="p">(?:от )?(\d+(?:\.\d+)?) BYN/) || [])[1] || 0);
+  for (const [п, h, обл, город, свой, чужой, вид] of [
+    ['/baranovichi-nedorogo', 'Недорогие квартиры на сутки в Барановичах', 'brest', 'Барановичи', /Барановичи/, null, 'nedorogo'],
+    ['/baranovichi-odnokomnatnye', 'Однокомнатные квартиры на сутки в Барановичах', 'brest', 'Барановичи', /Барановичи/, null, 'odnokomnatnye'],
+    ['/bobruisk-nedorogo', 'Недорогие квартиры на сутки в Бобруйске', 'mogilev', 'Бобруйск', /Бобруйск/, null, 'nedorogo'],
+    ['/pinsk-nedorogo', 'Недорогие квартиры на сутки в Пинске', 'brest', 'Пинск', /Пинск/, null, 'nedorogo'],
+    ['/lida-nedorogo', 'Недорогие квартиры на сутки в Лиде', 'grodno', 'Лида', /Лид[аеы]/, null, 'nedorogo'],
+    ['/polotsk-nedorogo', 'Недорогие квартиры на сутки в Полоцке', 'vitebsk', 'Полоцк', /(^|[^а-яё])Полоцк/i, /новополоцк/i, 'nedorogo']]) {
+    const { код, html } = await стр(п);
+    check(п + ' открывается с h1 «' + h + '»', код === 200 && h1(html) === h, код + ' ' + h1(html));
+    if (код !== 200) continue;
+    const t = заголовок(html), d = описаниеСтр(html);
+    check(п + ': title начинается с h1 (≤ 60), description 120–160 и начинается с h1',
+      t.startsWith(h) && t.length <= 60 && d.length >= 120 && d.length <= 160 && d.startsWith(h), t + ' | ' + d.length + ' ' + d);
+    const куски = html.split('<article class="c">').slice(1), к = карточки(html);
+    check(п + ': от 5 карточек', к.length >= 5, 'карточек ' + к.length);
+    check(п + ': все карточки из этого города' + (чужой ? ' (без Новополоцка)' : ''),
+      к.every(x => свой.test(x.мета.join(' ') + ' ' + x.h3) && !(чужой && чужой.test(x.мета.join(' ')))),
+      (к.find(x => !свой.test(x.мета.join(' ') + ' ' + x.h3) || (чужой && чужой.test(x.мета.join(' ')))) || {}).h3);
+    check(п + ': только квартиры, без домов и усадеб', к.every(x => !/(^|[^а-яё])(усадьб|коттедж)|^дом/i.test(x.h3)));
+    if (вид === 'nedorogo') {
+      const ц = куски.map(ценаКарточки);
+      check(п + ': все не дороже 70 BYN', ц.every(x => x > 0 && x <= 70), ц.filter(x => !(x > 0 && x <= 70)).join(', '));
+      check(п + ': дешёвые сверху', ц.every((x, i) => !i || ц[i - 1] <= x), ц.slice(0, 8).join(','));
+      check(п + ': порог назван честно (до 70 рублей)', /до 70 рублей за сутки/.test(html));
+    } else {
+      check(п + ': все однокомнатные', к.every(x => x.мета.includes('1-комн')), 'не 1-комн: ' + к.filter(x => !x.мета.includes('1-комн')).length);
+    }
+    // число на странице — из той же выдачи по городу (квартиры), отбор как у страницы
+    const выдача = (await (await fetch(SITE + '/api/search?region=' + обл + '&city=' + encodeURIComponent(город) + '&type=flat&source=both')).json()).items || [];
+    const свои = вид === 'nedorogo' ? выдача.filter(x => x.price > 0 && x.price <= 70) : выдача.filter(x => (parseInt(x.rooms, 10) || 0) === 1);
+    const n = доступно(html);
+    check(п + ': «Сейчас доступно» (' + n + ') — как в выдаче по городу (' + свои.length + '), от 5', n >= 5 && Math.abs(n - свои.length) <= Math.max(3, Math.round(свои.length * 0.05)));
+    check(п + ' в карте сайта', карта.includes(п + '</loc>'));
+    const город_ = п.replace(/-(nedorogo|odnokomnatnye)$/, '');
+    check('с ' + город_ + ' («Ещё по городу») есть ссылка на ' + п, (await стр(город_)).html.includes('href="' + п + '"'));
+    if (вид === 'nedorogo') check('с /kvartiry-nedorogo есть ссылка на ' + п, нед.includes('href="' + п + '"'));
+    else {
+      check('с /odnokomnatnye есть ссылка на ' + п, одн.includes('href="' + п + '"'));
+      check('на /ceny-kvartir-na-sutki есть строка ' + п, цены.includes('<tr><td><a href="' + п + '">'));
+    }
+  }
+  // не заводили: мало запросов (Лида однокомнатные 33, Мозырь недорого 33, Солигорск 6, двухкомнатные 0–7)
+  for (const п of ['/lida-odnokomnatnye', '/mozyr-nedorogo', '/soligorsk-nedorogo', '/baranovichi-dvuhkomnatnye'])
+    check(п + ' не заведена — 404', (await стр(п)).код === 404);
 }
 
 console.log('\nПройдено ' + passed + ', падает ' + failed);

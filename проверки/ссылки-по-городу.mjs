@@ -32,7 +32,13 @@ for (const [п, нужны] of [
   ['/molodechno', ['/molodechno-odnokomnatnye']],
   ['/grodno', ['/grodno-nedorogo', '/grodno-usadby', '/grodno-kottedzhi', '/grodno-odnokomnatnye', '/grodno-dvuhkomnatnye', '/gde-ostanovitsya-grodno', '/chto-posmotret-grodno']],
   ['/brest-nedorogo', ['/brest', '/brest-usadby', '/brest-kottedzhi', '/brest-odnokomnatnye', '/gde-ostanovitsya-brest', '/chto-posmotret-brest']],
-  ['/minsk-obl', ['/minsk-obl-nedorogo', '/minsk-obl-usadby', '/minsk-obl-kottedzhi', '/doma-na-sutki-pod-minskom']],  ['/lida', ['/gde-ostanovitsya-lida']],
+  ['/minsk-obl', ['/minsk-obl-nedorogo', '/minsk-obl-usadby', '/minsk-obl-kottedzhi', '/doma-na-sutki-pod-minskom']],
+  // 11.10 (вечер): «недорого» и однокомнатные в больших районных городах
+  ['/lida', ['/gde-ostanovitsya-lida', '/lida-nedorogo']],
+  ['/baranovichi', ['/baranovichi-nedorogo', '/baranovichi-odnokomnatnye']],
+  ['/bobruisk', ['/bobruisk-nedorogo']],
+  ['/pinsk', ['/pinsk-nedorogo']],
+  ['/polotsk', ['/polotsk-nedorogo']],
 ]) {
   const { код, html } = await стр(п);
   const есть = блокЕщё(html);
@@ -127,7 +133,10 @@ console.log('\n=== sitemap.xml ===');
                    // 11.10: районы Минска по карте, трёхкомнатные, цены, малые города второй волны
                    '/minsk-frunzenskij', '/minsk-partizanskij', '/minsk-moskovskij', '/trehkomnatnye', '/ceny-kvartir-na-sutki',
                    '/dzerzhinsk', '/smolevichi', '/ostrovec', '/luninec', '/kalinkovichi', '/lyuban', '/fanipol', '/rogachev',
-                   '/oshmyany', '/stolin', '/osipovichi', '/ivacevichi', '/gancevichi', '/lepel'])
+                   '/oshmyany', '/stolin', '/osipovichi', '/ivacevichi', '/gancevichi', '/lepel',
+                   // 11.10 (вечер): большие районные города
+                   '/baranovichi-nedorogo', '/baranovichi-odnokomnatnye', '/bobruisk-nedorogo', '/pinsk-nedorogo',
+                   '/lida-nedorogo', '/polotsk-nedorogo'])
     check(п + ' в карте сайта', карта.includes('https://nochy.by' + п + '</loc>'));
 }
 
