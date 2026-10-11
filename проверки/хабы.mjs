@@ -149,7 +149,14 @@ console.log('\n=== /dostoprimechatelnosti-belarusi ===');
   check(п + ': кнопка «Все места на карте» → /?country=places', html.includes('<a class="cta" href="/?country=places">Все места на карте →</a>'));
   // «что посмотреть» по городам — с тем же числом мест, что на страницах
   const города = [...html.matchAll(/<a href="\/(chto-posmotret-[a-z]+)">Что посмотреть [^<]+ <small>(\d+) мест[аоы]?<\/small><\/a>/g)].map(м => ({ slug: м[1], n: +м[2] }));
-  check(п + ': все семь «что посмотреть» с числом мест', города.length === 7, города.map(x => x.slug).join(', '));
+  // 11.10: восьмая — Заславль (у остальных районных городов из плана мест с фото и описанием меньше восьми)
+  check(п + ': все восемь «что посмотреть» с числом мест (с Заславлем)', города.length === 8 && города.some(x => x.slug === 'chto-posmotret-zaslavl'),
+    города.map(x => x.slug).join(', '));
+  // 11.10: достопримечательности областей — отдельным разделом, все шесть
+  const области = ['minskaya', 'mogilevskaya', 'grodnenskaya', 'vitebskaya', 'brestskaya', 'gomelskaya'].map(о => '/chto-posmotret-' + о + '-oblast');
+  const разделОбластей = (html.split('<h2>Достопримечательности областей</h2>')[1] || '').split('</div>')[0];
+  check(п + ': раздел «Достопримечательности областей» со всеми шестью', области.every(а => разделОбластей.includes('href="' + а + '"')),
+    области.filter(а => !разделОбластей.includes('href="' + а + '"')).join(' '));
   for (const г of города) {
     const r = await стр('/' + г.slug);
     const n = [...r.html.matchAll(/<h3><a href="\/mesto\//g)].length;
