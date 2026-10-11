@@ -58,9 +58,14 @@ check('/grodno-nedorogo: заголовок прежний', /<title>Недор�
 const карта = await (await fetch(SITE + '/sitemap.xml')).text();
 check('sitemap: /novogrudok и /nesvizh', карта.includes('/novogrudok</loc>') && карта.includes('/nesvizh</loc>'));
 // малые города (06.10): «квартира на сутки горки» 761, «… сморгонь» 358, «… речица» 259, «… береза» 246
-for (const п of ['/gorki', '/smorgon', '/rechica', '/bereza']) {
+// вторая волна (11.10): Дзержинск, Смолевичи, Островец, Лунинец, Калинковичи, Любань, Фаниполь, Рогачёв, Ошмяны,
+// Столин, Осиповичи, Ивацевичи, Ганцевичи, Лепель — у Столина, Ганцевичей и Лепеля 11.10 было ровно по 5 вариантов
+const ВТОРАЯ_ВОЛНА = ['/dzerzhinsk', '/smolevichi', '/ostrovec', '/luninec', '/kalinkovichi', '/lyuban', '/fanipol', '/rogachev',
+                     '/oshmyany', '/stolin', '/osipovichi', '/ivacevichi', '/gancevichi', '/lepel'];
+for (const п of ['/gorki', '/smorgon', '/rechica', '/bereza'].concat(ВТОРАЯ_ВОЛНА)) {
   const r = await fetch(SITE + п);
   const html = await r.text();
+  if (r.status === 404 && ВТОРАЯ_ВОЛНА.includes(п)) { console.log('  (' + п + ' — 404: вариантов сейчас меньше пяти)'); continue; }
   check(п + ': 200 и в sitemap', r.status === 200 && карта.includes(п + '</loc>'), r.status);
   const title = раскрыть((html.match(/<title>([^<]*)<\/title>/) || [])[1] || '');
   const desc = раскрыть((html.match(/<meta name="description" content="([^"]*)"/) || [])[1] || '');

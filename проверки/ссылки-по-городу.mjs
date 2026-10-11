@@ -22,7 +22,9 @@ const открывается = async а => { if (!открытые.has(а)) от
 
 console.log('\n=== «Ещё по городу» ===');
 for (const [п, нужны] of [
-  ['/minsk', ['/minsk-nedorogo', '/kvartiry-bez-posrednikov', '/minsk-odnokomnatnye', '/minsk-dvuhkomnatnye', '/minsk-centr', '/minsk-vokzal', '/minsk-zavodskoj', '/doma-na-sutki-pod-minskom', '/gde-ostanovitsya-minsk', '/chto-posmotret-minsk']],
+  ['/minsk', ['/minsk-nedorogo', '/kvartiry-bez-posrednikov', '/minsk-odnokomnatnye', '/minsk-dvuhkomnatnye', '/minsk-centr', '/minsk-vokzal', '/minsk-zavodskoj', '/doma-na-sutki-pod-minskom', '/gde-ostanovitsya-minsk', '/chto-posmotret-minsk',
+            // районы Минска по карте (11.10)
+            '/minsk-frunzenskij', '/minsk-partizanskij', '/minsk-moskovskij']],
   // однокомнатные 06.10: Могилёв, Витебск, Молодечно
   // двухкомнатные 09.10: Минск, Могилёв, Гродно
   ['/mogilev', ['/mogilev-nedorogo', '/mogilev-odnokomnatnye', '/mogilev-dvuhkomnatnye', '/chto-posmotret-mogilev']],
@@ -42,6 +44,33 @@ for (const [п, нужны] of [
   check(п + ': в блоке все живые страницы города', !нетЖивых.length, 'нет: ' + нетЖивых.join(', '));
   check(п + ': самой себя в блоке нет', !есть.includes(п));
   check(п + ': переехавших адресов нет', !есть.some(а => /^\/minsk-(usadby|kottedzhi)$/.test(а)));
+  const битые = [];
+  for (const а of есть) if (!(await открывается(а))) битые.push(а + ' (' + открытые.get(а) + ')');
+  check(п + ': все ссылки блока открываются (' + есть.length + ')', !битые.length, битые.join(', '));
+}
+
+// «Ещё в … области» (11.10): у районного города — областной центр и соседние города области,
+// у областного центра — его районные города; только живые страницы
+console.log('\n=== «Ещё в … области» ===');
+const блокОбласти = (h, где) => [...((h.split('<h2>Ещё ' + где + '</h2><div class="others">')[1] || '').split('</div>')[0].matchAll(/<a href="([^"]+)">/g))].map(м => м[1]);
+for (const [п, где, нужны] of [
+  ['/brest', 'в Брестской области', ['/baranovichi', '/pinsk', '/luninec', '/ivacevichi', '/stolin', '/gancevichi']],
+  ['/luninec', 'в Брестской области', ['/brest', '/pinsk', '/ivacevichi', '/stolin']],
+  ['/dzerzhinsk', 'в Минской области', ['/minsk-obl', '/fanipol', '/smolevichi', '/lyuban', '/borisov']],
+  ['/minsk-obl', 'в Минской области', ['/dzerzhinsk', '/fanipol', '/smolevichi', '/lyuban', '/borisov', '/molodechno']],
+  ['/rogachev', 'в Гомельской области', ['/gomel', '/kalinkovichi', '/mozyr']],
+  ['/ostrovec', 'в Гродненской области', ['/grodno', '/oshmyany', '/smorgon', '/lida']],
+  ['/osipovichi', 'в Могилёвской области', ['/mogilev', '/bobruisk', '/gorki']],
+  ['/lepel', 'в Витебской области', ['/vitebsk', '/polotsk', '/orsha']],
+]) {
+  const { код, html } = await стр(п);
+  if (код === 404) { console.log('  (' + п + ' — 404: вариантов сейчас меньше пяти)'); continue; }
+  const есть = блокОбласти(html, где);
+  check(п + ': блок «Ещё ' + где + '»', код === 200 && есть.length > 0, 'код ' + код);
+  const нетЖивых = [];
+  for (const а of нужны.filter(а => !есть.includes(а))) if (await открывается(а)) нетЖивых.push(а);
+  check(п + ': в блоке все живые страницы области из списка', !нетЖивых.length, 'нет: ' + нетЖивых.join(', '));
+  check(п + ': самой себя в блоке нет', !есть.includes(п));
   const битые = [];
   for (const а of есть) if (!(await открывается(а))) битые.push(а + ' (' + открытые.get(а) + ')');
   check(п + ': все ссылки блока открываются (' + есть.length + ')', !битые.length, битые.join(', '));
@@ -92,7 +121,11 @@ console.log('\n=== sitemap.xml ===');
   for (const п of ['/goroda', '/doma-na-sutki', '/kvartiry-nedorogo', '/dostoprimechatelnosti-belarusi',
                    '/odnokomnatnye', '/mogilev-odnokomnatnye', '/vitebsk-odnokomnatnye', '/molodechno-odnokomnatnye',
                    '/gorki', '/smorgon', '/rechica', '/bereza', '/minsk-zavodskoj',
-                   '/dvuhkomnatnye', '/minsk-dvuhkomnatnye', '/mogilev-dvuhkomnatnye', '/grodno-dvuhkomnatnye'])
+                   '/dvuhkomnatnye', '/minsk-dvuhkomnatnye', '/mogilev-dvuhkomnatnye', '/grodno-dvuhkomnatnye',
+                   // 11.10: районы Минска по карте, трёхкомнатные, цены, малые города второй волны
+                   '/minsk-frunzenskij', '/minsk-partizanskij', '/minsk-moskovskij', '/trehkomnatnye', '/ceny-kvartir-na-sutki',
+                   '/dzerzhinsk', '/smolevichi', '/ostrovec', '/luninec', '/kalinkovichi', '/lyuban', '/fanipol', '/rogachev',
+                   '/oshmyany', '/stolin', '/osipovichi', '/ivacevichi', '/gancevichi', '/lepel'])
     check(п + ' в карте сайта', карта.includes('https://nochy.by' + п + '</loc>'));
 }
 

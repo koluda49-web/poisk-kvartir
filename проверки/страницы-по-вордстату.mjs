@@ -457,5 +457,142 @@ for (const [п, свои] of [['/gde-ostanovitsya-grodno', /^(Центр|Вос�
   }
 }
 
+// Вторая волна по Вордстату (11.10; Беларусь, 05.09–04.10.2026, «квартира на сутки …», «снять квартиру … на сутки»)
+const ГОРОДА_11_10 = [['/dzerzhinsk', 'в Дзержинске', /Дзержинск/], ['/smolevichi', 'в Смолевичах', /Смолевич/], ['/ostrovec', 'в Островце', /Островец/],
+  ['/luninec', 'в Лунинце', /Лунинец/], ['/kalinkovichi', 'в Калинковичах', /Калинкович/], ['/lyuban', 'в Любани', /Любан/],
+  ['/fanipol', 'в Фаниполе', /Фанипол/], ['/rogachev', 'в Рогачёве', /Рогач[её]в/], ['/oshmyany', 'в Ошмянах', /Ошмян/],
+  ['/stolin', 'в Столине', /Столин/], ['/osipovichi', 'в Осиповичах', /Осипович/], ['/ivacevichi', 'в Ивацевичах', /Ивацевич/],
+  ['/gancevichi', 'в Ганцевичах', /Ганцевич/], ['/lepel', 'в Лепеле', /Лепел/]];
+const города1110 = (await стр('/goroda')).html;
+for (const [п, где, город] of ГОРОДА_11_10) {
+  const { код, html } = await стр(п);
+  if (код === 404) {
+    // вариантов сейчас меньше пяти — страницы нет, и /goroda на неё не ведёт (так задумано)
+    console.log('  (' + п + ' — 404: вариантов сейчас меньше пяти)');
+    check(п + ': при 404 её нет на /goroda', !города1110.includes('href="' + п + '"'));
+    continue;
+  }
+  check(п + ' открывается с h1 «Квартиры на сутки ' + где + '»', код === 200 && h1(html) === 'Квартиры на сутки ' + где, код + ' ' + h1(html));
+  if (код !== 200) continue;
+  const t = заголовок(html), d = описаниеСтр(html);
+  check(п + ': title начинается с «Квартиры на сутки ' + где + '» (≤ 60), description 120–160',
+    t.startsWith('Квартиры на сутки ' + где) && t.length <= 60 && d.length >= 120 && d.length <= 160, t + ' | ' + d.length + ' ' + d);
+  const к = карточки(html);
+  check(п + ': от 5 вариантов, все из этого города', к.length >= 5 && к.every(x => город.test(x.мета.join(' ') + ' ' + x.h3)),
+    'карточек ' + к.length + '; ' + (к.find(x => !город.test(x.мета.join(' ') + ' ' + x.h3)) || {}).h3);
+  check(п + ': без услуг вместо жилья (мойщик окон, приставки)', к.every(x => !/мойщик|мойка окон|аренда (ps|playstation|xbox)/i.test(x.h3)),
+    (к.find(x => /мойщик|мойка окон|аренда (ps|playstation|xbox)/i.test(x.h3)) || {}).h3);
+  check(п + ' в карте сайта и на /goroda', карта.includes(п + '</loc>') && города1110.includes('href="' + п + '"'));
+}
+// Марьина Горка и Миоры — по 3 варианта 11.10: страниц не заводили
+for (const п of ['/marina-gorka', '/miory']) check(п + ' не заведена (мало вариантов) — 404', (await стр(п)).код === 404);
+
+// Районы Минска по карте (11.10): «… фрунзенский район» 30 + 27 + 12, «… партизанский» 31 + 24, «… московский» 23 + 15.
+// Отбор — точка объявления внутри границ района (OpenStreetMap), только точные координаты.
+{
+  const { readFileSync } = await import('node:fs');
+  const исходник = readFileSync(new URL('../kvartiry-server.js', import.meta.url), 'utf8');
+  const кусок = исходник.slice(исходник.indexOf('const РАЙОНЫ_МИНСКА = {'), исходник.indexOf('const ЦЕНТР_КМ'));
+  const { районМинска } = new Function(кусок + '; return { районМинска };')();
+  const выдача = (await (await fetch(SITE + '/api/search?region=minsk&city=' + encodeURIComponent('Минск') + '&type=flat&source=both')).json()).items || [];
+  const поСсылке = new Map(выдача.map(x => [x.link, x]));
+  const гид = (await стр('/gde-ostanovitsya-minsk')).html;
+  const строкаГида = имя => +(((гид.split('<h2>По районам</h2>')[1] || '').match(new RegExp('<tr><td>' + имя + '<\\/td><td><b>(\\d+)<\\/b>')) || [])[1] || 0);
+  const минск = (await стр('/minsk')).html;
+  for (const [п, имя, где] of [['/minsk-frunzenskij', 'Фрунзенский', 'во Фрунзенском районе Минска'],
+                               ['/minsk-partizanskij', 'Партизанский', 'в Партизанском районе Минска'],
+                               ['/minsk-moskovskij', 'Московский', 'в Московском районе Минска']]) {
+    const { код, html } = await стр(п);
+    check(п + ' открывается с h1 «Квартиры на сутки ' + где + '»', код === 200 && h1(html) === 'Квартиры на сутки ' + где, код + ' ' + h1(html));
+    if (код !== 200) continue;
+    const t = заголовок(html), d = описаниеСтр(html);
+    check(п + ': title начинается с «Квартиры на сутки ' + где + '» (≤ 60), description 120–160',
+      t.startsWith('Квартиры на сутки ' + где) && t.length <= 60 && d.length >= 120 && d.length <= 160, t + ' | ' + d.length + ' ' + d);
+    const ссылки = [...html.split('<article class="c">').slice(1).map(к => (к.match(/<a href="([^"]+)"/) || [])[1] || '')].map(с => с.replace(/&amp;/g, '&'));
+    check(п + ': от 5 вариантов', ссылки.length >= 5, 'карточек ' + ссылки.length);
+    const чужие = ссылки.filter(с => { const x = поСсылке.get(с); return !x || x.approx || районМинска(+x.lat, +x.lng) !== имя; });
+    check(п + ': каждая квартира — с точной точкой внутри границ района (' + ссылки.length + ')', !чужие.length, чужие.length + ': ' + чужие.slice(0, 2).join(' '));
+    check(п + ': только квартиры, без домов и усадеб', карточки(html).every(x => !/(^|[^а-яё])(усадьб|коттедж)|^дом/i.test(x.h3)));
+    check(п + ': честно сказано про границы района и © OpenStreetMap', /внутри границ [А-Яа-яё]+ района Минска/.test(html) && /OpenStreetMap, ODbL/.test(html));
+    const n = доступно(html), вГиде = строкаГида(имя);
+    check(п + ': «Сейчас доступно» (' + n + ') сходится с таблицей районов на /gde-ostanovitsya-minsk (' + вГиде + ')',
+      n > 0 && вГиде > 0 && Math.abs(n - вГиде) <= Math.max(3, Math.round(вГиде * 0.05)));
+    check(п + ' в карте сайта', карта.includes(п + '</loc>'));
+    check('с /minsk есть ссылка на ' + п, минск.includes('href="' + п + '"'));
+  }
+}
+
+// Трёхкомнатные (11.10): «3 кв на сутки» 103, «3 комнатная квартира на сутки» 15
+{
+  const п = '/trehkomnatnye';
+  const { код, html } = await стр(п);
+  check(п + ' открывается с h1 «Трёхкомнатные квартиры на сутки в Беларуси»', код === 200 && h1(html) === 'Трёхкомнатные квартиры на сутки в Беларуси', код + ' ' + h1(html));
+  check(п + ': title «Трёхкомнатная квартира на сутки — снять посуточно в Беларуси» (≤ 60)',
+    заголовок(html) === 'Трёхкомнатная квартира на сутки — снять посуточно в Беларуси' && заголовок(html).length <= 60, заголовок(html));
+  const d = описаниеСтр(html);
+  check(п + ': description 120–160', d.length >= 120 && d.length <= 160, d.length + ' ' + d);
+  const к = карточки(html);
+  check(п + ': все варианты трёхкомнатные (от 5)', к.length >= 5 && к.every(x => x.мета.includes('3-комн')), 'карточек ' + к.length);
+  const таблица = (html.split('<h2>По областям</h2>')[1] || '').split('</table>')[0];
+  const строки = [...таблица.matchAll(/<tr><td>([^<]+)<\/td><td><b>(\d+)<\/b><\/td><td>(?:(\d+(?:\.\d+)?) BYN|—)<\/td><\/tr>/g)].map(м => ({ имя: м[1], всего: +м[2], от: м[3] ? +м[3] : 0 }));
+  const всего = доступно(html);
+  check(п + ': таблица по областям (от 5), строки без ссылок', строки.length >= 5 && !таблица.includes('<a '), строки.map(x => x.имя).join(', '));
+  check(п + ': в сумме по областям не меньше, чем «Сейчас доступно», и каждая — не больше', строки.reduce((s, x) => s + x.всего, 0) >= всего && строки.every(x => x.всего <= всего),
+    строки.reduce((s, x) => s + x.всего, 0) + ' и ' + всего);
+  check(п + ': самое низкое «от» по областям = «самый дешёвый» (' + дешёвый(html) + ')', дешёвый(html) > 0 && Math.min(...строки.map(x => x.от).filter(Boolean)) === дешёвый(html));
+  check(п + ' в карте сайта', карта.includes(п + '</loc>'));
+  check('с главной и с /goroda есть ссылка на ' + п, (await стр('/')).html.includes('href="' + п + '"') && города1110.includes('href="' + п + '"'));
+}
+
+// /kvartiry-bez-posrednikov: «от хозяев» 218 + 146 + 192 + 92 — честно, что не только от хозяев
+{
+  const { код, html } = await стр('/kvartiry-bez-posrednikov');
+  const t = заголовок(html), d = описаниеСтр(html);
+  check('/kvartiry-bez-posrednikov: в description «от хозяев» (120–160), title ≤ 60', код === 200 && /от хозяев/.test(d) && d.length >= 120 && d.length <= 160 && t.length <= 60, t + ' | ' + d.length + ' ' + d);
+  check('/kvartiry-bez-posrednikov: в тексте честно — и от хозяев, и от компаний', /и от хозяев, и от компаний/.test(html));
+}
+
+// /ceny-kvartir-na-sutki: «цены квартиры на сутки» 241, «сколько стоит квартира на сутки» 118 + 136
+{
+  const п = '/ceny-kvartir-na-sutki';
+  let { код, html } = await стр(п);
+  check(п + ' открывается с h1 «Сколько стоит квартира на сутки в Беларуси»', код === 200 && h1(html) === 'Сколько стоит квартира на сутки в Беларуси', код + ' ' + h1(html));
+  check(п + ': title «Цены на квартиры на сутки в Беларуси по городам» (≤ 60)', заголовок(html) === 'Цены на квартиры на сутки в Беларуси по городам', заголовок(html));
+  const d = описаниеСтр(html);
+  check(п + ': description 120–160', d.length >= 120 && d.length <= 160, d.length + ' ' + d);
+  const сегодня = new Date().toLocaleDateString('ru-RU', { timeZone: 'Europe/Minsk', day: '2-digit', month: '2-digit', year: 'numeric' });
+  check(п + ': подпись «Цены из объявлений на <дата>, уточняйте у хозяина»', new RegExp('Цены из объявлений на \\d\\d\\.\\d\\d\\.\\d{4}, уточняйте у хозяина').test(html)
+    && html.includes('на ' + сегодня + ','), сегодня);
+  // если цифры ещё собирались («…»), даём сводке досчитаться
+  for (let i = 0; i < 6 && /<td>…<\/td>/.test(html); i++) { await new Promise(r => setTimeout(r, 10000)); ({ html } = await стр(п)); }
+  const строки = [...html.matchAll(/<tr><td><a href="([^"]+)">([^<]+)<\/a><\/td><td><b>(\d+)<\/b><\/td><td>(\d+(?:\.\d+)?) BYN<\/td><td>(\d+(?:\.\d+)?) BYN<\/td><\/tr>/g)]
+    .map(м => ({ путь: м[1], имя: м[2], всего: +м[3], от: +м[4], обычно: +м[5] }));
+  check(п + ': строк с ценами не меньше 30, без «…»', строки.length >= 30 && !/<td>…<\/td>/.test(html), 'строк ' + строки.length);
+  for (const а of ['/minsk', '/brest', '/baranovichi', '/dzerzhinsk', '/odnokomnatnye', '/dvuhkomnatnye', '/trehkomnatnye', '/minsk-odnokomnatnye', '/minsk-dvuhkomnatnye'])
+    check(п + ': есть строка ' + а, строки.some(x => x.путь === а) || (await стр(а)).код !== 200);
+  check(п + ': «самая низкая» не выше «обычной»', строки.every(x => x.от <= x.обычно), JSON.stringify(строки.find(x => x.от > x.обычно)));
+  // числа — те же, что на страницах (самый дешёвый, обычная цена, сколько вариантов)
+  const расхождения = [];
+  for (const с of строки) {
+    const h = (await стр(с.путь)).html;
+    const на = { всего: доступно(h), от: дешёвый(h), обычно: +((h.match(/обычная цена около <b>(\d+(?:\.\d+)?) BYN/) || [])[1] || 0) };
+    if (на.всего !== с.всего || на.от !== с.от || на.обычно !== с.обычно) расхождения.push(с.путь + ' ' + JSON.stringify(с) + ' на странице ' + JSON.stringify(на));
+  }
+  // выдача между запросами могла обновиться — тогда сверяем со свежей страницей цен ещё раз
+  let остались = расхождения;
+  if (расхождения.length) {
+    const свежая = (await стр(п)).html;
+    остались = расхождения.filter(р => { const путь = р.split(' ')[0];
+      const м = свежая.match(new RegExp('<tr><td><a href="' + путь + '">[^<]+<\\/a><\\/td><td><b>(\\d+)<\\/b><\\/td><td>([\\d.]+) BYN<\\/td><td>([\\d.]+) BYN'));
+      const на = JSON.parse(р.split(' на странице ')[1]);
+      return !м || +м[1] !== на.всего || +м[2] !== на.от || +м[3] !== на.обычно; });
+  }
+  check(п + ': числа совпадают со страницами городов и подборок (' + строки.length + ')', !остались.length, остались.slice(0, 3).join(' | '));
+  check(п + ' в карте сайта', карта.includes(п + '</loc>'));
+  check('с главной и с /goroda есть ссылка на ' + п, (await стр('/')).html.includes('href="' + п + '"') && города1110.includes('href="' + п + '"'));
+  for (const а of ['/kvartiry-nedorogo', '/odnokomnatnye', '/dvuhkomnatnye', '/goroda'])
+    check(п + ': есть ссылка на ' + а, html.includes('href="' + а + '"'));
+}
+
 console.log('\nПройдено ' + passed + ', падает ' + failed);
 process.exit(failed ? 1 : 0);
