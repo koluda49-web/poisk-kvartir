@@ -428,8 +428,9 @@ console.log('\n=== выключатель источника ===');
 console.log('\n=== разметка для поисковика ===');
 {
   const СТРАНИЦЫ = [
-    ['/', ['WebSite', 'Organization', 'FAQPage']],
-    ['/minsk', ['ItemList', 'BreadcrumbList']],
+    // FAQPage на главной убран 14.10: вопросов на самой странице нет, а Google требует видимый текст
+    ['/', ['WebSite', 'Organization']],
+    ['/minsk', ['ItemList', 'BreadcrumbList', 'FAQPage']],
     ['/gde-ostanovitsya-grodno', ['FAQPage', 'BreadcrumbList']],
     ['/marshrut-minsk-brest', ['ItemList', 'BreadcrumbList']],
     ['/braslav', ['ItemList', 'BreadcrumbList']],
