@@ -17,7 +17,9 @@ import { readFileSync } from 'node:fs';
 // картинка — абсолютный адрес); twitter:card; нет noindex; JSON-LD разбирается
 // и нужного типа (места — TouristAttraction, маршруты и подборки — ItemList,
 // главная — WebSite и FAQPage); у всех <img> в разметке непустой alt. Внутри
-// одного типа страниц title и description не повторяются.
+// одного типа страниц title и description не повторяются. У страниц городов
+// (с 14.10) — «Частые вопросы» и одна разметка FAQPage, каждый вопрос и ответ
+// которой дословно виден на странице.
 // Служебные (/marshrut?p=, /predlozheniya, /stats, /reis, /istochnik, 404) —
 // noindex метатегом или заголовком X-Robots-Tag и не попадают в sitemap.
 //
@@ -211,7 +213,35 @@ async function индексируемая(путь, тип, ждёмТипы) {
   if (с.безAlt.length) н('img без alt (или пустой): ' + с.безAlt.length + ' — ' + с.безAlt[0].slice(0, 120));
   const типы = типыJSONLD(с.jsonld, адрес);
   for (const т of ждёмТипы || []) if (!типы.has(т)) н('нет JSON-LD ' + т + (типы.size ? ' (есть: ' + [...типы].join(', ') + ')' : ''));
+  // Сверяем страницы с видимым блоком «Частые вопросы» (города, 14.10). У /ceny-kvartir-na-sutki
+  // и гидов FAQPage старый, без видимого блока, — это отдельная задача.
+  if (тип === 'город и спрос' && типы.has('FAQPage') && /<h2>Частые вопросы<\/h2>/.test(r.тело)) сверитьВопросы(с).forEach(н);
   (поТипам[тип] = поТипам[тип] || []).push({ адрес, title, d });
+}
+
+// Частые вопросы на страницах городов (14.10): разметка FAQPage одна на страницу, в ней
+// от двух вопросов, и каждый вопрос и ответ дословно виден на самой странице — Google
+// требует совпадения разметки с видимым текстом. Возвращает список нарушений.
+function вопросыИзРазметки(jsonld) {
+  return jsonld.map(б => { try { return JSON.parse(б); } catch (e) { return null; } })
+    .filter(о => о && о['@type'] === 'FAQPage');
+}
+function сверитьВопросы(с) {
+  const н = [];
+  const блоки = вопросыИзРазметки(с.jsonld);
+  if (блоки.length !== 1) н.push('FAQPage в разметке: ' + блоки.length + ' (нужен один)');
+  const сжать = t => String(t || '').replace(/\s+/g, ' ').trim();
+  for (const б of блоки) {
+    const в = Array.isArray(б.mainEntity) ? б.mainEntity : [];
+    if (в.length < 2) н.push('FAQPage: вопросов ' + в.length);
+    for (const q of в) {
+      const имя = сжать(q && q.name), ответ = сжать(q && q.acceptedAnswer && q.acceptedAnswer.text);
+      if (!q || q['@type'] !== 'Question' || !имя || !ответ || (q.acceptedAnswer || {})['@type'] !== 'Answer') { н.push('FAQPage: вопрос без name/Answer'); continue; }
+      if (!с.текст.includes(имя)) н.push('FAQPage: вопроса нет на странице: ' + имя);
+      if (!с.текст.includes(ответ)) н.push('FAQPage: ответ не совпадает с видимым текстом: ' + имя + ' — ' + ответ.slice(0, 80));
+    }
+  }
+  return н;
 }
 
 async function служебная(путь, что) {
@@ -288,6 +318,22 @@ if (!канонические.size) нарушение('обход', 'ни од�
 {
   const с = разобрать((await взять('/')).тело);
   if (!типыJSONLD(с.jsonld, '/').has('FAQPage')) нарушение('/', 'нет JSON-LD FAQPage');
+}
+// Страницы городов с показами в Search Console (14.10) — частые вопросы обязательны:
+// от четырёх вопросов (цена, недорого, без посредников и ещё хоть один), и разметка
+// совпадает с видимым текстом. Районный город, где вариантов меньше пяти, отвечает 404.
+for (const п of ['/minsk', '/brest', '/grodno', '/gomel', '/vitebsk', '/mogilev', '/minsk-obl',
+                 '/baranovichi', '/mozyr', '/kobrin', '/gorki']) {
+  проверено++;
+  const r = await взять(п);
+  if (r.код === 404 && !/^\/(minsk|brest|grodno|gomel|vitebsk|mogilev|minsk-obl)$/.test(п)) { console.log('  (' + п + ' — 404: вариантов меньше пяти)'); continue; }
+  if (r.код !== 200) { нарушение(п, 'частые вопросы: код ' + r.код); continue; }
+  const с = разобрать(r.тело);
+  const блоки = вопросыИзРазметки(с.jsonld);
+  const вопросов = блоки.length ? (блоки[0].mainEntity || []).length : 0;
+  if (!/<h2>Частые вопросы<\/h2>/.test(r.тело)) нарушение(п, 'нет блока «Частые вопросы»');
+  if (вопросов < 4 || вопросов > 6) нарушение(п, 'FAQPage: вопросов ' + вопросов + ' (нужно 4–6)');
+  сверитьВопросы(с).forEach(т => нарушение(п, т));
 }
 
 // Не открылись. Гид или страница спроса без вариантов честно отдаёт 404 и
