@@ -47,7 +47,7 @@ const ИСТОЧНИКИ = {
   kvartirka:process.env.KVARTIRKA!== 'off',
 };
 const STATS_MAX  = 60000;                                   // сколько событий держим в памяти
-let STATS = [], statsDirty = false;
+let STATS = [];
 const ЗАПУЩЕН = Date.now();
 // Самый долгий перерыв между входящими запросами. По нему видно, будит ли
 // сайт внешний пингер: если перерыв дорастал до пятнадцати минут, Render
@@ -69,17 +69,79 @@ function уптайм(){
   return ч + ' ч ' + (м % 60) + ' мин';
 }
 
+// Файл — по событию в строке (NDJSON). Раз в 30 с дописываются только новые
+// события, а не переписываются все: с журналом входов в памяти бывает до 60 000
+// событий, и JSON.stringify всего массива — 0,1 с здесь и до двух секунд на
+// бесплатном Render, когда сайт никому не отвечает. Когда строк в файле
+// набирается вдвое больше предела, файл переписывается из памяти — кусками,
+// с передышкой между ними. Старый файл (один JSON-массив) читается как раньше
+// и при первом сохранении переписывается в новый вид.
+let statsВсего = 0, statsЗаписано = 0, statsСтрокВФайле = 0, statsПишем = false, statsПереписать = false;
 try{
-  STATS = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
+  const текст = fs.readFileSync(STATS_FILE, 'utf8');
+  if(текст.trimStart()[0] === '['){ STATS = JSON.parse(текст); statsПереписать = true; }
+  else{
+    STATS = [];
+    for(const с of текст.split('\n')){ if(с) try{ STATS.push(JSON.parse(с)); }catch(e){} }
+    statsСтрокВФайле = STATS.length;
+  }
   if(!Array.isArray(STATS)) STATS = [];
+  if(STATS.length > STATS_MAX) STATS = STATS.slice(-STATS_MAX);
   console.log('Статистика: загружено событий — ' + STATS.length);
 }catch(e){ STATS = []; }
 
-function statsSave(){
-  if(!statsDirty) return;
-  statsDirty = false;
-  try{ fs.writeFileSync(STATS_FILE, JSON.stringify(STATS)); }
-  catch(e){ console.log('Статистика: не записалась —', e.message); }
+const строкиСобытий = function(сп, от, до){
+  let т = '';
+  for(let i = от; i < до; i++) т += JSON.stringify(сп[i]) + '\n';
+  return т;
+};
+// синхронно — только при выходе (SIGTERM): ждать там некогда.
+function statsSave(синхронно){
+  if(statsПишем && !синхронно) return;
+  if(синхронно && (statsПереписать || statsСтрокВФайле > STATS_MAX * 2)){
+    try{ fs.writeFileSync(STATS_FILE, строкиСобытий(STATS, 0, STATS.length)); statsПереписать = false; statsЗаписано = statsВсего; }
+    catch(e){ console.log('Статистика: не записалась —', e.message); }
+    return;
+  }
+  if(statsПереписать || statsСтрокВФайле > STATS_MAX * 2){ statsПереписатьКусками(); return; }
+  const новых = Math.min(statsВсего - statsЗаписано, STATS.length);
+  if(новых <= 0) return;
+  const текст = строкиСобытий(STATS, STATS.length - новых, STATS.length);
+  statsЗаписано = statsВсего;
+  statsСтрокВФайле += новых;
+  if(синхронно){
+    try{ fs.appendFileSync(STATS_FILE, текст); }catch(e){ console.log('Статистика: не записалась —', e.message); }
+    return;
+  }
+  statsПишем = true;
+  fs.appendFile(STATS_FILE, текст, function(e){
+    statsПишем = false;
+    if(e){ console.log('Статистика: не дописалась —', e.message); statsПереписать = true; }
+  });
+}
+function statsПереписатьКусками(){
+  statsПишем = true;
+  const снимок = STATS.slice(), всего = statsВсего, врем = STATS_FILE + '.tmp';
+  let i = 0, готово = false;
+  const поток = fs.createWriteStream(врем);
+  const конец = function(e){
+    if(готово) return; готово = true;
+    if(e || выходим){ statsПишем = false; if(e) console.log('Статистика: не переписалась —', e.message); fs.unlink(врем, function(){}); return; }
+    fs.rename(врем, STATS_FILE, function(e2){
+      statsПишем = false;
+      if(e2){ console.log('Статистика: не переписалась —', e2.message); return; }
+      statsПереписать = false; statsЗаписано = всего; statsСтрокВФайле = снимок.length;
+    });
+  };
+  поток.on('error', конец);
+  (function шаг(){
+    if(готово) return;
+    const до = Math.min(i + 2000, снимок.length);
+    поток.write(строкиСобытий(снимок, i, до));
+    i = до;
+    if(i < снимок.length) setImmediate(шаг);
+    else поток.end(function(){ конец(null); });
+  })();
 }
 setInterval(statsSave, 30000).unref();
 // Render перед перезапуском шлёт SIGTERM. Статистика пишется сразу, а данные,
@@ -91,7 +153,7 @@ let выходим = false;
 ['SIGTERM','SIGINT'].forEach(function(sig){ process.on(sig, function(){
   if(выходим) process.exit(0);
   выходим = true;
-  statsSave();
+  statsSave(true);
   // Прибавки популярного ждут своего окна в памяти — пишем их сейчас,
   // чтобы ушли в GitHub вместе с остальным отложенным.
   try{ сохранитьПопулярноеСейчас(); }catch(e){}
@@ -100,10 +162,71 @@ let выходим = false;
   catch(e){ process.exit(0); }   // сигнал пришёл, пока сервер ещё не дочитался до хранилища
 }); });
 
+// Переполнение срезаем пачкой в 500 событий, а не по одному: splice с начала
+// массива в 60 000 событий двигает их все, и при журнале входов это было бы
+// на каждый заход. Больше STATS_MAX в памяти всё равно не бывает.
 function statsAdd(ev){
   STATS.push(ev);
-  if(STATS.length > STATS_MAX) STATS.splice(0, STATS.length - STATS_MAX);
-  statsDirty = true;
+  if(STATS.length > STATS_MAX) STATS.splice(0, STATS.length - STATS_MAX + 500);
+  statsВсего++;
+}
+
+// ── Журнал входов (без JavaScript) ─────────────────────────────────────────
+// Скрипт страницы шлёт события не со всех страниц и не у всех (роботы,
+// закрыли вкладку раньше load). Сервер же видит каждый заход: путь, метку
+// ?from=, откуда пришёл, из приложения ли, робот ли и чем ответил — 200 или
+// 404 (битая ссылка в закрепе видна сразу). Адрес посетителя не храним:
+// только короткий отпечаток sha1(адрес + браузер + день) — по нему считаются
+// «человек за день», а обратно в адрес он не превращается и назавтра другой.
+// Цена — один sha1 и push в STATS на заход; на диск — тем же statsSave раз в 30 с
+// (дописываются только новые строки).
+const ЖУРНАЛ_МИМО = new Set(['/ping', '/stats', '/predlozheniya', '/reis', '/istochnik', '/sw.js', '/sitemap.xml',
+  '/robots.txt', '/favicon.ico', '/manifest.webmanifest', '/logo.svg', '/icon-192.png', '/icon-512.png']);
+function путьДляЖурнала(p){
+  if(ЖУРНАЛ_МИМО.has(p)) return false;
+  if(p.indexOf('/api/') === 0 || p.indexOf('/marshrut-fajl/') === 0) return false;
+  if(p.indexOf('/фото-точек/') === 0 || p.indexOf('/%D1%84%D0%BE%D1%82%D0%BE-') === 0) return false;
+  return !/\.[a-z0-9]{1,6}$/i.test(p);   // файлы: картинки, скрипты, .php от сканеров
+}
+let ДЕНЬ_ЖУРНАЛА = '', ДЕНЬ_ЖУРНАЛА_ДО = 0;
+function деньЖурнала(t){
+  if(t >= ДЕНЬ_ЖУРНАЛА_ДО){
+    const d = new Date(t);
+    ДЕНЬ_ЖУРНАЛА = d.toISOString().slice(0, 10);
+    ДЕНЬ_ЖУРНАЛА_ДО = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1);
+  }
+  return ДЕНЬ_ЖУРНАЛА;
+}
+function записатьВход(req, u, код){
+  const ua = String(req.headers['user-agent'] || '');
+  const t = Date.now();
+  const ev = { t: t, e: 'hit',
+    v: crypto.createHash('sha1').update(адресКлиента(req) + '|' + ua + '|' + деньЖурнала(t)).digest('hex').slice(0, 12),
+    path: u.pathname.slice(0, 100), r: refHost(req.headers.referer),
+    m: /Mobile|Android|iPhone|iPad/i.test(ua) ? 'моб.' : 'комп.', code: код };
+  const from = меткаИзАдреса(u.searchParams); if(from) ev.from = from;
+  const app = appOf(ua); if(app) ev.app = app;
+  const bot = botOf(ua); if(bot) ev.bot = bot;
+  statsAdd(ev);
+}
+// Ловим код ответа там же, где его ставит страница, — в writeHead: HTML с 200
+// (и 304 главной), любой 404. Только GET и только адреса страниц.
+function журналВхода(req, res, u){
+  if(req.method !== 'GET' || !путьДляЖурнала(u.pathname)) return;
+  const writeHead = res.writeHead;
+  let записан = false;
+  res.writeHead = function(код, ...ещё){
+    if(!записан){
+      записан = true;
+      try{
+        const заголовки = ещё.find(x => x && typeof x === 'object') || {};
+        const тип = Object.keys(заголовки).find(к => к.toLowerCase() === 'content-type');
+        const html = !!тип && /^text\/html/i.test(String(заголовки[тип]));
+        if(код === 404 || код === 304 || (код === 200 && html)) записатьВход(req, u, код);
+      }catch(e){}
+    }
+    return writeHead.call(this, код, ...ещё);
+  };
 }
 
 // ── Будильник ─────────────────────────────────────────────────────────────
@@ -442,6 +565,8 @@ if(process.env.DATA_TEST === '1'){
 // Внешне это выглядит как переход живого человека, хотя человека не было.
 // Считать их вместе с людьми — значит обманывать себя.
 const BOTS = [
+  // Свои проверки и замеры помечены в User-Agent (проверки/_браузер.mjs и fetch проверок)
+  [/poisk-check/i,                         'наши проверки'],
   [/facebookexternalhit|facebookcatalog|meta-externalagent/i, 'Facebook — робот превью'],
   [/instagramexternalhit/i,                'Instagram — робот превью'],
   [/TelegramBot/i,                         'Telegram — робот превью'],
@@ -452,9 +577,10 @@ const BOTS = [
   [/Googlebot|Google-InspectionTool/i,     'Googlebot'],
   [/YandexBot|YandexRenderResourcesBot/i,  'робот Яндекса'],
   [/bingbot|AhrefsBot|SemrushBot|MJ12bot|DotBot|PetalBot|DataForSeoBot|GPTBot|ClaudeBot/i, 'поисковый робот'],
-  [/HeadlessChrome|python-requests|curl\/|Go-http-client|node-fetch|Java\//i, 'автоматика'],
+  [/HeadlessChrome|python-requests|curl\/|Go-http-client|node-fetch|Java\/|^node$|undici/i, 'автоматика'],
 ];
 function botOf(ua){
+  if(!ua) return 'без браузера';
   for(let i=0;i<BOTS.length;i++) if(BOTS[i][0].test(ua)) return BOTS[i][1];
   return '';
 }
@@ -496,14 +622,14 @@ function refHost(r){
 // из тела запроса берём только заранее разрешённые поля
 // id — номер места в событии route_add (у своей точки — 'm'), из него считается популярное.
 // У других событий id не храним: журналу он там ничего не говорит, а место занимает.
-const T_FIELDS = ['n','w','ttfb','load','sec','scroll','total','auto','c','region','city','type','rooms','max','host','from','id'];
+const T_FIELDS = ['n','w','ttfb','load','sec','scroll','total','auto','c','region','city','type','rooms','max','host','from','id','page','pt'];
 function statsFields(o){
   const out = {};
   for(const k of T_FIELDS){
     if(k === 'id' && o.e !== 'route_add') continue;
     const v = o[k];
     if(v === undefined || v === null || v === '') continue;
-    out[k] = (typeof v === 'number') ? v : String(v).slice(0,40);
+    out[k] = (typeof v === 'number') ? v : String(v).slice(0, k === 'page' ? 100 : 40);
   }
   return out;
 }
@@ -547,6 +673,111 @@ function searchLabel(p){
   const rooms = (p.rooms && p.rooms !== 'любое') ? (' · ' + p.rooms + '-комн') : '';
   const price = p.max ? (' · до ' + p.max + ' р.') : '';
   return [city, type].filter(Boolean).join(' · ') + rooms + price;
+}
+
+// ── Сводка журнала входов и кликов к объявлениям (/stats и /stats?json=1) ──
+const ТИП_СТРАНИЦЫ_RU = { home:'главная', city:'город', place:'место', hub:'хаб', route:'маршрут', prices:'цены', other:'прочее' };
+function сводкаЖурнала(now){
+  now = now || Date.now();
+  const с7 = now - 7 * DAY_MS, с14 = now - 14 * DAY_MS;
+  // день по Минску (UTC+3), а не по UTC: «вчера» владельца — минский
+  const деньКлюч = function(t){ return new Date(t + 3 * 3600000).toISOString().slice(0, 10); };
+  const дни = new Map(), метки = new Map(), нет = new Map();
+  const входыСтр = new Map(), тикток = new Map(), площадки = new Map(), страницы = new Map(), нули = new Map();
+  const плюс = function(м, к, n){ м.set(к, (м.get(к) || 0) + (n || 1)); };
+  const метка = function(f){
+    let м = метки.get(f);
+    if(!м){ м = { from: f, hits: 0, people: new Set(), openSessions: new Set(), open: 0, call: 0, hosts: {} }; метки.set(f, м); }
+    return м;
+  };
+  for(let i = 0; i < STATS.length; i++){
+    const x = STATS[i];
+    if(x.t <= с14) continue;
+    const неделя = x.t > с7;
+    // 404 — и от роботов: битую ссылку часто первым находит именно робот
+    if(неделя && x.e === 'hit' && x.code === 404){
+      let н = нет.get(x.path); if(!н){ н = { path: x.path, n: 0, people: 0, bots: 0 }; нет.set(x.path, н); }
+      н.n++; if(x.bot) н.bots++; else н.people++;
+    }
+    if(x.bot) continue;
+    const д = деньКлюч(x.t);
+    let дн = дни.get(д);
+    if(!дн){ дн = { day: д, hits: 0, people: new Set(), views: 0, open: 0, call: 0, notFound: 0 }; дни.set(д, дн); }
+    if(x.e === 'hit'){ if(x.code === 404) дн.notFound++; else { дн.hits++; дн.people.add(x.v); } }
+    else if(x.e === 'view') дн.views++;
+    else if(x.e === 'open') дн.open++;
+    else if(x.e === 'call') дн.call++;
+    if(!неделя) continue;
+    if(x.e === 'hit' && x.code !== 404){
+      if(x.from){ const м = метка(x.from); м.hits++; м.people.add(x.v); }
+      if(x.r !== 'внутри сайта') плюс(входыСтр, x.path);
+      if(x.app === 'из приложения TikTok' && !x.from) плюс(тикток, x.path);
+    }else if(x.e === 'open' || x.e === 'call'){
+      const p = x.p || {};
+      const стр = (p.page || '(главная, до 15.10)') + (p.pt ? (' · ' + (ТИП_СТРАНИЦЫ_RU[p.pt] || p.pt)) : '');
+      let с = страницы.get(стр); if(!с){ с = { page: стр, open: 0, call: 0 }; страницы.set(стр, с); }
+      if(x.e === 'open'){ с.open++; if(p.host) плюс(площадки, p.host); } else с.call++;
+      if(p.from){
+        const м = метка(p.from);
+        if(x.e === 'open'){ м.open++; м.openSessions.add(x.s); if(p.host) м.hosts[p.host] = (м.hosts[p.host] || 0) + 1; }
+        else м.call++;
+      }
+    }else if(x.e === 'search' && x.p && x.p.total === 0){
+      плюс(нули, searchLabel(x.p) + (x.p.auto ? ' (сам)' : ''));
+    }
+  }
+  const пары = function(м, имя, сколько){
+    return [...м.entries()].sort(function(a, b){ return b[1] - a[1]; }).slice(0, сколько || 30)
+      .map(function(e){ const о = {}; о[имя] = e[0]; о.n = e[1]; return о; });
+  };
+  return {
+    days: [...дни.values()].sort(function(a, b){ return a.day < b.day ? -1 : 1; })
+      .map(function(д){ return { day: д.day, hits: д.hits, people: д.people.size, views: д.views, open: д.open, call: д.call, notFound: д.notFound }; }),
+    marks: [...метки.values()].map(function(м){
+      return { from: м.from, hits: м.hits, people: м.people.size, openSessions: м.openSessions.size, open: м.open, call: м.call, hosts: м.hosts };
+    }).sort(function(a, b){ return b.hits - a.hits || b.open - a.open; }).slice(0, 60),
+    entryPages: пары(входыСтр, 'path'),
+    tiktokNoMark: пары(тикток, 'path'),
+    notFound: [...нет.values()].sort(function(a, b){ return b.n - a.n; }).slice(0, 40),
+    openByHost: пары(площадки, 'host'),
+    openByPage: [...страницы.values()].sort(function(a, b){ return (b.open + b.call) - (a.open + a.call); }).slice(0, 40),
+    zeroSearches: пары(нули, 'search'),
+  };
+}
+function блокиЖурнала(св, esc, bars){
+  const ряды = function(сп, к){ return сп.map(function(x){ return [x[к], x.n]; }); };
+  const площадкиТекст = function(h){
+    return Object.keys(h).sort(function(a, b){ return h[b] - h[a]; }).map(function(к){ return esc(к) + ' ' + h[к]; }).join(', ');
+  };
+  return '<h2>Входы по меткам (все страницы, 7 дней)</h2><div class="card">'
+    + (св.marks.length
+      ? '<table class="log"><tr><td><b>метка</b></td><td class="n"><b>входов</b></td><td class="n"><b>чел.</b></td>'
+        + '<td class="n"><b>сессий с open</b></td><td class="n"><b>звонков</b></td><td><b>по площадкам</b></td></tr>'
+        + св.marks.map(function(м){
+            return '<tr><td>' + esc(м.from) + '</td><td class="n">' + м.hits + '</td><td class="n">' + м.people
+              + '</td><td class="n">' + м.openSessions + '</td><td class="n">' + м.call + '</td><td class="raw">' + площадкиТекст(м.hosts) + '</td></tr>';
+          }).join('') + '</table>'
+      : '<p class="none">пока пусто</p>')
+    + '<p class="none">Входы считает сервер — на любой странице, без JavaScript и без Метрики. '
+    + '«Сессий с open» — сколько из пришедших по метке перешли к объявлению (метка живёт до закрытия вкладки).</p></div>'
+    + '<h2>Страницы входа (7 дней)</h2><div class="card">' + bars(ряды(св.entryPages, 'path').slice(0, 20))
+    + '<p class="none">Первая страница визита: пришли извне (из ТикТока, поиска, по прямой ссылке), а не перешли внутри сайта.</p></div>'
+    + '<h2>Из приложения TikTok без метки (7 дней)</h2><div class="card">' + bars(ряды(св.tiktokNoMark, 'path').slice(0, 20))
+    + '<p class="none">Скорее всего, ссылка в профиле или скопированная без ?from=.</p></div>'
+    + '<h2>404 за 7 дней</h2><div class="card">'
+    + (св.notFound.length
+      ? '<table class="log"><tr><td><b>адрес</b></td><td class="n"><b>всего</b></td><td class="n"><b>людей</b></td><td class="n"><b>роботов</b></td></tr>'
+        + св.notFound.map(function(н){ return '<tr><td>' + esc(н.path) + '</td><td class="n">' + н.n + '</td><td class="n">' + н.people + '</td><td class="n">' + н.bots + '</td></tr>'; }).join('')
+        + '</table>'
+      : '<p class="none">пока пусто</p>') + '</div>'
+    + '<h2>Переходы к объявлениям по площадкам (7 дней)</h2><div class="card">' + bars(ряды(св.openByHost, 'host')) + '</div>'
+    + '<h2>Страница → переходы к объявлениям (7 дней)</h2><div class="card">'
+    + (св.openByPage.length
+      ? '<table class="log"><tr><td><b>страница</b></td><td class="n"><b>open</b></td><td class="n"><b>звонков</b></td></tr>'
+        + св.openByPage.map(function(с){ return '<tr><td>' + esc(с.page) + '</td><td class="n">' + с.open + '</td><td class="n">' + с.call + '</td></tr>'; }).join('')
+        + '</table>'
+      : '<p class="none">пока пусто</p>') + '</div>'
+    + (св.zeroSearches.length ? ('<h2>Поиски без результата (7 дней)</h2><div class="card">' + bars(ряды(св.zeroSearches, 'search')) + '</div>') : '');
 }
 
 function statsPage(популярное){
@@ -619,7 +850,10 @@ function statsPage(популярное){
   const secs = ends.map(function(x){ return x.p && x.p.sec; }).filter(function(v){ return typeof v === 'number'; });
   const scrl = ends.map(function(x){ return x.p && x.p.scroll; }).filter(function(v){ return typeof v === 'number'; });
 
-  const last = STATS.slice(-40).reverse().map(function(x){
+  const последние = [];
+  for(let i = STATS.length - 1; i >= 0 && последние.length < 40; i--) if(STATS[i].e !== 'hit') последние.push(STATS[i]);
+  const св = сводкаЖурнала(now);
+  const last = последние.map(function(x){
     const src = (x.bot ? ('🤖 ' + x.bot) : (x.r || ''))
               + (x.rh && !x.bot ? (' (' + x.rh + ')') : '')
               + (x.app ? (' · ' + x.app) : '');
@@ -742,6 +976,8 @@ function statsPage(популярное){
                function(x){ return x.p.from; }, 12)) +
       '<p class="none">Добавь к ссылке метку — и будет видно, какой ролик привёл людей: ' +
       SITE_URL + '/?from=tiktok-post1</p></div>' +
+
+    блокиЖурнала(св, esc, bars) +
 
     '<h2>Роботы и предпросмотры (7 дней)</h2><div class="card">' +
       bars(top(only(botsWeek,'view'), function(x){ return x.bot; }, 12)) +
@@ -17067,7 +17303,7 @@ ${меткаИзАдреса.toString()}
     var mark = меткаИзАдреса(new URLSearchParams(location.search));
     var vid = localStorage.getItem('pk_vid'), isNew = 0;
     if(!vid){ vid = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('pk_vid', vid); isNew = 1; }
-    var sid = Math.random().toString(36).slice(2);
+    var sid = window.__pkS || Math.random().toString(36).slice(2);
     window.__T = function(e, d){
       try{
         var o = d || {}; o.e = e; o.v = vid; o.s = sid;
@@ -17097,16 +17333,7 @@ ${меткаИзАдреса.toString()}
     }
     addEventListener('pagehide', bye);
     document.addEventListener('visibilitychange', function(){ if(document.visibilityState === 'hidden') bye(); });
-    // переходы в объявление и звонки
-    document.addEventListener('click', function(ev){
-      var a = (ev.target && ev.target.closest) ? ev.target.closest('a') : null;
-      if(!a) return;
-      var href = a.getAttribute('href') || '';
-      if(/^tel:/.test(href)) window.__T('call', {});
-      else if(a.target === '_blank' && /^https?:/.test(href)){
-        try{ window.__T('open', { host: new URL(a.href).hostname.replace(/^www\./,'') }); }catch(_){}
-      }
-    }, true);
+    // переходы в объявление и звонки шлёт общий скрипт всех страниц (скриптКликов)
   }catch(_){}
 })();
 // ── Короткое сообщение внизу экрана ───────────────────────────────────────
@@ -18864,13 +19091,56 @@ const ПОДТВЕРЖДЕНИЕ_ПОИСКА = '<meta name="google-site-verific
   // nochy.by (30.09.2026) — свои теги у нового адреса в обеих консолях
   + '<meta name="google-site-verification" content="kTwdRUwbRezhHYh3JCWYq8XWHekzF7q1k2xce_Zv01M">'
   + '<meta name="yandex-verification" content="994f05556a5dd515">';
+// ── Клик «к объявлению» и звонок — на всех страницах ──────────────────────
+// Раньше их слал только скрипт главной, и на страницах городов, мест, цен и
+// маршрутов (куда ведут закрепы) переходы к объявлениям не считались. Теперь
+// крошечный скрипт вставляется в каждую HTML-страницу рядом со счётчиком.
+// Метка поста (?from=) запоминается в sessionStorage: человек пришёл на /gomel
+// по метке, перешёл на место и оттуда к объявлению — клик знает, какой пост его
+// привёл. sendBeacon не задерживает переход. Со счётчиком — ещё цели Метрики
+// open_ad и call. Без «\», бэктиков и «${»: строка идёт в страницу как есть.
+const СКРИПТ_КЛИКОВ = new Map();
+function скриптКликов(тип){
+  let с = СКРИПТ_КЛИКОВ.get(тип);
+  if(с) return с;
+  с = '<script id="pkc">(function(){var t="' + тип + '",f="",s="";'
+    + датаИзАдреса.toString() + меткаИзАдреса.toString()
+    + 'try{f=меткаИзАдреса(new URLSearchParams(location.search));var ss=sessionStorage;'
+    + 'if(f)ss.setItem("pk_from",f);else f=ss.getItem("pk_from")||"";'
+    + 's=ss.getItem("pk_sid")||"";if(!s){s=Math.random().toString(36).slice(2);ss.setItem("pk_sid",s);}}catch(_){}'
+    + 'if(!s)s=Math.random().toString(36).slice(2);window.__pkS=s;'
+    + 'function send(e,h){var p=location.pathname;try{var v="";try{v=localStorage.getItem("pk_vid")||"";}catch(_){}'
+    + 'var b=JSON.stringify({e:e,v:v,s:s,host:h,from:f,page:p,pt:t});'
+    + 'if(!(navigator.sendBeacon&&navigator.sendBeacon("/api/t",new Blob([b],{type:"application/json"}))))'
+    + 'fetch("/api/t",{method:"POST",body:b,keepalive:true});}catch(_){}'
+    + (МЕТРИКА_ВКЛ ? 'try{if(window.ym)ym(112722670,"reachGoal",e==="call"?"call":"open_ad",{host:h,page:p});}catch(_){}' : '')
+    + '}document.addEventListener("click",function(ev){var a=ev.target&&ev.target.closest?ev.target.closest("a"):null;if(!a)return;'
+    + 'var r=a.getAttribute("href")||"";if(/^tel:/.test(r))send("call","");'
+    + 'else if(a.target==="_blank"&&/^https?:/.test(r)){var h=a.hostname.replace(/^www[.]/,"");if(h&&h!==location.hostname)send("open",h);}},true);'
+    + '})();</script>';
+  СКРИПТ_КЛИКОВ.set(тип, с);
+  return с;
+}
+// Тип страницы для кликов: главная / город / место / хаб / маршрут / цены / прочее.
+function типСтраницы(p){
+  const s = p.slice(1);
+  if(p === '/') return 'home';
+  if(p === '/ceny-kvartir-na-sutki') return 'prices';
+  if(p.indexOf('/mesto/') === 0) return 'place';
+  if(p === '/m' || p.indexOf('/m/') === 0 || p === '/marshrut' || своё(МАРШРУТ_ПО, s)) return 'route';
+  if(p === '/goroda' || p === '/dostoprimechatelnosti-belarusi' || p === '/vyhodnye' || p.indexOf('/podborka/') === 0
+     || своё(ЧТО_ПОСМОТРЕТЬ, s) || своё(ПОЕЗДКИ, s)) return 'hub';
+  if(своё(ГИДЫ, s) || своё(СПРОС, s) || parseCitySlug(s)) return 'city';
+  return 'other';
+}
 function сМетрикой(html){
   // Функцией, а не строкой замены: в строке «$» что-то значил бы.
   return html.replace(/<\/head>(\s*<body[^>]*>)/, (м, тело) => ПОДТВЕРЖДЕНИЕ_ПОИСКА + МЕТРИКА_ГОЛОВА + '</head>' + тело + МЕТРИКА_ТЕЛО);
 }
 // Обёртка ответа: HTML-страницы (по Content-Type из writeHead) получают
-// счётчик, всё остальное — JSON, картинки, файлы маршрутов — идёт как было.
-function метрикаВОтвет(res){
+// счётчик (если он включён) и скрипт кликов, всё остальное — JSON, картинки,
+// файлы маршрутов — идёт как было.
+function вставкиВОтвет(res, путь){
   const writeHead = res.writeHead, end = res.end;
   let html = false;
   res.writeHead = function(код, ...ещё){
@@ -18880,10 +19150,26 @@ function метрикаВОтвет(res){
     return writeHead.call(this, код, ...ещё);
   };
   res.end = function(тело, ...ещё){
-    if(html && typeof тело === 'string' && тело.indexOf('112722670') < 0) тело = сМетрикой(тело);
+    if(html && typeof тело === 'string'){
+      // Скрипт кликов — прямо перед </head>. Главная (200 с лишним КБ) вшивает его
+      // в шаблон один раз при первом заходе — её не трогаем совсем, даже поиском
+      // </head>. У остальных уже вставленный скрипт видно по самим байтам перед
+      // </head>, без поиска по всей странице.
+      const i = путь === '/' ? -1 : тело.indexOf('</head>');
+      if(i >= 0){
+        const с = скриптКликов(типСтраницы(путь));
+        if(!тело.startsWith(с, i - с.length)) тело = тело.slice(0, i) + с + тело.slice(i);
+      }
+      // В скрипте кликов тоже есть номер счётчика (цели), поэтому ищем именно init.
+      if(МЕТРИКА_ВКЛ && тело.indexOf('ym(112722670,"init"') < 0) тело = сМетрикой(тело);
+    }
     return end.call(this, тело, ...ещё);
   };
 }
+
+// Главная со скриптом кликов — собирается один раз, при первом заходе
+// (скриптКликов зависит от настроек, объявленных ниже шаблона).
+let ГЛАВНАЯ_С_КЛИКАМИ = null;
 
 http.createServer(async (req,res)=>{
   отметитьЗапрос();
@@ -18896,7 +19182,8 @@ http.createServer(async (req,res)=>{
     res.writeHead(301, { 'Location': SITE_URL + req.url, 'Cache-Control': 'public, max-age=86400' });
     res.end(); return;
   }
-  if(МЕТРИКА_ВКЛ && !БЕЗ_МЕТРИКИ.has(u.pathname)) метрикаВОтвет(res);
+  журналВхода(req, res, u);
+  if(!БЕЗ_МЕТРИКИ.has(u.pathname)) вставкиВОтвет(res, u.pathname);
   // Служебные адреса для скриптов страниц: Google находит их в коде (/api/place?id=…)
   // и записывает в «ошибки 4xx». Закрывать в robots.txt нельзя — тогда робот не увидит
   // данные при отрисовке страниц; поэтому только просим не индексировать сами ответы.
@@ -19160,6 +19447,13 @@ http.createServer(async (req,res)=>{
     if(u.searchParams.get('key') !== STATS_KEY){
       res.writeHead(403, {'Content-Type':'text/plain; charset=utf-8', 'X-Robots-Tag':'noindex'});
       res.end('Нужен ключ: /stats?key=…'); return;
+    }
+    // Сводка для снимка в файл (проверки/снять-статистику.mjs): только агрегаты, без событий.
+    if(u.searchParams.get('json') === '1'){
+      res.writeHead(200, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Robots-Tag':'noindex'});
+      res.end(JSON.stringify(Object.assign({ site: SITE_URL, at: new Date().toISOString(), uptimeSec: Math.round((Date.now() - ЗАПУЩЕН) / 1000),
+        events: STATS.length, since: STATS.length ? new Date(STATS[0].t).toISOString() : null }, сводкаЖурнала(Date.now()))));
+      return;
     }
     // Популярное — с названиями из справочника; справочник не ответил —
     // хотя бы номера, цифры владельцу нужнее названий.
@@ -19647,7 +19941,8 @@ http.createServer(async (req,res)=>{
   // и человеку не приходится ждать запроса, а поисковик видит содержимое.
   // Вкладываем только первую страницу выдачи — этого хватает на первый экран.
   обновитьЛентуМаршрутов();
-  let page = ГЛАВНАЯ.replace('<!--МАРШРУТЫ-->', () => ЛЕНТА_МАРШРУТОВ).replace('<!--ГОРОДА-->', () => блокГородовГлавной());
+  if(!ГЛАВНАЯ_С_КЛИКАМИ) ГЛАВНАЯ_С_КЛИКАМИ = ГЛАВНАЯ.replace('</head>', () => скриптКликов('home') + '</head>');
+  let page = ГЛАВНАЯ_С_КЛИКАМИ.replace('<!--МАРШРУТЫ-->', () => ЛЕНТА_МАРШРУТОВ).replace('<!--ГОРОДА-->', () => блокГородовГлавной());
   // Вкладки «Россия» и «Что посетить» — со своими заголовком, описанием и canonical
   const вкладка = u.searchParams.get('country');
   if(вкладка === 'ru' || вкладка === 'places') page = page.replace(ГОЛОВА_ГЛАВНОЙ.by, () => ГОЛОВА_ГЛАВНОЙ[вкладка]);
@@ -19669,7 +19964,7 @@ http.createServer(async (req,res)=>{
   // Отпечаток страницы: браузер пришлёт его обратно, и если ничего
   // не изменилось, мы ответим «304» без тела — это несколько сотен байт
   // вместо ста тридцати килобайт.
-  // Счётчик вставляется позже, в метрикаВОтвет, — учитываем его в отпечатке,
+  // Счётчик вставляется позже, в вставкиВОтвет, — учитываем его в отпечатке (скрипт кликов уже в page),
   // иначе браузер со старой копией без счётчика получал бы «304» и дальше.
   const tag = '"' + crypto.createHash('sha1').update(page + (МЕТРИКА_ВКЛ ? МЕТРИКА_ГОЛОВА : '')).digest('base64').slice(0, 22) + '"';
   if(req.headers['if-none-match'] === tag){
