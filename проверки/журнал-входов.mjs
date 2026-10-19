@@ -109,6 +109,8 @@ try {
     check(путь + ': скрипт кликов один, в <head>, тип ' + тип, n === 1 && где > 0 && где < голова && т.includes('var t="' + тип + '"'),
       'штук ' + n + ', тип ' + (т.match(/var t="([a-z]+)"/) || [])[1]);
     check(путь + ': цели Метрики open_ad / call', т.includes('"reachGoal",e==="call"?"call":"open_ad"'));
+    check(путь + ': цели связи contact_click / feedback_open / feedback_sent / place_sent',
+      ['contact_click', 'feedback_open', 'feedback_sent', 'place_sent'].every(ц => т.includes('"' + ц + '"')));
   }
   for (const путь of ['/stats?key=' + КЛЮЧ, '/predlozheniya?key=' + КЛЮЧ])
     check(путь.split('?')[0] + ': без скрипта кликов', !(await (await взять(путь)).text()).includes('id="pkc"'));
@@ -128,12 +130,19 @@ try {
     if (m.id && pend.has(m.id)) { const p = pend.get(m.id); pend.delete(m.id); m.error ? p.rej(new Error(m.error.message)) : p.res(m.result); }
   });
   await send('Page.enable'); await send('Runtime.enable'); await send('Network.enable');
-  await send('Network.setBlockedURLs', { urls: ['*mc.yandex.ru*', '*yandex.ru/metrika*'] });
+  await send('Network.setBlockedURLs', { urls: ['*mc.yandex.ru*', '*yandex.ru/metrika*', '*formsubmit.co*'] });
+  // Письма формы пожелания уходят через FormSubmit — в проверке вместо него ответ «отправлено»,
+  // наружу ничего не уходит (адрес ещё и заблокирован выше).
   await send('Page.addScriptToEvaluateOnNewDocument', { source: `
     (function(){
       window.__маяки = [];
       var родной = navigator.sendBeacon ? navigator.sendBeacon.bind(navigator) : null;
       navigator.sendBeacon = function(u, b){ if(String(u).indexOf('/api/t') >= 0) window.__маяки.push(b); return родной ? родной(u, b) : true; };
+      var родFetch = window.fetch;
+      window.fetch = function(u, o){
+        if(String(u).indexOf('formsubmit.co') >= 0) return Promise.resolve(new Response('{"success":"true"}', { headers: { 'Content-Type': 'application/json' } }));
+        return родFetch.apply(this, arguments);
+      };
     })();` });
 
   await открыть(SITE + '/gomel?from=jt-klik');
@@ -164,6 +173,39 @@ try {
   const о3 = await маякиOpen();
   check('главная: один open, не задвоен', о3.length === 1 && о3[0].host === 'realt.by' && о3[0].pt === 'home', JSON.stringify(о3));
 
+  // Связь (19.10): кнопка «Сдаёте жильё? … Напишите нам ↓», «Оставить пожелание», отправка
+  // пожелания и формы «Предложить место» — событие contact {what, page} в своей статистике
+  // (тем же маяком, что open/call) и цели Метрики; на главной каждое — ровно один раз.
+  const маякиСвязи = () => js(`Promise.all((window.__маяки||[]).map(function(b){ return b && b.text ? b.text() : String(b); }))
+    .then(function(сп){ return сп.map(function(т){ try{ return JSON.parse(т); }catch(e){ return {}; } })
+    .filter(function(о){ return о.e === 'contact'; }); })`);
+  const цельСвязи = async имя => (await цели()).filter(ц => ц[2] === имя);
+  await js('document.getElementById("knizu").click(), true');
+  await sleep(300);
+  let св = await маякиСвязи();
+  check('«Сдаёте жильё? … Напишите нам ↓»: один contact what=knizu, страница /',
+    св.length === 1 && св[0].what === 'knizu' && св[0].page === '/' && св[0].pt === 'home' && !!св[0].s, JSON.stringify(св));
+  check('… и одна цель Метрики contact_click', (await цельСвязи('contact_click')).length === 1, JSON.stringify(await цели()));
+  await js('document.getElementById("fbOpen").click(), true');
+  await sleep(300);
+  св = await маякиСвязи();
+  check('«Оставить пожелание»: contact what=fb_open, без задвоения', св.length === 2 && св[1].what === 'fb_open', JSON.stringify(св));
+  check('… и цель feedback_open', (await цельСвязи('feedback_open')).length === 1);
+  await js('document.getElementById("fbMsg").value = "проверка связи", document.getElementById("fbSend").click(), true');
+  for (let i = 0; i < 20 && (await маякиСвязи()).length < 3; i++) await sleep(200);
+  св = await маякиСвязи();
+  check('пожелание отправлено: contact what=fb_sent', св.length === 3 && св[2].what === 'fb_sent', JSON.stringify(св));
+  check('… и цель feedback_sent', (await цельСвязи('feedback_sent')).length === 1);
+  await js(`(function(){ var g = function(i){ return document.getElementById(i); };
+    g('plName').value = 'Проверка связи'; g('plText').value = 'Проверочное место, не настоящее.';
+    g('plCoord').value = '53.9, 27.56'; g('plForm').requestSubmit(); return true; })()`);
+  for (let i = 0; i < 30 && (await маякиСвязи()).length < 4; i++) await sleep(200);
+  св = await маякиСвязи();
+  check('место предложено (успешно): contact what=place_sent', св.length === 4 && св[3].what === 'place_sent', JSON.stringify(св));
+  check('… и цель place_sent', (await цельСвязи('place_sent')).length === 1);
+  check('«Предложить место» с ошибкой не считается отправкой', await js(`(function(){ document.getElementById('plName').value = '';
+    document.getElementById('plForm').requestSubmit(); return true; })()`) && (await маякиСвязи()).length === 4);
+
   await sleep(500);
   const с2 = await сводка();
   const м2 = с2.marks.find(x => x.from === 'jt-klik');
@@ -172,6 +214,11 @@ try {
   check('сводка: open по площадкам', с2.openByHost.some(x => x.host === 'kufar.by') && с2.openByHost.some(x => x.host === 'realt.by'), JSON.stringify(с2.openByHost));
   check('сводка: страница → open', с2.openByPage.some(x => x.page === '/gomel · город' && x.open === 1)
     && с2.openByPage.some(x => x.page === '/mesto/286 · место' && x.call === 1), JSON.stringify(с2.openByPage));
+  const связь = Object.fromEntries((с2.contact || []).map(x => [x.what, x.n]));
+  check('сводка: «связь» — по одному knizu, fb_open, fb_sent, place_sent',
+    связь.knizu === 1 && связь.fb_open === 1 && связь.fb_sent === 1 && связь.place_sent === 1, JSON.stringify(с2.contact));
+  const стат = await (await взять('/stats?key=' + КЛЮЧ)).text();
+  check('/stats: блок «Связь: клики и отправки» с цифрами', стат.includes('Связь: клики и отправки') && /отправил пожелание/.test(стат));
 } catch (e) {
   check('проверка не сломалась', false, e.stack);
 } finally {

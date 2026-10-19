@@ -636,7 +636,8 @@ function refHost(r){
 // из тела запроса берём только заранее разрешённые поля
 // id — номер места в событии route_add (у своей точки — 'm'), из него считается популярное.
 // У других событий id не храним: журналу он там ничего не говорит, а место занимает.
-const T_FIELDS = ['n','w','ttfb','load','sec','scroll','total','auto','c','region','city','type','rooms','max','host','from','id','page','pt'];
+// what — что нажали или отправили в событии contact (СВЯЗЬ_RU)
+const T_FIELDS = ['n','w','ttfb','load','sec','scroll','total','auto','c','region','city','type','rooms','max','host','from','id','page','pt','what'];
 function statsFields(o){
   const out = {};
   for(const k of T_FIELDS){
@@ -676,8 +677,16 @@ const EV_RU = {
   subscribe:     'ждёт уведомлений о жилье',
   place_suggest: 'хочет предложить точку',
   route_add:     'добавил место в маршрут',
+  contact:       'связь: кнопка или форма',
 };
 function evRu(e){ return EV_RU[e] || e; }
+// Связь с проектом (19.10): событие contact шлёт скрипт кликов (pkc) — поле what.
+const СВЯЗЬ_RU = {
+  knizu:      'кнопка «Сдаёте жильё? … Напишите нам ↓»',
+  fb_open:    'открыл форму пожелания',
+  fb_sent:    'отправил пожелание',
+  place_sent: 'отправил место («Предложить место»)',
+};
 
 function searchLabel(p){
   if(!p) return '';
@@ -697,7 +706,7 @@ function сводкаЖурнала(now){
   // день по Минску (UTC+3), а не по UTC: «вчера» владельца — минский
   const деньКлюч = function(t){ return new Date(t + 3 * 3600000).toISOString().slice(0, 10); };
   const дни = new Map(), метки = new Map(), нет = new Map();
-  const входыСтр = new Map(), тикток = new Map(), площадки = new Map(), страницы = new Map(), нули = new Map();
+  const входыСтр = new Map(), тикток = new Map(), площадки = new Map(), страницы = new Map(), нули = new Map(), связь = new Map();
   const плюс = function(м, к, n){ м.set(к, (м.get(к) || 0) + (n || 1)); };
   const метка = function(f){
     let м = метки.get(f);
@@ -738,6 +747,10 @@ function сводкаЖурнала(now){
       }
     }else if(x.e === 'search' && x.p && x.p.total === 0){
       плюс(нули, searchLabel(x.p) + (x.p.auto ? ' (сам)' : ''));
+    }else if(x.e === 'contact' && x.p && x.p.what){
+      let к = связь.get(x.p.what); if(!к){ к = { what: x.p.what, n: 0, sessions: new Set(), pages: {} }; связь.set(x.p.what, к); }
+      к.n++; if(x.s) к.sessions.add(x.s);
+      if(x.p.page) к.pages[x.p.page] = (к.pages[x.p.page] || 0) + 1;
     }
   }
   const пары = function(м, имя, сколько){
@@ -756,6 +769,9 @@ function сводкаЖурнала(now){
     openByHost: пары(площадки, 'host'),
     openByPage: [...страницы.values()].sort(function(a, b){ return (b.open + b.call) - (a.open + a.call); }).slice(0, 40),
     zeroSearches: пары(нули, 'search'),
+    // связь: кнопка «Напишите нам», форма пожелания, отправки (19.10)
+    contact: [...связь.values()].sort(function(a, b){ return b.n - a.n; })
+      .map(function(к){ return { what: к.what, n: к.n, sessions: к.sessions.size, pages: к.pages }; }),
   };
 }
 function блокиЖурнала(св, esc, bars){
@@ -791,7 +807,18 @@ function блокиЖурнала(св, esc, bars){
         + св.openByPage.map(function(с){ return '<tr><td>' + esc(с.page) + '</td><td class="n">' + с.open + '</td><td class="n">' + с.call + '</td></tr>'; }).join('')
         + '</table>'
       : '<p class="none">пока пусто</p>') + '</div>'
-    + (св.zeroSearches.length ? ('<h2>Поиски без результата (7 дней)</h2><div class="card">' + bars(ряды(св.zeroSearches, 'search')) + '</div>') : '');
+    + (св.zeroSearches.length ? ('<h2>Поиски без результата (7 дней)</h2><div class="card">' + bars(ряды(св.zeroSearches, 'search')) + '</div>') : '')
+    + '<h2>Связь: клики и отправки (7 дней)</h2><div class="card">'
+    + (св.contact.length
+      ? '<table class="log"><tr><td><b>что</b></td><td class="n"><b>раз</b></td><td class="n"><b>сессий</b></td><td><b>страницы</b></td></tr>'
+        + св.contact.map(function(к){
+            return '<tr><td>' + esc(СВЯЗЬ_RU[к.what] || к.what) + '</td><td class="n">' + к.n + '</td><td class="n">' + к.sessions
+              + '</td><td class="raw">' + площадкиТекст(к.pages) + '</td></tr>';
+          }).join('') + '</table>'
+      : '<p class="none">пока пусто</p>')
+    + '<p class="none">Кнопка «Сдаёте жильё? Есть пожелания проекту? Напишите нам ↓», «Оставить пожелание», успешная '
+    + 'отправка пожелания и формы «Предложить место». Со счётчиком — те же цели в Метрике: contact_click, '
+    + 'feedback_open, feedback_sent, place_sent.</p></div>';
 }
 
 function statsPage(популярное){
@@ -17915,7 +17942,8 @@ $('#fbSend').addEventListener('click', async function(){
   if(!msg){ st.className='fb-status err'; st.textContent='Напишите, пожалуйста, сообщение.'; return; }
   this.disabled=true; st.textContent='Отправляю…';
   const self=this;
-  const ok=function(){ st.className='fb-status ok'; st.textContent='Спасибо! Сообщение отправлено.';
+  // успешная отправка — событие «связь» (скрипт кликов pkc: своя статистика и цель Метрики)
+  const ok=function(){ if(window.__pkC) window.__pkC('fb_sent'); st.className='fb-status ok'; st.textContent='Спасибо! Сообщение отправлено.';
     $('#fbMsg').value=''; $('#fbEmail').value=''; self.disabled=false; setTimeout(function(){ fbToggle(false); },1600); };
   const fail=function(){ st.className='fb-status err'; st.textContent='Не удалось отправить, попробуйте позже.'; self.disabled=false; };
   // /ajax принимает JSON; CORS у FormSubmit открыт, браузер сам шлёт Referer
@@ -18192,6 +18220,8 @@ $('#plForm').addEventListener('submit', function(e){
       btn.disabled = false;
       if(!j || !j.ok){ plStatus((j && j.error) || 'Не удалось отправить, попробуйте позже.', 'err'); return; }
       plStatus('Спасибо! Посмотрим и добавим', 'ok');
+      // успешная отправка — событие «связь» (скрипт кликов pkc); робот из ловушки не считается
+      if(!ловушка && window.__pkC) window.__pkC('place_sent');
       $('#plName').value = ''; $('#plText').value = ''; $('#plContact').value = ''; $('#plCoord').value = '';
       if(window.__plPin){ window.__plPin.remove(); window.__plPin = null; }
       if(ловушка) return;
@@ -19744,12 +19774,20 @@ function скриптКликов(тип){
     + 'if(f)ss.setItem("pk_from",f);else f=ss.getItem("pk_from")||"";'
     + 's=ss.getItem("pk_sid")||"";if(!s){s=Math.random().toString(36).slice(2);ss.setItem("pk_sid",s);}}catch(_){}'
     + 'if(!s)s=Math.random().toString(36).slice(2);window.__pkS=s;'
-    + 'function send(e,h){var p=location.pathname;try{var v="";try{v=localStorage.getItem("pk_vid")||"";}catch(_){}'
-    + 'var b=JSON.stringify({e:e,v:v,s:s,host:h,from:f,page:p,pt:t});'
+    + 'function send(e,h,w){var p=location.pathname;try{var v="";try{v=localStorage.getItem("pk_vid")||"";}catch(_){}'
+    + 'var b=JSON.stringify({e:e,v:v,s:s,host:h,from:f,page:p,pt:t,what:w});'
     + 'if(!(navigator.sendBeacon&&navigator.sendBeacon("/api/t",new Blob([b],{type:"application/json"}))))'
     + 'fetch("/api/t",{method:"POST",body:b,keepalive:true});}catch(_){}'
-    + (МЕТРИКА_ВКЛ ? 'try{if(window.ym)ym(112722670,"reachGoal",e==="call"?"call":"open_ad",{host:h,page:p});}catch(_){}' : '')
-    + '}document.addEventListener("click",function(ev){var a=ev.target&&ev.target.closest?ev.target.closest("a"):null;if(!a)return;'
+    // связь (19.10): contact с полем what — своя цель Метрики на каждое
+    + (МЕТРИКА_ВКЛ ? ('try{if(window.ym){if(e==="contact")ym(112722670,"reachGoal",{knizu:"contact_click",fb_open:"feedback_open",'
+        + 'fb_sent:"feedback_sent",place_sent:"place_sent"}[w],{page:p});'
+        + 'else ym(112722670,"reachGoal",e==="call"?"call":"open_ad",{host:h,page:p});}}catch(_){}') : '')
+    // Связь с проектом: «Сдаёте жильё? … Напишите нам ↓» (#knizu) и «Оставить пожелание» (#fbOpen) —
+    // здесь, по клику; успешные отправки пожелания и «Предложить место» зовут window.__pkC из скрипта главной.
+    + '}window.__pkC=function(w){send("contact","",w);};'
+    + 'document.addEventListener("click",function(ev){var k=ev.target&&ev.target.closest?ev.target.closest("#knizu,#fbOpen"):null;'
+    + 'if(k)send("contact","",k.id==="knizu"?"knizu":"fb_open");'
+    + 'var a=ev.target&&ev.target.closest?ev.target.closest("a"):null;if(!a)return;'
     + 'var r=a.getAttribute("href")||"";if(/^tel:/.test(r))send("call","");'
     + 'else if(a.target==="_blank"&&/^https?:/.test(r)){var h=a.hostname.replace(/^www[.]/,"");if(h&&h!==location.hostname)send("open",h);}},true);'
     + '})();</script>';
