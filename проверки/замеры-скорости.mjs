@@ -30,7 +30,7 @@ async function замерСервера(путь, заходов = 4) {
   for (let i = 0; i < заходов; i++) {
     const t0 = performance.now();
     try {
-      const r = await fetch(SITE + путь, { headers: { 'Accept-Encoding': 'gzip, br', 'User-Agent': 'Mozilla/5.0 speed-check' } });
+      const r = await fetch(SITE + путь, { headers: { 'Accept-Encoding': 'gzip, br', 'User-Agent': 'Mozilla/5.0 speed-check poisk-check' } });
       const t1 = performance.now();
       const b = await r.arrayBuffer();
       const t2 = performance.now();

@@ -248,7 +248,11 @@ try {
   check('последние голоса тоже ушли в GitHub', await дождаться(() => { try { const o = JSON.parse(вGitHub.текст); return Object.values(o).reduce((a, b) => a + b, 0) === итог1.всего; } catch { return false; } }, 40));
   const вGitHubПосле = JSON.parse(вGitHub.текст);
   // Журнал пишется в файл раз в 30 с (а kill на Windows не даёт серверу дописать его при выходе).
-  const журнал = () => { try { return JSON.parse(fs.readFileSync(path.join(папка1, 'stats.json'), 'utf8')); } catch { return null; } };
+  // В файле по событию в строке (NDJSON); старый вид — один JSON-массив.
+  const журнал = () => { try {
+    const т = fs.readFileSync(path.join(папка1, 'stats.json'), 'utf8');
+    return т.trimStart()[0] === '[' ? JSON.parse(т) : т.split('\n').filter(Boolean).map(с => JSON.parse(с));
+  } catch { return null; } };
   await дождаться(() => (журнал() || []).some(e => e.e === 'places' && e.v === 'журнал-1'), 150, 250);
   const события = журнал() || [];
   const безНомера = события.find(e => e.e === 'places' && e.v === 'журнал-1');
