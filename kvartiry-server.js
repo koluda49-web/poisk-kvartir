@@ -27,6 +27,11 @@ const ждём = (extra) => Object.assign({ signal: AbortSignal.timeout(WAIT) },
 const ГЛАВНЫЙ_ХОСТ = 'nochy.by';
 const СТАРЫЕ_ХОСТЫ = new Set(['poisk-kvartir.onrender.com', 'www.nochy.by']);
 const SITE_URL = 'https://' + ГЛАВНЫЙ_ХОСТ;
+// IndexNow (19.10): Bing и Яндекс узнают о новых и изменённых страницах сразу, а не
+// при следующем обходе. Ключ публичный по протоколу: лежит файлом /<ключ>.txt, а
+// поисковик сверяет его с ключом в уведомлении. Шлёт уведомления только скрипт
+// проверки/indexnow.mjs — руками; сам сервер при запуске ничего никуда не отправляет.
+const INDEXNOW_KEY = '6cf42ff2bc8724cc5edd95837c4351da';
 
 // ── Своя статистика посещений (без Метрики/Analytics) ──────────────────────
 // События копятся в памяти и раз в 30 секунд сбрасываются в файл рядом с сервером.
@@ -20431,6 +20436,11 @@ http.createServer(async (req,res)=>{
     }
     res.writeHead(200, {'Content-Type':'text/html; charset=utf-8', 'Cache-Control':'public, max-age=600'});
     res.end(html); return;
+  }
+  // файл ключа IndexNow — ровно сам ключ, текстом
+  if(u.pathname === '/' + INDEXNOW_KEY + '.txt'){
+    res.writeHead(200, {'Content-Type':'text/plain; charset=utf-8', 'Cache-Control':'public, max-age=86400'});
+    res.end(INDEXNOW_KEY); return;
   }
   if(u.pathname === '/robots.txt'){
     res.writeHead(200, {'Content-Type':'text/plain; charset=utf-8'});
