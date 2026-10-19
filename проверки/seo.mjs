@@ -347,6 +347,23 @@ for (const п of ['/minsk', '/brest', '/grodno', '/gomel', '/vitebsk', '/mogilev
   сверитьВопросы(с).forEach(т => нарушение(п, т));
 }
 
+// Однокомнатные по городам и «Дом на Новый год» по областям (19.10): частые вопросы обязательны
+// (у новогодних — от трёх: вопроса про баню нет, если её не называет ни одно объявление).
+for (const [п, от] of [['/brest-odnokomnatnye', 4], ['/minsk-odnokomnatnye', 4], ['/grodno-odnokomnatnye', 4], ['/gomel-odnokomnatnye', 4],
+                       ['/mogilev-odnokomnatnye', 4], ['/vitebsk-odnokomnatnye', 4], ['/molodechno-odnokomnatnye', 4], ['/baranovichi-odnokomnatnye', 4],
+                       ['/doma-na-novyj-god-brest', 3], ['/doma-na-novyj-god-grodno', 3], ['/doma-na-novyj-god-vitebsk', 3],
+                       ['/doma-na-novyj-god-gomel', 3], ['/doma-na-novyj-god-mogilev', 3]]) {
+  проверено++;
+  const r = await взять(п);
+  if (r.код !== 200) { нарушение(п, 'частые вопросы: код ' + r.код); continue; }
+  const с = разобрать(r.тело);
+  const блоки = вопросыИзРазметки(с.jsonld);
+  const вопросов = блоки.length ? (блоки[0].mainEntity || []).length : 0;
+  if (!/<h2>Частые вопросы<\/h2>/.test(r.тело)) нарушение(п, 'нет блока «Частые вопросы»');
+  if (вопросов < от || вопросов > 6) нарушение(п, 'FAQPage: вопросов ' + вопросов + ' (нужно ' + от + '–6)');
+  сверитьВопросы(с).forEach(т => нарушение(п, т));
+}
+
 // Не открылись. Гид или страница спроса без вариантов честно отдаёт 404 и
 // выпадает из sitemap — но узнаёт об этом сервер только при сборке страницы,
 // то есть уже во время нашего обхода, и только если все площадки ответили.
