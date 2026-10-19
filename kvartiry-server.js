@@ -707,6 +707,7 @@ function сводкаЖурнала(now){
   const деньКлюч = function(t){ return new Date(t + 3 * 3600000).toISOString().slice(0, 10); };
   const дни = new Map(), метки = new Map(), нет = new Map();
   const входыСтр = new Map(), тикток = new Map(), площадки = new Map(), страницы = new Map(), нули = new Map(), связь = new Map();
+  const ждут = new Map();   // «Следить за новыми вариантами»: фильтры → сколько раз и людей
   const плюс = function(м, к, n){ м.set(к, (м.get(к) || 0) + (n || 1)); };
   const метка = function(f){
     let м = метки.get(f);
@@ -747,6 +748,10 @@ function сводкаЖурнала(now){
       }
     }else if(x.e === 'search' && x.p && x.p.total === 0){
       плюс(нули, searchLabel(x.p) + (x.p.auto ? ' (сам)' : ''));
+    }else if(x.e === 'subscribe'){
+      const к = (x.p && (x.p.region || x.p.city)) ? searchLabel(x.p) : 'фильтры не записаны (до 20.10)';
+      let ж = ждут.get(к); if(!ж){ ж = { filters: к, n: 0, people: new Set() }; ждут.set(к, ж); }
+      ж.n++; ж.people.add(x.v);
     }else if(x.e === 'contact' && x.p && x.p.what){
       let к = связь.get(x.p.what); if(!к){ к = { what: x.p.what, n: 0, sessions: new Set(), pages: {} }; связь.set(x.p.what, к); }
       к.n++; if(x.s) к.sessions.add(x.s);
@@ -769,6 +774,9 @@ function сводкаЖурнала(now){
     openByHost: пары(площадки, 'host'),
     openByPage: [...страницы.values()].sort(function(a, b){ return (b.open + b.call) - (a.open + a.call); }).slice(0, 40),
     zeroSearches: пары(нули, 'search'),
+    // «Следить за новыми вариантами» (20.10): по фильтрам
+    subscribe: [...ждут.values()].sort(function(a, b){ return b.n - a.n; })
+      .map(function(ж){ return { filters: ж.filters, n: ж.n, people: ж.people.size }; }),
     // связь: кнопка «Напишите нам», форма пожелания, отправки (19.10)
     contact: [...связь.values()].sort(function(a, b){ return b.n - a.n; })
       .map(function(к){ return { what: к.what, n: к.n, sessions: к.sessions.size, pages: к.pages }; }),
@@ -808,6 +816,13 @@ function блокиЖурнала(св, esc, bars){
         + '</table>'
       : '<p class="none">пока пусто</p>') + '</div>'
     + (св.zeroSearches.length ? ('<h2>Поиски без результата (7 дней)</h2><div class="card">' + bars(ряды(св.zeroSearches, 'search')) + '</div>') : '')
+    + '<h2>Ждут уведомлений о новом жилье (7 дней)</h2><div class="card">'
+    + (св.subscribe.length
+      ? '<table class="log"><tr><td><b>фильтры</b></td><td class="n"><b>нажатий</b></td><td class="n"><b>чел.</b></td></tr>'
+        + св.subscribe.map(function(ж){ return '<tr><td>' + esc(ж.filters) + '</td><td class="n">' + ж.n + '</td><td class="n">' + ж.people + '</td></tr>'; }).join('')
+        + '</table>'
+      : '<p class="none">пока пусто</p>')
+    + '<p class="none">Кнопка «Следить за новыми вариантами» (пока заглушка). Со счётчиком — цель Метрики subscribe.</p></div>'
     + '<h2>Связь: клики и отправки (7 дней)</h2><div class="card">'
     + (св.contact.length
       ? '<table class="log"><tr><td><b>что</b></td><td class="n"><b>раз</b></td><td class="n"><b>сессий</b></td><td><b>страницы</b></td></tr>'
@@ -18241,7 +18256,10 @@ $('#subBtn').addEventListener('click', function(){
   this.disabled = true;
   this.textContent = 'Записали';
   $('#subOk').textContent = 'Спасибо! Функция ещё в разработке — мы считаем, сколько людей её ждёт.';
-  if(window.__T) window.__T('subscribe', {});
+  // 20.10: с фильтрами — видно, какого жилья ждут; цель Метрики subscribe
+  if(window.__T) window.__T('subscribe', { c:'by', region:$('#region').value, city:$('#city').value.trim(),
+    type:$('#type').value, rooms:$('#rooms').value||'любое', max:+$('#max').value||0 });
+  try{ if(window.ym) window.ym(112722670, 'reachGoal', 'subscribe'); }catch(_){}
 });
 
 // ── Установка на телефон ──────────────────────────────────────────────────

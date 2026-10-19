@@ -148,6 +148,9 @@ async function главная() {
   const есть = список.some(з => Array.isArray(з.contact));
   const связь = склеитьКлючи(список, 'contact', 'what', x => x.n);
   строки.push('Связь: ' + (связь.length ? связь.map(([к, n]) => (СВЯЗЬ[к] || к) + ' ' + n).join(', ') : есть ? 'никто не нажимал' : 'нет данных'));
+  const естьЖдут = список.some(з => Array.isArray(з.subscribe));
+  const ждут = склеитьКлючи(список, 'subscribe', 'filters', x => x.n);
+  строки.push('Ждут уведомлений: ' + (ждут.length ? ждут.slice(0, 5).map(([к, n]) => к + ' ' + n).join(', ') : естьЖдут ? 'никто не нажимал' : 'нет данных'));
   return записать(строки);
 }
 function ddmmСегодня(дни) { return ддмм(дни[дни.length - 1]); }
