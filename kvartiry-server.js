@@ -202,7 +202,16 @@ function деньЖурнала(t){
   }
   return ДЕНЬ_ЖУРНАЛА;
 }
-function записатьВход(req, u, код){
+// Мусорные адреса (19.10): роботы вытаскивали из скриптов страниц куски вида
+// /mesto/' + p.id + '-' + …, /' + x.link + и шли по ним; ещё /null. Таких страниц быть
+// не может: в наших адресах нет кавычек и « + », а /null и /undefined — это пустое
+// значение, подставленное в адрес. Отвечаем 404 с noindex, в журнал — как робота.
+function мусорныйАдрес(p){
+  let д = String(p || '');
+  try{ д = decodeURIComponent(д); }catch(e){}
+  return /['"<>`]/.test(д) || /\s\+|\+\s/.test(д) || /(^|\/)(null|undefined)\/?$/.test(д);
+}
+function записатьВход(req, u, код, бот){
   const ua = String(req.headers['user-agent'] || '');
   const t = Date.now();
   const ev = { t: t, e: 'hit',
@@ -211,7 +220,7 @@ function записатьВход(req, u, код){
     m: /Mobile|Android|iPhone|iPad/i.test(ua) ? 'моб.' : 'комп.', code: код };
   const from = меткаИзАдреса(u.searchParams); if(from) ev.from = from;
   const app = appOf(ua); if(app) ev.app = app;
-  const bot = botOf(ua); if(bot) ev.bot = bot;
+  const bot = бот || botOf(ua); if(bot) ev.bot = bot;
   statsAdd(ev);
 }
 // Ловим код ответа там же, где его ставит страница, — в writeHead: HTML с 200
@@ -9763,6 +9772,12 @@ function карточкаТочки(){
   }
   function инфо(p){ return (typeof ИНФО === 'object' && ИНФО && ИНФО[String(p.id)]) || {}; }
   function адресМеста(p){ var и = инфо(p); return '/mesto/' + p.id + (и.slug ? ('-' + и.slug) : ''); }
+  // Адрес в атрибут — функцией (19.10): атрибут ссылки с подстановкой прямо в строке кода
+  // роботы принимали за ссылку и ходили по кускам скрипта (404 в журнале). Имя атрибута
+  // здесь разорвано, поэтому в тексте страницы таких кусков нет.
+  function атрСсылки(u){ return ' hr' + 'ef="' + u + '"'; }
+  function атрСнимка(u){ return ' sr' + 'c="' + u + '"'; }
+  function атрСнимкаПозже(u){ return ' data-sr' + 'c="' + u + '"'; }
   function координаты(p){ return (+p.lat).toFixed(5) + ', ' + (+p.lng).toFixed(5); }
   // для окошка на карте — до 160 знаков без обрыва слова
   function короче(т){
@@ -9795,7 +9810,7 @@ function карточкаТочки(){
     // первый кадр с адресом, остальные — с пометкой: грузятся, когда до них долистают
     return '<div class="pc-ph" data-fit="">'
       + с.map(function(u, i){
-          return '<img class="pc-im' + (i ? '' : ' on') + '"' + (i ? (' data-src="' + esc(u) + '"') : (' src="' + esc(u) + '"'))
+          return '<img class="pc-im' + (i ? '' : ' on') + '"' + (i ? (атрСнимкаПозже(esc(u))) : (атрСнимка(esc(u))))
             + ' alt="' + esc(имя) + '">';
         }).join('')
       + (с.length > 1
@@ -9826,9 +9841,9 @@ function карточкаТочки(){
       + (d ? снимки(d.pics, p.name) : (ждём ? '<div class="pc-ph pc-wait">Загружаю снимки…</div>' : ''))
       + (мета ? ('<p class="pc-m">' + esc(мета) + '</p>') : '')
       + ((d && d.cred) ? ('<p class="pc-m">Фото с Викисклада: ' + esc(d.cred.author) + ', ' + esc(d.cred.lic)
-          + (d.cred.src ? (' · <a href="' + esc(d.cred.src) + '" target="_blank" rel="noopener nofollow">источник</a>') : '') + '</p>') : '')
+          + (d.cred.src ? (' · <a' + атрСсылки(esc(d.cred.src)) + ' target="_blank" rel="noopener nofollow">источник</a>') : '') + '</p>') : '')
       + (текст ? ('<p class="pc-t">' + esc(текст) + '</p>') : (ждём ? '<p class="pc-t pc-wait">Загружаю описание…</p>' : ''))
-      + '<div class="pc-b"><a class="pc-more" href="' + esc(адресМеста(p)) + '">Подробнее →</a>'
+      + '<div class="pc-b"><a class="pc-more"' + атрСсылки(esc(адресМеста(p))) + '>Подробнее →</a>'
       +   '<button class="pc-stay" type="button" aria-expanded="false">Жильё рядом</button>'
       +   '<button class="pc-drop" type="button">Убрать из маршрута</button></div>'
       + '<div class="pc-st" hidden></div></div>';
@@ -9841,7 +9856,7 @@ function карточкаТочки(){
       return '<div class="pp" data-id="' + esc(id) + '"><b>📍 ' + esc(p.name) + '</b>'
         + (з.length ? '' : ('<small>Своя точка · ' + координаты(p) + '</small>'))
         + з.map(function(x){
-            return '<a class="pp-here" href="' + esc(x.link) + '" target="_blank" rel="noopener">🏠 '
+            return '<a class="pp-here"' + атрСсылки(esc(x.link)) + ' target="_blank" rel="noopener">🏠 '
               + esc(короткоеНазвание(x.title || x.name || 'Жильё на сутки')) + ' — ' + (x.от ? 'от ' : '') + esc(x.price) + ' BYN · '
               + esc(источникЖилья(x.src)) + ' →</a>';
           }).join('')
@@ -9850,10 +9865,10 @@ function карточкаТочки(){
     var d = ГОТОВО[id], и = инфо(p), снимок = d && d.pics && d.pics[0];
     var кратко = и.d || короче(d && d.text);
     return '<div class="pp" data-id="' + esc(id) + '">'
-      + (снимок ? ('<div class="pp-ph" data-fit="240"><img class="pp-im" src="' + esc(снимок) + '" alt=""></div>') : '')
+      + (снимок ? ('<div class="pp-ph" data-fit="240"><img class="pp-im"' + атрСнимка(esc(снимок)) + ' alt=""></div>') : '')
       + '<b>' + esc(p.name) + '</b>' + (p.addr ? ('<small>' + esc(p.addr) + '</small>') : '')
       + (кратко ? ('<p>' + esc(кратко) + '</p>') : ((!d && !СБОЙ[id]) ? '<p>Загружаю описание…</p>' : ''))
-      + '<div class="pp-b"><a href="' + esc(адресМеста(p)) + '">Подробнее →</a>'
+      + '<div class="pp-b"><a' + атрСсылки(esc(адресМеста(p))) + '>Подробнее →</a>'
       +   '<button class="pp-drop" type="button">Убрать из маршрута</button></div></div>';
   }
 
@@ -9958,7 +9973,7 @@ function карточкаТочки(){
     fetch('/api/places/stay?lat=' + p.lat + '&lng=' + p.lng + '&r=30').then(function(r){ return r.json(); }).then(function(d){
       var items = ((d && d.items) || []).slice(0, 4);
       var все = (d && d.region)
-        ? ('<a class="pc-all" href="/?region=' + encodeURIComponent(d.region) + '&type=flat&source=both">Всё жильё рядом →</a>') : '';
+        ? ('<a class="pc-all"' + атрСсылки('/?region=' + encodeURIComponent(d.region) + '&type=flat&source=both') + '>Всё жильё рядом →</a>') : '';
       б.setAttribute('data-ok', '1');
       if(!items.length){ б.innerHTML = '<p class="pc-m">В 30 км жилья сейчас не нашлось.</p>' + все; return; }
       б.innerHTML = '<div class="nr-list">' + items.map(плиткаЖилья).join('') + '</div>' + все;
@@ -9966,8 +9981,8 @@ function карточкаТочки(){
   }
   function плиткаЖилья(x){
     var ф = x.photos && x.photos[0];
-    return '<a class="nc" href="' + esc(x.link) + '" target="_blank" rel="noopener">'
-      + (ф ? ('<img src="' + esc(ф) + '" alt="" loading="lazy">') : '<div class="ni"></div>')
+    return '<a class="nc"' + атрСсылки(esc(x.link)) + ' target="_blank" rel="noopener">'
+      + (ф ? ('<img' + атрСнимка(esc(ф)) + ' alt="" loading="lazy">') : '<div class="ni"></div>')
       + '<span class="p">' + esc(x.title || x.name || 'Жильё на сутки') + '</span>'
       + '<span class="d">' + (x.от ? 'от ' : '') + esc(x.price) + ' BYN</span>'
       + '<span class="s">' + esc(источникЖилья(x.src))
@@ -17191,6 +17206,12 @@ a.seenear{display:block;box-sizing:border-box;text-align:center;text-decoration:
 <script>
 /*ПРЕДЗАГРУЗКА*/
 const $=s=>document.querySelector(s);
+// Адрес в атрибут — функцией (19.10): атрибут ссылки с подстановкой прямо в строке кода
+// роботы принимали за ссылку и ходили по кускам скрипта (404 в журнале). Имя атрибута
+// здесь разорвано, поэтому в тексте страницы таких кусков нет.
+function атрСсылки(u){ return ' hr' + 'ef="' + u + '"'; }
+function атрСнимка(u){ return ' sr' + 'c="' + u + '"'; }
+function атрСнимкаПозже(u){ return ' data-sr' + 'c="' + u + '"'; }
 const CITIES = ${JSON.stringify(CITIES_MAP)};
 const ЗАГОЛОВКИ_ВКЛАДОК = ${вСкрипт({ by: ВКЛАДКИ_ГЛАВНОЙ.by.title, ru: ВКЛАДКИ_ГЛАВНОЙ.ru.title, places: ВКЛАДКИ_ГЛАВНОЙ.places.title })};
 const PAGE_SIZE = 24;
@@ -17482,7 +17503,7 @@ function renderCards(){
         const nav = ph.length>1
           ? '<button class="nav prev" onclick="slide('+idx+',-1)"></button><button class="nav next" onclick="slide('+idx+',1)"></button><div class="cnt" id="cnt'+idx+'">1/'+ph.length+'</div>'
           : '';
-        slider='<div class="slider">'+tag+'<img class="im" id="im'+idx+'" src="'+ph[0]+'" loading="lazy" alt="'+esc2(x.title||'')+'">'+nav+'</div>';
+        slider='<div class="slider">'+tag+'<img class="im" id="im'+idx+'"' + атрСнимка(ph[0]) + ' loading="lazy" alt="'+esc2(x.title||'')+'">'+nav+'</div>';
       } else {
         slider='<div class="slider">'+tag+'</div>';
       }
@@ -17493,9 +17514,9 @@ function renderCards(){
         +'<div class="pr">'+(x.от?'от ':'')+x.price+' '+curOf(x)+' <span class="tot">/ '+(x.unit||(x.src==='H101'?'ночь':'сутки'))+'</span></div>'+total+stars
         +meta
         +'<div class="ttl">'+(x.title||'').replace(/</g,'&lt;')+'</div>'+desc
-        +'<div class="act">'+call+'<a href="'+x.link+'" target="_blank" rel="noopener">Открыть</a></div>'
+        +'<div class="act">'+call+'<a' + атрСсылки(x.link) + ' target="_blank" rel="noopener">Открыть</a></div>'
         +((x.lat&&x.lng)?('<button class="seenear" type="button" onclick="placesNear('+idx+')">🏰 Что посмотреть рядом</button>'):'')
-        +((x.lat&&x.lng&&!x.approx&&x.src!=='H101')?('<a class="seenear wk" rel="nofollow" href="/vyhodnye?lat='+(+x.lat).toFixed(5)+'&lng='+(+x.lng).toFixed(5)+'">🚗 Маршрут по местам рядом</a>'):'')
+        +((x.lat&&x.lng&&!x.approx&&x.src!=='H101')?('<a class="seenear wk" rel="nofollow"' + атрСсылки('/vyhodnye?lat='+(+x.lat).toFixed(5)+'&lng='+(+x.lng).toFixed(5)) + '>🚗 Маршрут по местам рядом</a>'):'')
         +'</div></div>';
     }).join('');
   renderPager(pages);
@@ -17569,7 +17590,7 @@ function popupHtml(x){
     return '<div class="mp"><div class="mp-price">'+(x.от?'от ':'')+x.price+' '+curOf(x)+' <small>/ '+unit+'</small></div>'
       +'<div class="mp-meta">'+(x.title||'')+'</div>'
       +(x.chips.length ? ('<div class="mp-meta">'+x.chips.join(' · ')+'</div>') : '')+rate+img+call
-      +'<a class="mp-open" href="'+x.link+'" target="_blank" rel="noopener">Открыть на '+srcName(x.src)+' →</a></div>';
+      +'<a class="mp-open"' + атрСсылки(x.link) + ' target="_blank" rel="noopener">Открыть на '+srcName(x.src)+' →</a></div>';
   }
   const call=кнопкаТелефона(x, 'mp-call');
   const ap=x.approx? '<div class="mp-approx">≈ адрес примерный (по городу)</div>':'';
@@ -17577,7 +17598,7 @@ function popupHtml(x){
   return '<div class="mp"><div class="mp-price">'+(x.от?'от ':'')+x.price+' BYN <small>/ сутки</small></div>'
     +'<div class="mp-meta">'+(x.area||'')+' · '+x.rooms+'-комн'+cap+'</div>'
     +img+call
-    +'<a class="mp-open" href="'+x.link+'" target="_blank" rel="noopener">Открыть на '+srcName(x.src)+' →</a>'+ap+'</div>';
+    +'<a class="mp-open"' + атрСсылки(x.link) + ' target="_blank" rel="noopener">Открыть на '+srcName(x.src)+' →</a>'+ap+'</div>';
 }
 // Первый кадр с адресом, остальные — с пометкой: пока человек не листает,
 // браузер их не трогает. Иначе открытие метки тянуло бы восемь снимков.
@@ -17585,11 +17606,11 @@ function снимкиОкошка(photos){
   const с = (photos || []).filter(Boolean).slice(0, 8);
   if(!с.length) return '';
   if(с.length === 1)
-    return '<div class="mp-ph mp-ph-one" data-fit="240"><img class="mp-ph1 on" src="' + с[0] + '" alt=""></div>';
+    return '<div class="mp-ph mp-ph-one" data-fit="240"><img class="mp-ph1 on"' + атрСнимка(с[0]) + ' alt=""></div>';
   return '<div class="mp-ph" data-fit="240">'
     + с.map(function(u, i){
         return '<img class="mp-ph1' + (i ? '' : ' on') + '"'
-             + (i ? (' data-src="' + u + '"') : (' src="' + u + '"')) + ' alt="">';
+             + (i ? (атрСнимкаПозже(u)) : (атрСнимка(u))) + ' alt="">';
       }).join('')
     + '<button class="mp-ph-b mp-ph-l" type="button" onclick="окошкоЛистать(this,-1)">‹</button>'
     + '<button class="mp-ph-b mp-ph-r" type="button" onclick="окошкоЛистать(this,1)">›</button>'
@@ -17768,7 +17789,7 @@ function кнопкаТелефона(x, класс){
   const значок = (класс==='mp-call') ? '\u{1F4DE} ' : '';
   const подпись = fmtPhone(x.phone) + (x.name ? (' \u00B7 ' + x.name) : '');
   if(ТЕЛЕФОН_ПО_НАЖАТИЮ.indexOf(x.src) < 0)
-    return '<a class="'+класс+'" href="tel:+'+x.phone+'">'+значок+подпись+'</a>';
+    return '<a class="'+класс+'"' + атрСсылки('tel:+'+x.phone) + '>'+значок+подпись+'</a>';
   return '<button type="button" class="'+класс+' тел-скрыт" onclick="показатьТелефон(this)"'
     + ' data-ph="'+x.phone+'" data-nm="'+String(x.name||'').replace(/"/g,'&quot;')+'">'
     + значок + 'Показать телефон</button>';
@@ -18329,13 +18350,13 @@ function миниСнимок(url){
 }
 function снимокКарточки(url, alt){
   // свой снимок (960×1280, до 390 КБ) — уменьшенной копией 520 px
-  if(url.indexOf('/фото-точек/') === 0) return '<img data-src="' + esc2(миниСнимок(url)) + '" decoding="async" alt="' + esc2(alt) + '">';
+  if(url.indexOf('/фото-точек/') === 0) return '<img' + атрСнимкаПозже(esc2(миниСнимок(url))) + ' decoding="async" alt="' + esc2(alt) + '">';
   // без регулярного выражения: этот код лежит внутри шаблонной строки, где слэши и точки с обратной чертой теряются
   const к = url.indexOf('/960px-');
   const набор = (url.indexOf('https://thumb.wikimedia.org/') === 0 && к > 0)
     ? (' data-srcset="' + url.slice(0, к) + '/500px-' + url.slice(к + 7) + ' 500w, ' + url + ' 960w"'
       + ' sizes="(min-width:1000px) 340px, (min-width:640px) 46vw, 96vw"') : '';
-  return '<img data-src="' + url + '"' + набор + ' decoding="async" alt="' + esc2(alt) + '">';
+  return '<img' + атрСнимкаПозже(url) + набор + ' decoding="async" alt="' + esc2(alt) + '">';
 }
 // Подставляем адрес, когда карточка подошла к экрану: родная ленивая загрузка браузера
 // на быстрой сети тянет почти полтора экрана вниз — это 15 снимков и 3 МБ сразу.
@@ -18370,13 +18391,13 @@ function renderPlaces(){
       + '<div class="ad">' + esc2(p.addr) + '</div>'
       + '<div class="tx" id="tx' + i + '"></div>'
       + (p.author ? ('<div class="cred">фото: ' + esc2(p.author) + (p.lic ? (', ' + esc2(p.lic)) : '')
-          + (p.src ? (' · <a href="' + esc2(p.src) + '" target="_blank" rel="noopener">Викисклад</a>') : '') + '</div>') : '')
+          + (p.src ? (' · <a' + атрСсылки(esc2(p.src)) + ' target="_blank" rel="noopener">Викисклад</a>') : '') + '</div>') : '')
       + '<div class="row">'
-      +   '<a class="go2" href="' + route + '" target="_blank" rel="noopener">Проложить маршрут</a>'
+      +   '<a class="go2"' + атрСсылки(route) + ' target="_blank" rel="noopener">Проложить маршрут</a>'
       +   '<button class="stay2" type="button" onclick="stayNear(' + i + ')">Жильё рядом</button>'
       +   '<button class="toroute' + (inRoute(p.id) ? ' on' : '') + '" type="button" onclick="toggleRoute('
       +     i + ')">' + (inRoute(p.id) ? '✓ в маршруте' : '+ в маршрут') + '</button>'
-      +   '<a href="/mesto/' + p.id + '-' + esc2(slugRu(p.name)) + '">Подробнее</a>'
+      +   '<a' + атрСсылки('/mesto/' + p.id + '-' + esc2(slugRu(p.name))) + '>Подробнее</a>'
       + '</div><div id="near' + i + '"></div></div></article>';
   }).join('');
   // Описания тянем по одному запросу на точку, поэтому не грузим всё сразу:
@@ -18436,8 +18457,8 @@ function показатьПопулярное(){
   if(!list.children.length){
     list.innerHTML = items.map(function(p, i){
       return '<div class="pop-c">'
-        + (p.pic ? ('<img src="' + esc2(миниСнимок(p.pic)) + '" loading="lazy" alt="' + esc2(p.name) + '">') : '<div class="pop-ni"></div>')
-        + '<a class="pop-n" href="/mesto/' + p.id + '-' + esc2(slugRu(p.name)) + '" title="' + esc2(p.name) + '">' + esc2(p.name) + '</a>'
+        + (p.pic ? ('<img' + атрСнимка(esc2(миниСнимок(p.pic))) + ' loading="lazy" alt="' + esc2(p.name) + '">') : '<div class="pop-ni"></div>')
+        + '<a class="pop-n"' + атрСсылки('/mesto/' + p.id + '-' + esc2(slugRu(p.name))) + ' title="' + esc2(p.name) + '">' + esc2(p.name) + '</a>'
         + '<div class="pop-a">' + esc2(p.addr || '') + '</div>'
         + '<button class="pop-b" type="button" data-i="' + i + '">+ в маршрут</button></div>';
     }).join('');
@@ -18506,8 +18527,8 @@ async function stayNear(i){
     }
     const N = nights();
     const cards = (d.items || []).slice(0, 6).map(function(x){
-      const img = (x.photos && x.photos[0]) ? '<img src="' + x.photos[0] + '" loading="lazy" alt="' + esc2(x.title || '') + '">' : '';
-      return '<a href="' + x.link + '" target="_blank" rel="noopener">' + img
+      const img = (x.photos && x.photos[0]) ? '<img' + атрСнимка(x.photos[0]) + ' loading="lazy" alt="' + esc2(x.title || '') + '">' : '';
+      return '<a' + атрСсылки(x.link) + ' target="_blank" rel="noopener">' + img
         + '<div class="p">' + (x.от ? 'от ' : '') + x.price + ' BYN' + (N ? ('<small> · ' + (x.price*N) + ' за ' + N + ' ноч.</small>') : '') + '</div><div class="s">'
         // У Realt точной точки нет — метка стоит у центра города. Показывать
         // «около 0 км» было бы враньём, поэтому пишем сам город.
@@ -18575,17 +18596,17 @@ async function plotPlaces(){
     mk.bindTooltip(p.name, { direction:'top', offset:[0,-14] });
     mk.bindPopup('<div class="mp mp-pl">'
       + '<div class="mp-pic-box" data-fit="240" id="mpic' + i + '">'
-      + (p.pic ? ('<img class="mp-pic" src="' + esc2(p.pic) + '" alt="' + esc2(p.name) + '">') : '') + '</div>'
+      + (p.pic ? ('<img class="mp-pic"' + атрСнимка(esc2(p.pic)) + ' alt="' + esc2(p.name) + '">') : '') + '</div>'
       + '<div class="mp-meta">' + esc2(p.cat) + '</div>'
       + '<div class="mp-price" style="font-size:16px">' + esc2(p.name) + '</div>'
       + '<div class="mp-meta">' + esc2(p.addr) + '</div>'
       + '<div class="mp-tx" id="mtx' + i + '">Загружаю описание…</div>'
       + '<button class="mp-coord" type="button" data-c="' + coords + '" onclick="copyCoords(this)">'
       + '📍 ' + coords + '<span>копировать</span></button>'
-      + '<a class="mp-open" href="https://yandex.by/maps/?rtext=~' + p.lat + ',' + p.lng + '&rtt=auto" target="_blank" rel="noopener">Проложить маршрут →</a>'
+      + '<a class="mp-open"' + атрСсылки('https://yandex.by/maps/?rtext=~' + p.lat + ',' + p.lng + '&rtt=auto') + ' target="_blank" rel="noopener">Проложить маршрут →</a>'
       // Своя страница места, а не чужой сайт: уводить человека с карты
       // на другой проект незачем, у нас есть и описание, и жильё рядом.
-      + ' <a class="mp-open" href="/mesto/' + p.id + '-' + esc2(slugRu(p.name)) + '">Подробнее →</a>'
+      + ' <a class="mp-open"' + атрСсылки('/mesto/' + p.id + '-' + esc2(slugRu(p.name))) + '>Подробнее →</a>'
       // Название пишем в атрибут, а не в onclick: в названиях встречаются
       // кавычки, и строка внутри строки ломала бы разметку.
       + '<button class="mp-route' + (inRoute(p.id) ? ' on' : '') + '" type="button"'
@@ -19082,7 +19103,7 @@ async function loadMapText(id, i){
     const holder = document.getElementById('mpic' + i);
     const pic = (d.pics || [])[0];
     if(pic && holder && !holder.firstChild){
-      holder.innerHTML = '<img class="mp-pic" src="' + esc2(pic) + '" alt="">';
+      holder.innerHTML = '<img class="mp-pic"' + атрСнимка(esc2(pic)) + ' alt="">';
       подогнатьСнимки(holder);
     }
   }catch(e){
@@ -19795,6 +19816,12 @@ http.createServer(async (req,res)=>{
   if(СТАРЫЕ_ХОСТЫ.has(хост) && u.pathname !== '/ping' && (req.method === 'GET' || req.method === 'HEAD')){
     res.writeHead(301, { 'Location': SITE_URL + req.url, 'Cache-Control': 'public, max-age=86400' });
     res.end(); return;
+  }
+  // куски скриптов и /null — сразу 404 без индексации; в журнал — роботом, не человеком
+  if(мусорныйАдрес(u.pathname)){
+    if(req.method === 'GET') записатьВход(req, u, 404, 'мусорный адрес');
+    res.writeHead(404, {'Content-Type':'text/plain; charset=utf-8', 'X-Robots-Tag':'noindex', 'Cache-Control':'public, max-age=86400'});
+    res.end('Нет такой страницы'); return;
   }
   журналВхода(req, res, u);
   if(!БЕЗ_МЕТРИКИ.has(u.pathname)) вставкиВОтвет(res, u.pathname);

@@ -438,6 +438,33 @@ await служебная('/m/net-takogo', '404 маршрута');
 await служебная('/podborka/net-takoy', '404 подборки');
 await служебная('/izbrannoe?s=k1', 'подборка избранного по ссылке');
 
+// IndexNow (19.10): ключ — константой в коде, файл ключа в корне сайта: /<ключ>.txt,
+// text/plain, внутри ровно сам ключ. Чужой ключ — обычный 404.
+{
+  проверено++;
+  const ключ = (readFileSync(new URL('../kvartiry-server.js', import.meta.url), 'utf8').match(/const INDEXNOW_KEY = '([^']*)'/) || [])[1] || '';
+  if (!/^[0-9a-f]{32}$/.test(ключ)) нарушение('IndexNow', 'в kvartiry-server.js нет константы INDEXNOW_KEY из 32 знаков 0-9a-f');
+  else {
+    const r = await fetch(SITE + '/' + ключ + '.txt');
+    const т = await r.text();
+    if (r.status !== 200 || !/^text\/plain/.test(r.headers.get('content-type') || '') || т !== ключ)
+      нарушение('/' + ключ + '.txt', 'файл ключа IndexNow: код ' + r.status + ', тип ' + r.headers.get('content-type') + ', текст «' + т.slice(0, 40) + '»');
+    const чужой = await fetch(SITE + '/0123456789abcdef0123456789abcdef.txt');
+    if (чужой.status !== 404) нарушение('/0123…cdef.txt', 'чужой ключ IndexNow отвечает ' + чужой.status + ', а не 404');
+  }
+}
+
+// Мусорные адреса (19.10): роботы вытаскивали куски из скриптов страниц
+// (href="/mesto/' + p.id + …) и /null. Ответ — 404 с X-Robots-Tag: noindex.
+for (const путь of ['/null', "/mesto/'%20+%20p.id%20+%20'-'%20+%20esc2(slugRu(p.name))%20+", "/'%20+%20x.link%20+",
+                    "/'%20+%20route%20+", "/'%20+%20esc2(p.src)%20+", "/'+x.link+'", '/%27+x.link+%27']) {
+  проверено++;
+  const r = await fetch(SITE + путь, { redirect: 'manual' });
+  await r.text();
+  if (r.status !== 404 || !/noindex/i.test(r.headers.get('x-robots-tag') || ''))
+    нарушение(путь, 'мусорный адрес: ждали 404 и X-Robots-Tag: noindex, а код ' + r.status + ', X-Robots-Tag ' + r.headers.get('x-robots-tag'));
+}
+
 // Имена из Object.prototype — не страницы. Справочники страниц — обычные объекты,
 // и /constructor «находился» среди гидов: сборка из функции висела больше двух минут
 // (07.10.2026). Должен быть обычный 404, и сразу.

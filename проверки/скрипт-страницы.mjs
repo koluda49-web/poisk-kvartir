@@ -22,7 +22,23 @@ const СТРАНИЦЫ = [
   ['подборка',          '/podborka/osen'],
   ['готовый маршрут',   '/m/lida-voronovo'],
   ['маршрут на 2 дня',  '/m/braslavshchina-2-dnya'],
+  ['выходные',          '/vyhodnye'],
+  ['город',             '/grodno'],
 ];
+
+// «Похожие на ссылку» куски в коде скриптов (19.10). Роботы читают href="…" и src="…"
+// и в тексте скрипта и шли по кускам вроде /mesto/' + p.id + '-' + … и /' + x.link +
+// (404 в журнале). Атрибут с подстановкой собирается функцией (атрСсылки, атрСнимка),
+// и в тексте скрипта значение href/src не должно содержать кавычек и « + ».
+function похожиеНаСсылку(code) {
+  const out = [];
+  for (const м of code.matchAll(/\b(?:href|src|action)\s*=\s*(["'])/g)) {
+    const кв = м[1], от = м.index + м[0].length, до = code.indexOf(кв, от);
+    const v = до < 0 ? code.slice(от, от + 80) : code.slice(от, до);
+    if (/["']|\s\+\s/.test(v)) out.push(м[0] + v.slice(0, 60));
+  }
+  return out;
+}
 
 let checked = 0, bad = 0;
 for (const [имя, путь] of СТРАНИЦЫ) {
@@ -36,6 +52,8 @@ for (const [имя, путь] of СТРАНИЦЫ) {
     checked++; наСтранице++;
     try { new Function(code); }
     catch (e) { bad++; console.log('Сломан блок скрипта (' + имя + '): ' + e.message); }
+    const куски = похожиеНаСсылку(code);
+    if (куски.length) { bad++; console.log('В скрипте (' + имя + ') куски, похожие на ссылку (' + куски.length + '): ' + куски.slice(0, 3).join(' | ')); }
   }
   if (!наСтранице) { bad++; console.log('На странице «' + имя + '» не нашлось ни одного своего блока — проверять нечего?'); }
 }
