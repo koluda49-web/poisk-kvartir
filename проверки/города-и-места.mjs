@@ -61,7 +61,8 @@ check('sitemap: /novogrudok и /nesvizh', карта.includes('/novogrudok</loc>
 // вторая волна (11.10): Дзержинск, Смолевичи, Островец, Лунинец, Калинковичи, Любань, Фаниполь, Рогачёв, Ошмяны,
 // Столин, Осиповичи, Ивацевичи, Ганцевичи, Лепель — у Столина, Ганцевичей и Лепеля 11.10 было ровно по 5 вариантов
 const ВТОРАЯ_ВОЛНА = ['/dzerzhinsk', '/smolevichi', '/ostrovec', '/luninec', '/kalinkovichi', '/lyuban', '/fanipol', '/rogachev',
-                     '/oshmyany', '/stolin', '/osipovichi', '/ivacevichi', '/gancevichi', '/lepel'];
+                     '/oshmyany', '/stolin', '/osipovichi', '/ivacevichi', '/gancevichi', '/lepel',
+                     '/svetlogorsk', '/pruzhany'];   // третья волна, 20.10
 for (const п of ['/gorki', '/smorgon', '/rechica', '/bereza'].concat(ВТОРАЯ_ВОЛНА)) {
   const r = await fetch(SITE + п);
   const html = await r.text();
