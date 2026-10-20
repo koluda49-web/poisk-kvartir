@@ -102,7 +102,8 @@ try {
   for (const путь of ['/', '/grodno', '/net-takoj-stranicy-123']) {
     const о = await взять(ВЫКЛ, путь);
     check('METRIKA_OFF=1: ' + путь + ' (' + о.код + ') без счётчика',
-      /text\/html/.test(о.тип) && !о.тело.includes('mc.yandex') && !о.тело.includes('112722670'));
+      /text\/html/.test(о.тип) && !о.тело.includes('mc.yandex') && !о.тело.includes('ym(112722670,"init"'));
+    // (20.10: строка цели subscribe на главной вызывает ym только если счётчик загружен — её не считаем)
   }
   await завершить(failed ? 1 : 0);
 } catch (e) {

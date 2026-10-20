@@ -211,16 +211,22 @@ function мусорныйАдрес(p){
   try{ д = decodeURIComponent(д); }catch(e){}
   return /['"<>`]/.test(д) || /\s\+|\+\s/.test(д) || /(^|\/)(null|undefined)\/?$/.test(д);
 }
+// 20.10: тот же хэш пишем и в события скрипта (/api/t, поле hv) — так видно,
+// у кого из вошедших страница выполнила JavaScript, то есть кто человек.
+function хэшВхода(req, ua, t){
+  return crypto.createHash('sha1').update(адресКлиента(req) + '|' + ua + '|' + деньЖурнала(t)).digest('hex').slice(0, 12);
+}
 function записатьВход(req, u, код, бот){
   const ua = String(req.headers['user-agent'] || '');
   const t = Date.now();
   const ev = { t: t, e: 'hit',
-    v: crypto.createHash('sha1').update(адресКлиента(req) + '|' + ua + '|' + деньЖурнала(t)).digest('hex').slice(0, 12),
+    v: хэшВхода(req, ua, t),
     path: u.pathname.slice(0, 100), r: refHost(req.headers.referer),
     m: /Mobile|Android|iPhone|iPad/i.test(ua) ? 'моб.' : 'комп.', code: код };
   const from = меткаИзАдреса(u.searchParams); if(from) ev.from = from;
   const app = appOf(ua); if(app) ev.app = app;
   const bot = бот || botOf(ua); if(bot) ev.bot = bot;
+  else ev.ua = ua.slice(0, 120);   // 20.10: чтобы узнать роботов, которые не называют себя
   statsAdd(ev);
 }
 // Ловим код ответа там же, где его ставит страница, — в writeHead: HTML с 200
@@ -591,7 +597,10 @@ const BOTS = [
   [/Googlebot|Google-InspectionTool/i,     'Googlebot'],
   [/YandexBot|YandexRenderResourcesBot/i,  'робот Яндекса'],
   [/bingbot|AhrefsBot|SemrushBot|MJ12bot|DotBot|PetalBot|DataForSeoBot|GPTBot|ClaudeBot/i, 'поисковый робот'],
+  [/Applebot|Amazonbot|Bytespider|OAI-SearchBot|ChatGPT-User|PerplexityBot|CCBot|SeznamBot|Baiduspider|YandexImages|YandexFavicons|YandexAccessibilityBot|Yandex\w*Bot|Yeti\/|Sogou|Qwantify|ImagesiftBot|Barkrowler|serpstatbot|BLEXBot/i, 'поисковый робот'],
   [/HeadlessChrome|python-requests|curl\/|Go-http-client|node-fetch|Java\/|^node$|undici/i, 'автоматика'],
+  // общий признак: «bot/», «crawler», «spider» (но не телефоны CUBOT)
+  [/(?<!cu)bot[\/;)\s_-]|bot$|crawler|spider/i,      'другой робот'],
 ];
 function botOf(ua){
   if(!ua) return 'без браузера';
@@ -708,6 +717,11 @@ function сводкаЖурнала(now){
   const дни = new Map(), метки = new Map(), нет = new Map();
   const входыСтр = new Map(), тикток = new Map(), площадки = new Map(), страницы = new Map(), нули = new Map(), связь = new Map();
   const ждут = new Map();   // «Следить за новыми вариантами»: фильтры → сколько раз и людей
+  // 20.10: хэши входов, у которых страница прислала событие скрипта (hv) — это люди;
+  // вход без единого события скрипта — почти всегда робот, не назвавший себя
+  const соСкриптом = new Set();
+  for(let i = 0; i < STATS.length; i++){ const x = STATS[i]; if(x.hv && x.e !== 'hit' && !x.bot && x.t > с14) соСкриптом.add(x.hv); }
+  const безСкриптаUA = new Map();
   const плюс = function(м, к, n){ м.set(к, (м.get(к) || 0) + (n || 1)); };
   const метка = function(f){
     let м = метки.get(f);
@@ -726,8 +740,15 @@ function сводкаЖурнала(now){
     if(x.bot) continue;
     const д = деньКлюч(x.t);
     let дн = дни.get(д);
-    if(!дн){ дн = { day: д, hits: 0, people: new Set(), views: 0, open: 0, call: 0, notFound: 0 }; дни.set(д, дн); }
-    if(x.e === 'hit'){ if(x.code === 404) дн.notFound++; else { дн.hits++; дн.people.add(x.v); } }
+    if(!дн){ дн = { day: д, hits: 0, people: new Set(), real: new Set(), views: 0, open: 0, call: 0, notFound: 0 }; дни.set(д, дн); }
+    if(x.e === 'hit'){
+      if(x.code === 404) дн.notFound++;
+      else {
+        дн.hits++; дн.people.add(x.v);
+        if(соСкриптом.has(x.v)) дн.real.add(x.v);
+        else if(неделя && x.ua) плюс(безСкриптаUA, x.ua);
+      }
+    }
     else if(x.e === 'view') дн.views++;
     else if(x.e === 'open') дн.open++;
     else if(x.e === 'call') дн.call++;
@@ -764,11 +785,12 @@ function сводкаЖурнала(now){
   };
   return {
     days: [...дни.values()].sort(function(a, b){ return a.day < b.day ? -1 : 1; })
-      .map(function(д){ return { day: д.day, hits: д.hits, people: д.people.size, views: д.views, open: д.open, call: д.call, notFound: д.notFound }; }),
+      .map(function(д){ return { day: д.day, hits: д.hits, people: д.people.size, real: д.real.size, views: д.views, open: д.open, call: д.call, notFound: д.notFound }; }),
     marks: [...метки.values()].map(function(м){
       return { from: м.from, hits: м.hits, people: м.people.size, openSessions: м.openSessions.size, open: м.open, call: м.call, hosts: м.hosts };
     }).sort(function(a, b){ return b.hits - a.hits || b.open - a.open; }).slice(0, 60),
     entryPages: пары(входыСтр, 'path'),
+    noScriptUA: пары(безСкриптаUA, 'ua', 15),   // 20.10: кто входил без скрипта (кандидаты в роботы)
     tiktokNoMark: пары(тикток, 'path'),
     notFound: [...нет.values()].sort(function(a, b){ return b.n - a.n; }).slice(0, 40),
     openByHost: пары(площадки, 'host'),
@@ -823,6 +845,20 @@ function блокиЖурнала(св, esc, bars){
         + '</table>'
       : '<p class="none">пока пусто</p>')
     + '<p class="none">Кнопка «Следить за новыми вариантами» (пока заглушка). Со счётчиком — цель Метрики subscribe.</p></div>'
+    + '<h2>Люди и роботы по дням</h2><div class="card">'
+    + (св.days.length
+      ? '<table class="log"><tr><td><b>день</b></td><td class="n"><b>входов</b></td><td class="n"><b>посетителей</b></td><td class="n"><b>из них люди</b></td></tr>'
+        + св.days.map(function(д){ return '<tr><td>' + esc(д.day) + '</td><td class="n">' + д.hits + '</td><td class="n">' + д.people + '</td><td class="n">' + (д.real === undefined ? '—' : д.real) + '</td></tr>'; }).join('')
+        + '</table>'
+      : '<p class="none">пока пусто</p>')
+    + '<p class="none">«Посетителей» считает сервер: все, кто не назвал себя роботом. «Люди» — те из них, у кого страница выполнила скрипт '
+    + '(браузер прислал событие). Роботы скрипт почти никогда не выполняют. Сверка — Метрика, она тоже отсеивает роботов.</p>'
+    + (св.noScriptUA && св.noScriptUA.length
+      ? '<p><b>Входили без скрипта (7 дней), по браузеру:</b></p><table class="log">'
+        + св.noScriptUA.map(function(x){ return '<tr><td class="raw">' + esc(x.ua) + '</td><td class="n">' + x.n + '</td></tr>'; }).join('')
+        + '</table>'
+      : '')
+    + '</div>'
     + '<h2>Связь: клики и отправки (7 дней)</h2><div class="card">'
     + (св.contact.length
       ? '<table class="log"><tr><td><b>что</b></td><td class="n"><b>раз</b></td><td class="n"><b>сессий</b></td><td><b>страницы</b></td></tr>'
@@ -20030,8 +20066,10 @@ http.createServer(async (req,res)=>{
       try{
         const d  = JSON.parse(body||'{}');
         const ua = String(req.headers['user-agent']||'');
+        const t = Date.now();
         statsAdd({
-          t: Date.now(),
+          t: t,
+          hv: хэшВхода(req, ua, t),
           e: String(d.e||'').slice(0,16),
           v: String(d.v||'').slice(0,32),
           s: String(d.s||'').slice(0,32),
