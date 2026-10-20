@@ -12907,8 +12907,9 @@ async function гидPage(slug){
     +   '. Всё собрано с Kufar, Realt, Flatbook, Check-in и Kvartirka — пять площадок в одном списке. '
     +   'Цифры на этой странице считаются из живой выдачи и меняются вместе с ней.</p>'
     + районы
-    + '<a class="cta" href="/?region=' + z.обл + '&city=' + encodeURIComponent(z.город) + '&type=any">'
-    +   'Открыть поиск с фильтрами и картой →</a>'
+    // районов меньше трёх — кнопка «Смотреть квартиры» уже стоит прямо над этой: вторая — простой ссылкой (20.10)
+    + (d.районы.length >= 3 ? '<a class="cta" href="' : '<p class="lead"><a href="') + '/?region=' + z.обл + '&city=' + encodeURIComponent(z.город) + '&type=any">'
+    +   'Открыть поиск с фильтрами и картой →</a>' + (d.районы.length >= 3 ? '' : '</p>')
     + '<h2>Сколько стоит</h2>'
     + '<table class="t"><thead><tr><th>Вид жилья</th><th>Вариантов</th><th>От</th><th>Обычно</th></tr></thead>'
     +   '<tbody>' + строкиВидов + '</tbody></table>'
