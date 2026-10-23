@@ -215,6 +215,8 @@ const КОРОТКИЕ_АДРЕСА = {
   '2410': '/gde-ostanovitsya-gomel',
   '2510': '/marshrut?p=8325,4871,5164,4260,4261,4259&o=1',
   '2610': '/gde-ostanovitsya-mogilev',
+  '2710': '/marshrut?p=5145,2416,5049,244&o=1',
+  '2810': '/gde-ostanovitsya-vitebsk',
 };
 function короткийАдрес(путь){
   const м = /^\/(\d{4})\/?$/.exec(путь);
