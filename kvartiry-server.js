@@ -223,6 +223,7 @@ const КОРОТКИЕ_АДРЕСА = {
   '2610': '/gde-ostanovitsya-mogilev',
   '2710': '/marshrut?p=5145,2416,5049,244&o=1',
   '2810': '/gde-ostanovitsya-vitebsk',
+  '2910': '/goroda',
   '3010': '/marshrut?p=910065,910241,4707,4324,910002,4683,4682,4680&o=1&d=4',
 };
 function короткийАдрес(путь){
