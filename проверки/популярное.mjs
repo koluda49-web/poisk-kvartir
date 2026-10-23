@@ -23,7 +23,7 @@ const САЙТ = 'http://127.0.0.1:8098', МОК_ПОРТ = 9614, CDP_ПОРТ =
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let failed = 0, passed = 0;
 const check = (n, ok, d) => ok ? (passed++, console.log('  OK   ' + n)) : (failed++, console.log('  ПАДАЕТ ' + n + (d ? '  — ' + d : '')));
-const ЧЕЛОВЕК = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
+const ЧЕЛОВЕК = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36';
 const РОБОТ = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/128.0.0.0 Safari/537.36';
 
 // ── подделка GitHub: один файл популярного ───────────────────────────────

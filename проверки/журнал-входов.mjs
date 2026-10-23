@@ -26,7 +26,7 @@ const ПОРТ = 8248, SITE = 'http://127.0.0.1:' + ПОРТ;
 const CDP = 9440 + (process.pid % 100), sleep = ms => new Promise(r => setTimeout(r, ms));
 const КЛЮЧ = process.env.STATS_KEY || 'poisk2026';
 // «Человек» — обычный браузер; иначе сервер (правильно) примет нас за робота
-const ЧЕЛОВЕК = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
+const ЧЕЛОВЕК = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0 Safari/537.36';   // 23.10: старый Chrome на компьютере теперь считается роботом
 const ТИКТОК = 'Mozilla/5.0 (Linux; Android 14; SM-A546B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36 musical_ly_2023 BytedanceWebview/d8a21c6';
 let failed = 0, passed = 0;
 const check = (n, ok, d) => ok ? (passed++, console.log('  OK   ' + n)) : (failed++, console.log('  ПАДАЕТ ' + n + (d ? '  — ' + d : '')));
