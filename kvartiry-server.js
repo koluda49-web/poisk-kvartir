@@ -183,6 +183,12 @@ function statsAdd(ev){
 // 404 (битая ссылка в закрепе видна сразу). Адрес посетителя не храним:
 // только короткий отпечаток sha1(адрес + браузер + день) — по нему считаются
 // «человек за день», а обратно в адрес он не превращается и назавтра другой.
+// Цена за сутки дороже 10 000 BYN — ошибка в объявлении, а не жильё (23.10: на /braslav
+// с Kufar пришёл «дом» за 440 190,7 BYN в сутки — похоже, продажа или опечатка хозяина).
+// Даже усадьба на 30 человек столько не стоит, поэтому такие объявления не показываем.
+const ЦЕНА_СУТКИ_МАКС = 10000;
+function ценаНормальная(p){ return p > 0 && p <= ЦЕНА_СУТКИ_МАКС; }
+
 // ── Короткие адреса для ТикТока (22.10) ─────────────────────────────────────
 // В ТикТоке ссылки не нажимаются (ни в комментарии, ни в профиле до 1000
 // подписчиков), а длинный адрес маршрута руками не наберёшь. Поэтому у каждого
@@ -217,6 +223,7 @@ const КОРОТКИЕ_АДРЕСА = {
   '2610': '/gde-ostanovitsya-mogilev',
   '2710': '/marshrut?p=5145,2416,5049,244&o=1',
   '2810': '/gde-ostanovitsya-vitebsk',
+  '3010': '/marshrut?p=910065,910241,4707,4324,910002,4683,4682,4680&o=1&d=4',
 };
 function короткийАдрес(путь){
   const м = /^\/(\d{4})\/?$/.exec(путь);
@@ -1354,7 +1361,7 @@ async function kufarRaw(reg, city, type){
         photos: (a.images||[]).map(im=>'https://rms.kufar.by/v1/gallery/'+im.path),
         rating:0, reviews:0, descId:a.ad_id,
         phone:'', name:'', lat, lng, approx, link:a.ad_link||'' };
-    }).filter(x=> x.price>0
+    }).filter(x=> ценаНормальная(x.price)
         // отсечь прокат техники и услуги, которые цепляет запрос
         && !/прокат|пароочистит|пылесос|karcher|керхер|электроинструмент|генератор|виброплит|отбойн|перфоратор|\bдрель|бетоно|шлифов|аппарат|моющий|химчистк|фотозон|аренда авто|прицеп/i.test(x.title)
         // для домов/усадеб — только жильё (есть вместимость)
@@ -1535,7 +1542,7 @@ async function realtRaw(reg, type){
         phone:(a.contactPhones||[])[0]||'', name:a.contactName||'',
         lat:c[0], lng:c[1], approx:true,
         link:realtObjectLink(reg, t.section, a.code) };
-    }).filter(x=> x.price>0);
+    }).filter(x=> ценаНормальная(x.price));
   });
 }
 
@@ -1626,7 +1633,7 @@ async function flatbookRaw(regKey, center, type, rooms, amenFb){
         // на flatbook.by, и браузер встречает человека предупреждением. Такую
         // ссылку собираем заново на поддомене, с которого объявление и пришло.
         link: ссылкаFlatbook(String(f.url || (host+'/'+f.alias+'/')).replace('//test.', '//'), host) };
-    }).filter(x=> x.price>0 && x.lat>50 && x.lng>22);
+    }).filter(x=> ценаНормальная(x.price) && x.lat>50 && x.lng>22);
   }catch(e){ console.error('Flatbook '+host+':', e.message); return []; }
  });
 }
@@ -1696,7 +1703,7 @@ async function fromRealtByName(rx, type, maxP, minP){
           phone:(a.contactPhones||[])[0]||'', name:a.contactName||'',
           lat:c[0], lng:c[1], approx:true,
           link:realtObjectLink(reg, t.section, a.code) };
-      }).filter(Boolean).filter(x=> x.price>0 && (!maxP||x.price<=maxP) && (!minP||x.price>=minP));
+      }).filter(Boolean).filter(x=> ценаНормальная(x.price) && (!maxP||x.price<=maxP) && (!minP||x.price>=minP));
     }catch(e){ return []; }
   });
   return [].concat(...await Promise.all(tasks));
@@ -1721,7 +1728,7 @@ async function searchByName(name, type, maxP, minP){
           area, region:g(a,'region')?.vl||'', capacity:g(a,'house_rent_couchettes')?.vl||'',
           title:a.subject||'', photos:(a.images||[]).map(im=>'https://rms.kufar.by/v1/gallery/'+im.path),
           rating:0,reviews:0,descId:a.ad_id,phone:'',name:'',lat,lng,approx,link:a.ad_link||'' };
-      }).filter(x=> x.price>0 && (!maxP||x.price<=maxP) && (!minP||x.price>=minP) && (!rx||rx.test(x.title)) && !KUFAR_JUNK.test(x.title)
+      }).filter(x=> ценаНормальная(x.price) && (!maxP||x.price<=maxP) && (!minP||x.price>=minP) && (!rx||rx.test(x.title)) && !KUFAR_JUNK.test(x.title)
                  // Kufar ищет по смыслу и на «усадьбу» охотно отдаёт квартиры.
                  // Подсовывать не то, что просили, нельзя: лучше пустая выдача.
                  && (type === 'any' || !TYPE_RX[type] || TYPE_RX[type].test(x.title)));
@@ -1976,7 +1983,7 @@ async function fromR101(cityKey, opts){
   try{
     const j = await (await fetch(url,{headers:{'User-Agent':UA,'Accept':'application/json','Accept-Language':'ru','Referer':'https://101hotels.com/','X-Requested-With':'XMLHttpRequest'}})).json();
     const hotels = (j.response && j.response.hotels) || [];
-    return hotels.map(hotel101ToItem).filter(x=> x && x.price>0 && (!opts.maxP || x.price<=opts.maxP) && (!opts.minP || x.price>=opts.minP));
+    return hotels.map(hotel101ToItem).filter(x=> x && ценаНормальная(x.price) && (!opts.maxP || x.price<=opts.maxP) && (!opts.minP || x.price>=opts.minP));
   }catch(e){ console.error('101hotels:', e.message); return []; }
 }
 async function searchRF(cityKey, opts){
