@@ -837,6 +837,10 @@ function сводкаЖурнала(now){
   const соСкриптом = new Set();
   for(let i = 0; i < STATS.length; i++){ const x = STATS[i]; if(x.hv && x.e !== 'hit' && !x.bot && x.t > с14) соСкриптом.add(x.hv); }
   const безСкриптаUA = new Map();
+  // 23.10: все заходы — и роботы тоже, по видам; за сегодня и за 7 дней. Источники — у тех, кто не робот.
+  const сегодняКлюч = деньКлюч(now);
+  const всеСегодня = new Map(), всеНеделя = new Map(), источники = new Map();
+  const ЛЮДИ = 'люди (страница выполнила скрипт)', БЕЗ_СКРИПТА = 'без скрипта (скорее роботы под видом браузера)';
   const плюс = function(м, к, n){ м.set(к, (м.get(к) || 0) + (n || 1)); };
   const метка = function(f){
     let м = метки.get(f);
@@ -851,6 +855,16 @@ function сводкаЖурнала(now){
     if(неделя && x.e === 'hit' && x.code === 404){
       let н = нет.get(x.path); if(!н){ н = { path: x.path, n: 0, people: 0, bots: 0 }; нет.set(x.path, н); }
       н.n++; if(x.bot) н.bots++; else н.people++;
+    }
+    if(неделя && x.e === 'hit' && x.code !== 404){
+      const кто = x.bot ? ('робот: ' + x.bot) : (соСкриптом.has(x.v) ? ЛЮДИ : БЕЗ_СКРИПТА);
+      плюс(всеНеделя, кто);
+      if(деньКлюч(x.t) === сегодняКлюч) плюс(всеСегодня, кто);
+      if(!x.bot){
+        const откуда = x.from ? ('метка ' + x.from) : (x.r || 'прямой заход');
+        let и = источники.get(откуда); if(!и){ и = { откуда: откуда, всего: 0, люди: 0 }; источники.set(откуда, и); }
+        и.всего++; if(соСкриптом.has(x.v)) и.люди++;
+      }
     }
     if(x.bot) continue;
     const д = деньКлюч(x.t);
@@ -905,7 +919,10 @@ function сводкаЖурнала(now){
       return { from: м.from, hits: м.hits, people: м.people.size, openSessions: м.openSessions.size, open: м.open, call: м.call, hosts: м.hosts };
     }).sort(function(a, b){ return b.hits - a.hits || b.open - a.open; }).slice(0, 60),
     entryPages: пары(входыСтр, 'path'),
-    noScriptUA: пары(безСкриптаUA, 'ua', 15),   // 20.10: кто входил без скрипта (кандидаты в роботы)
+    noScriptUA: пары(безСкриптаUA, 'ua', 15),
+    allHits: { today: пары(всеСегодня, 'who', 40), week: пары(всеНеделя, 'who', 40) },   // 23.10: все заходы с роботами
+    sources: [...источники.values()].sort(function(a, b){ return b.всего - a.всего; }).slice(0, 30)
+      .map(function(и){ return { from: и.откуда, hits: и.всего, people: и.люди }; }),   // 20.10: кто входил без скрипта (кандидаты в роботы)
     tiktokNoMark: пары(тикток, 'path'),
     notFound: [...нет.values()].sort(function(a, b){ return b.n - a.n; }).slice(0, 40),
     openByHost: пары(площадки, 'host'),
@@ -960,6 +977,26 @@ function блокиЖурнала(св, esc, bars){
         + '</table>'
       : '<p class="none">пока пусто</p>')
     + '<p class="none">Кнопка «Следить за новыми вариантами» (пока заглушка). Со счётчиком — цель Метрики subscribe.</p></div>'
+    + '<h2>Все заходы: люди и роботы</h2><div class="card">'
+    + (function(){
+        const все = св.allHits || { today: [], week: [] };
+        const сумма = function(сп){ return сп.reduce(function(a, x){ return a + x.n; }, 0); };
+        const нед = new Map(все.week.map(function(x){ return [x.who, x.n]; }));
+        const сег = new Map(все.today.map(function(x){ return [x.who, x.n]; }));
+        const кто = [...нед.keys()];
+        if(!кто.length) return '<p class="none">пока пусто</p>';
+        return '<table class="log"><tr><td><b>кто</b></td><td class="n"><b>сегодня</b></td><td class="n"><b>7 дней</b></td></tr>'
+          + кто.map(function(к){ return '<tr><td>' + esc(к) + '</td><td class="n">' + (сег.get(к) || 0) + '</td><td class="n">' + нед.get(к) + '</td></tr>'; }).join('')
+          + '<tr><td><b>всего заходов на страницы</b></td><td class="n"><b>' + сумма(все.today) + '</b></td><td class="n"><b>' + сумма(все.week) + '</b></td></tr></table>';
+      })()
+    + '<p class="none">Заход — открытие страницы сайта (без картинок, пингов и запросов к API). «Люди» — у кого страница выполнила скрипт; '
+    + '«без скрипта» — браузер не назвал себя роботом, но скрипт не выполнил; роботы — по виду (поисковики, превью соцсетей, наши проверки и т. п.).</p>'
+    + ((св.sources && св.sources.length)
+      ? '<p><b>Откуда пришли (7 дней, без роботов):</b></p><table class="log"><tr><td><b>откуда</b></td><td class="n"><b>заходов</b></td><td class="n"><b>из них люди</b></td></tr>'
+        + св.sources.map(function(и){ return '<tr><td>' + esc(и.from) + '</td><td class="n">' + и.hits + '</td><td class="n">' + и.people + '</td></tr>'; }).join('')
+        + '</table>'
+      : '')
+    + '</div>'
     + '<h2>Люди и роботы по дням</h2><div class="card">'
     + (св.days.length
       ? '<table class="log"><tr><td><b>день</b></td><td class="n"><b>входов</b></td><td class="n"><b>посетителей</b></td><td class="n"><b>из них люди</b></td></tr>'
